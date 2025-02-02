@@ -2,7 +2,7 @@ import sys
 import os
 import subprocess
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QInputDialog, QAction,
-                             QListWidget, QPushButton, QLabel, QFileDialog, QSlider, QStyle, QTableWidgetItem, QSpinBox, QHeaderView, QTableWidget)
+                             QListWidget,QDialog, QPushButton, QLabel, QFileDialog, QSlider, QStyle, QTableWidgetItem, QSpinBox, QHeaderView, QTableWidget)
 from PyQt5.QtCore import Qt, QUrl, QSize
 from PyQt5.QtGui import QIcon, QFont, QPixmap
 
@@ -42,11 +42,23 @@ class SlideshowCreator(QMainWindow):
         
         btn_add_audio = QPushButton("Add Music")
         btn_add_audio.clicked.connect(self.add_audio)
+
+        # For Images
+        move_up_image_btn = QPushButton("Move Up", self)
+        move_down_image_btn = QPushButton("Move Down", self)
+        delete_image_btn = QPushButton("Delete Image", self)
+
+        # For Audio
+        move_up_audio_btn = QPushButton("Move Up", self)
+        move_down_audio_btn = QPushButton("Move Down", self)
+        delete_audio_btn = QPushButton("Delete Audio", self)
         
         left_panel.addWidget(QLabel("Slides:"))
         left_panel.addWidget(self.image_table)
         left_panel.addWidget(btn_add_images)
-        left_panel.addWidget(btn_add_audio)
+        left_panel.addWidget(move_up_image_btn)
+        left_panel.addWidget(move_down_image_btn)
+        left_panel.addWidget(delete_image_btn)
         left_panel.addWidget(btn_set_duration)
         
         # Center Panel - Preview
@@ -74,7 +86,17 @@ class SlideshowCreator(QMainWindow):
         
         right_panel.addWidget(QLabel("Audio Files:"))
         right_panel.addWidget(self.audio_table)
+
+
         
+        right_panel.addWidget(btn_add_audio)
+        right_panel.addWidget(move_up_audio_btn)
+        right_panel.addWidget(move_down_audio_btn)
+        right_panel.addWidget(delete_audio_btn)
+
+        
+
+
         # Export Button
         btn_export = QPushButton("Export Slideshow")
         btn_export.clicked.connect(self.export_slideshow)
@@ -89,6 +111,16 @@ class SlideshowCreator(QMainWindow):
 
         # Initialize audio files list
         self.audio_files = []
+
+        # For Images
+        move_up_image_btn.clicked.connect(self.move_image_up)
+        move_down_image_btn.clicked.connect(self.move_image_down)
+        delete_image_btn.clicked.connect(self.delete_image)
+
+        # For Audio
+        move_up_audio_btn.clicked.connect(self.move_audio_up)
+        move_down_audio_btn.clicked.connect(self.move_audio_down)
+        delete_audio_btn.clicked.connect(self.delete_audio)
 
 
     def set_image_duration(self):
@@ -116,6 +148,27 @@ class SlideshowCreator(QMainWindow):
             self.audio_files.append({'path': file, 'duration': 0})  # Default duration 0 or set as needed
             self.update_audio_table()
             print("Audio added:", self.audio_files)  # Debugging output
+
+
+    def show_duration_options(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Duration Mismatch")
+
+        btn_silence = QPushButton("Export with Silence")
+        btn_add_song = QPushButton("Add Another Song")
+        btn_adjust = QPushButton("Adjust Image Durations")
+
+        # Connect buttons to actions
+        btn_silence.clicked.connect(lambda: self.handle_export(export_type="silence"))
+        btn_add_song.clicked.connect(lambda: self.handle_export(export_type="add_song"))
+        btn_adjust.clicked.connect(lambda: self.handle_export(export_type="adjust_durations"))
+
+        layout = QVBoxLayout()
+        layout.addWidget(btn_silence)
+        layout.addWidget(btn_add_song)
+        layout.addWidget(btn_adjust)
+        dialog.setLayout(layout)
+        dialog.exec_()
 
     def update_audio_table(self):
         self.audio_table.setRowCount(len(self.audio_files))
@@ -269,6 +322,55 @@ class SlideshowCreator(QMainWindow):
                 self.update_image_table()
                 self.update_audio_table()  # Update the audio table to reflect loaded audio
 
+
+
+    def move_image_up(self):
+        selected_items = self.image_table.selectedItems()
+        if selected_items:
+            row = self.image_table.row(selected_items[0])
+            if row > 0:
+                self.images[row], self.images[row - 1] = self.images[row - 1], self.images[row]
+                self.update_image_table()
+
+    def move_image_down(self):
+        selected_items = self.image_table.selectedItems()
+        if selected_items:
+            row = self.image_table.row(selected_items[0])
+            if row < len(self.images) - 1:
+                self.images[row], self.images[row + 1] = self.images[row + 1], self.images[row]
+                self.update_image_table()
+
+    def delete_image(self):
+        selected_items = self.image_table.selectedItems()
+        if selected_items:
+            row = self.image_table.row(selected_items[0])
+            del self.images[row]
+            self.update_image_table()
+
+
+
+    def move_audio_up(self):
+        selected_items = self.audio_table.selectedItems()
+        if selected_items:
+            row = self.audio_table.row(selected_items[0])
+            if row > 0:
+                self.audio_files[row], self.audio_files[row - 1] = self.audio_files[row - 1], self.audio_files[row]
+                self.update_audio_table()
+
+    def move_audio_down(self):
+        selected_items = self.audio_table.selectedItems()
+        if selected_items:
+            row = self.audio_table.row(selected_items[0])
+            if row < len(self.audio_files) - 1:
+                self.audio_files[row], self.audio_files[row + 1] = self.audio_files[row + 1], self.audio_files[row]
+                self.update_audio_table()
+
+    def delete_audio(self):
+        selected_items = self.audio_table.selectedItems()
+        if selected_items:
+            row = self.audio_table.row(selected_items[0])
+            del self.audio_files[row]
+            self.update_audio_table()
 
 
     def create_menu(self):
