@@ -5,6 +5,9 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QListWidget,QProgressBar,QMessageBox,QDialog, QPushButton, QLabel, QFileDialog, QSlider, QStyle, QTableWidgetItem, QSpinBox, QHeaderView, QTableWidget)
 from PyQt5.QtCore import Qt, QUrl, QSize, QProcess, QTimer
 from PyQt5.QtGui import QIcon, QFont, QPixmap
+from PIL import Image, ImageFilter
+#from Image_resizer import process_image
+import Image_resizer
 
 class SlideshowCreator(QMainWindow):
     def __init__(self):
@@ -255,8 +258,31 @@ class SlideshowCreator(QMainWindow):
         concat_inputs = []
         total_duration = 0
 
-        common_width = 1280
-        common_height = 720
+        common_width = 1920
+        common_height = 1080
+
+        # Assuming self.images is a list of dictionaries with 'path' as one of the keys
+        image_path22 = self.images[0]['path']
+        output_folder22 = os.path.join(os.path.dirname(image_path22), "A_Blur")  # Ensure correct folder structure
+
+        # Ensure output folder exists
+        if not os.path.exists(output_folder22):
+            os.makedirs(output_folder22)
+
+        for i in range(len(self.images)):
+            img = self.images[i]['path']
+            
+            try:
+                original_image = Image.open(img)
+                if original_image.size != (common_width, common_height):
+                    new_image_path = Image_resizer.process_image(img, output_folder22)
+                    
+                    if new_image_path:  # Only update path if the new image was created successfully
+                        self.images[i]['path'] = new_image_path
+                    else:
+                        print(f"Failed to process image: {img}")
+            except Exception as e:
+                print(f"Error opening image {img}: {e}")
 
         # Handle image inputs with durations
         for i, img in enumerate(self.images):
@@ -289,7 +315,7 @@ class SlideshowCreator(QMainWindow):
             audio_map = f"-map {audio_index}:a"
 
         # Construct final command
-        command = f'ffmpeg -y {" ".join(inputs)} -filter_complex "{filter_complex}" -map "[outv]" {audio_map} -c:a aac -c:v libx264 -pix_fmt yuv420p -shortest output.mp4'
+        command = f'ffmpeg -y {" ".join(inputs)} -filter_complex "{filter_complex}" -map "[outv]" {audio_map} -c:a aac -c:v libx264 -pix_fmt yuv420p -shortest "{self.output_file}"'
 
         return command
 
