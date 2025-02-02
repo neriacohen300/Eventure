@@ -101,19 +101,12 @@ class SlideshowCreator(QMainWindow):
     def update_image_table(self):
         self.image_table.setRowCount(len(self.images))
         for row, img in enumerate(self.images):
-            # Image path
-            path_item = QTableWidgetItem(img['path'])
-            path_item.setFlags(path_item.flags() ^ Qt.ItemIsEditable)
-            
-            # Duration spinner
-            spin = QSpinBox()
-            spin.setMinimum(1)
-            spin.setMaximum(60)
-            spin.setValue(img['duration'])
-            spin.valueChanged.connect(lambda value, row=row: self.update_duration(value, row))
+            # Create NEW QTableWidgetItem instances each time
+            path_item = QTableWidgetItem(img['path'])  # Fresh item
+            duration_item = QTableWidgetItem(str(img.get('duration', 5)))  # Fresh item
             
             self.image_table.setItem(row, 0, path_item)
-            self.image_table.setCellWidget(row, 1, spin)
+            self.image_table.setItem(row, 1, duration_item)
 
     def build_ffmpeg_command(self):
         inputs = []
@@ -155,11 +148,14 @@ class SlideshowCreator(QMainWindow):
 
 
     def update_preview(self):
-        # Placeholder for updating the preview based on the current selection
-        if self.image_list.count() > 0:
-            current_image = self.image_list.currentItem().text()
-            self.preview_label.setText(f"Previewing: {current_image}")
-            # Here you could load the image into a QLabel or QGraphicsView for a better preview
+        """Update preview when a slide is selected"""
+        selected_items = self.image_table.selectedItems()  # Changed from image_list to image_table
+        if selected_items:
+            row = self.image_table.row(selected_items[0])
+            img_path = self.images[row]['path']
+            # Load and display the selected image in the preview
+            pixmap = QPixmap(img_path)
+            self.preview_label.setPixmap(pixmap.scaled(400, 300, Qt.KeepAspectRatio))
 
     def setup_connections(self):
         """Connect signals to slots"""
@@ -180,10 +176,10 @@ class SlideshowCreator(QMainWindow):
         # Function to add text overlay to the selected image
         text, ok = QInputDialog.getText(self, "Add Text Overlay", "Enter text:")
         if ok and text:
-            current_row = self.image_list.currentRow()
+            current_row = self.image_table.currentRow()  # Changed from image_list to image_table
             if current_row >= 0:
                 # Store the text overlay for the current image
-                self.image_list.item(current_row).setText(f"{self.image_list.item(current_row).text()} - {text}")
+                self.image_table.item(current_row, 0).setText(f"{self.image_table.item(current_row, 0).text()} - {text}")  # Adjusted to access the correct column
 
     def create_timeline(self):
         # Function to create a visual representation of the timeline
@@ -195,37 +191,45 @@ class SlideshowCreator(QMainWindow):
         # Update the preview based on the timeline slider
         index = value // 10  # Assuming each image is displayed for 10 seconds
         if index < len(self.images):
-            self.image_list.setCurrentRow(index)
+            self.image_table.setCurrentCell(index, 0)  # Changed from image_list to image_table
             self.update_preview()
 
     def clear_project(self):
-        # Function to clear the current project
+        # Clear any custom widgets first
+        for row in range(self.image_table.rowCount()):
+            if self.image_table.cellWidget(row, 2):
+                self.image_table.removeCellWidget(row, 2)
+        # Then clear the rows
+        self.image_table.setRowCount(0)  # Proper way to clear the table
         self.images.clear()
         self.audio_file = ""
-        self.image_list.clear()
         self.preview_label.clear()
         self.timeline_slider.setEnabled(False)
 
     def save_project(self):
-        # Function to save the current project state
         options = QFileDialog.Options()
         file_name, _ = QFileDialog.getSaveFileName(self, "Save Project", "", "Project Files (*.slideshow);;All Files (*)", options=options)
         if file_name:
-            with open(file_name, 'w') as f:
+            with open(file_name, 'w', encoding='utf-8') as f:
                 f.write(f"{self.audio_file}\n")
+                # Save each image as a string with its duration
                 for img in self.images:
-                    f.write(f"{img}\n")
+                    f.write(f"{img['path']},{img.get('duration', 5)}\n")  # Save path and duration
 
     def load_project(self):
         # Function to load a previously saved project
         options = QFileDialog.Options()
         file_name, _ = QFileDialog.getOpenFileName(self, "Load Project", "", "Project Files (*.slideshow);;All Files (*)", options=options)
         if file_name:
-            with open(file_name, 'r') as f:
+            with open(file_name, 'r', encoding='utf-8') as f:
                 lines = f.readlines()
                 self.audio_file = lines[0].strip()
-                self.images = [line.strip() for line in lines[1:]]
-                self.image_list.addItems(self.images)
+                # Convert loaded strings back to image dictionaries with duration
+                self.images = []
+                for line in lines[1:]:
+                    path, duration = line.strip().split(',')  # Split path and duration
+                    self.images.append({'path': path, 'duration': int(duration)})  # Store as dict
+                self.update_image_table()
 
     def create_menu(self):
         # Function to create a menu bar
