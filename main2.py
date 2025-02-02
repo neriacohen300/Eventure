@@ -25,6 +25,10 @@ class SlideshowCreator(QMainWindow):
         
         # Left Panel - Image List with Durations
         left_panel = QVBoxLayout()
+
+        btn_set_duration = QPushButton("Set Duration")
+        btn_set_duration.clicked.connect(self.set_image_duration)
+        
         
         # Initialize the image_table attribute
         self.image_table = QTableWidget()
@@ -43,6 +47,7 @@ class SlideshowCreator(QMainWindow):
         left_panel.addWidget(self.image_table)
         left_panel.addWidget(btn_add_images)
         left_panel.addWidget(btn_add_audio)
+        left_panel.addWidget(btn_set_duration)
         
         # Center Panel - Preview
         center_panel = QVBoxLayout()
@@ -84,6 +89,18 @@ class SlideshowCreator(QMainWindow):
 
         # Initialize audio files list
         self.audio_files = []
+
+
+    def set_image_duration(self):
+        selected_items = self.image_table.selectedItems()
+        if selected_items:
+            row = self.image_table.row(selected_items[0])
+            duration, ok = QInputDialog.getInt(self, "Set Duration", "Enter duration in seconds:", self.images[row]['duration'], 1, 600)
+            if ok:
+                self.images[row]['duration'] = duration
+                self.update_image_table()  # Refresh the table to show updated duration
+
+
 
     def add_images(self):
         files, _ = QFileDialog.getOpenFileNames(self, "Select Images", "", "Images (*.png *.jpg *.jpeg *.bmp *.gif)")
@@ -220,14 +237,10 @@ class SlideshowCreator(QMainWindow):
             self.update_preview()
 
     def clear_project(self):
-        # Clear any custom widgets first
-        for row in range(self.image_table.rowCount()):
-            if self.image_table.cellWidget(row, 2):
-                self.image_table.removeCellWidget(row, 2)
-        # Then clear the rows
-        self.image_table.setRowCount(0)  # Proper way to clear the table
         self.images.clear()
-        self.audio_file = ""
+        self.audio_files.clear()  # Clear audio files
+        self.image_table.setRowCount(0)  # Proper way to clear the table
+        self.audio_table.setRowCount(0)  # Clear audio table
         self.preview_label.clear()
         self.timeline_slider.setEnabled(False)
 
@@ -238,7 +251,7 @@ class SlideshowCreator(QMainWindow):
             with open(file_name, 'w', encoding='utf-8') as f:
                 f.write(f"{self.audio_files[0]['path']}\n")  # Save the first audio file path
                 for img in self.images:
-                    f.write(f"{img['path']},{img.get('duration', 5)}\n")  # Save path and duration
+                    f.write(f"{img['path']},{img.get('duration', 5)}\n") 
 
     def load_project(self):
         options = QFileDialog.Options()
@@ -249,13 +262,13 @@ class SlideshowCreator(QMainWindow):
                 self.audio_files = []  # Clear existing audio files
                 self.audio_file = lines[0].strip()  # Load the first audio file path
                 self.audio_files.append({'path': self.audio_file, 'duration': 0})  # Add to the list
-                # Convert loaded strings back to image dictionaries with duration
                 self.images = []
                 for line in lines[1:]:
                     path, duration = line.strip().split(',')  # Split path and duration
                     self.images.append({'path': path, 'duration': int(duration)})  # Store as dict
                 self.update_image_table()
                 self.update_audio_table()  # Update the audio table to reflect loaded audio
+
 
 
     def create_menu(self):
