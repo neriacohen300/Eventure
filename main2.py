@@ -150,7 +150,7 @@ class SlideshowCreator(QMainWindow):
             print("Audio added:", self.audio_files)  # Debugging output
 
 
-    def show_duration_options(self):
+    """def show_duration_options(self):
         dialog = QDialog(self)
         dialog.setWindowTitle("Duration Mismatch")
 
@@ -168,7 +168,7 @@ class SlideshowCreator(QMainWindow):
         layout.addWidget(btn_add_song)
         layout.addWidget(btn_adjust)
         dialog.setLayout(layout)
-        dialog.exec_()
+        dialog.exec_()"""
 
     def update_audio_table(self):
         self.audio_table.setRowCount(len(self.audio_files))
@@ -226,18 +226,24 @@ class SlideshowCreator(QMainWindow):
         filter_complex = ";".join(filters)
         filter_complex += f";{''.join(concat_inputs)}concat=n={len(self.images)}:v=1:a=0[outv]"
 
-        # Add audio input
-        if self.audio_files:
-            audio_index = len(self.images)  # The next index after images
-            inputs.append(f'-i "{self.audio_files[0]["path"]}"')  # Use the first audio file
+        # Add audio inputs
+        audio_inputs = []
+        audio_streams = []
+        audio_index = len(self.images)
+
+        for i, audio in enumerate(self.audio_files):
+            inputs.append(f'-i "{audio["path"]}"')
+            audio_streams.append(f"[{audio_index + i}:a]")
+
+        # Concatenate audio files sequentially
+        if len(audio_streams) > 1:
+            filter_complex += f";{''.join(audio_streams)}concat=n={len(audio_streams)}:v=0:a=1[outa]"
+            audio_map = "-map [outa]"
+        else:
+            audio_map = f"-map {audio_index}:a"
 
         # Construct final command
-        command = f'ffmpeg {" ".join(inputs)} -filter_complex "{filter_complex}" -map "[outv]"'
-        
-        if self.audio_files:
-            command += f' -map {audio_index}:a -c:a aac'  # Adjusted index dynamically
-
-        command += ' -c:v libx264 -pix_fmt yuv420p -shortest output.mp4'
+        command = f'ffmpeg {" ".join(inputs)} -filter_complex "{filter_complex}" -map "[outv]" {audio_map} -c:a aac -c:v libx264 -pix_fmt yuv420p -shortest output.mp4'
 
         return command
 
