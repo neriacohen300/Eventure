@@ -27,20 +27,20 @@ class SlideshowCreator(QMainWindow):
         left_panel = QVBoxLayout()
         
         # Initialize the image_table attribute
-        self.image_table = QTableWidget()  # Ensure this is defined before use
+        self.image_table = QTableWidget()
         self.image_table.setColumnCount(2)
         self.image_table.setHorizontalHeaderLabels(["Image", "Duration (sec)"])
-        self.image_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.image_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)    
         self.image_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         
         btn_add_images = QPushButton("Add Images")
         btn_add_images.clicked.connect(self.add_images)
         
         btn_add_audio = QPushButton("Add Music")
-        btn_add_audio.clicked.connect(self.add_audio)  # Connect to the add_audio method
+        btn_add_audio.clicked.connect(self.add_audio)
         
         left_panel.addWidget(QLabel("Slides:"))
-        left_panel.addWidget(self.image_table)  # Now this will work
+        left_panel.addWidget(self.image_table)
         left_panel.addWidget(btn_add_images)
         left_panel.addWidget(btn_add_audio)
         
@@ -50,7 +50,6 @@ class SlideshowCreator(QMainWindow):
         self.preview_label.setAlignment(Qt.AlignCenter)
         self.preview_label.setStyleSheet("border: 1px solid #444; background: #222;")
         
-        # Timeline
         self.timeline_slider = QSlider(Qt.Horizontal)
         self.timeline_slider.setEnabled(False)
         
@@ -60,6 +59,16 @@ class SlideshowCreator(QMainWindow):
         # Right Panel - Settings
         right_panel = QVBoxLayout()
         right_panel.addWidget(QLabel("Settings"))
+        
+        # New Audio Files Table
+        self.audio_table = QTableWidget()
+        self.audio_table.setColumnCount(2)
+        self.audio_table.setHorizontalHeaderLabels(["Audio File", "Duration (sec)"])
+        self.audio_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.audio_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        
+        right_panel.addWidget(QLabel("Audio Files:"))
+        right_panel.addWidget(self.audio_table)
         
         # Export Button
         btn_export = QPushButton("Export Slideshow")
@@ -73,20 +82,36 @@ class SlideshowCreator(QMainWindow):
         
         self.setCentralWidget(main_widget)
 
+        # Initialize audio files list
+        self.audio_files = []
+
     def add_images(self):
         files, _ = QFileDialog.getOpenFileNames(self, "Select Images", "", "Images (*.png *.jpg *.jpeg *.bmp *.gif)")
         if files:
             for file in files:
                 self.images.append({'path': file, 'duration': 5})  # Default duration 5 seconds
-                self.update_image_table()
+            self.update_image_table()
+            print("Images added:", self.images)  # Debugging output
 
     def add_audio(self):
         file, _ = QFileDialog.getOpenFileName(self, "Select Audio", "", "Audio Files (*.mp3 *.wav *.flac)")
         if file:
-            self.audio_file = file
+            self.audio_files.append({'path': file, 'duration': 0})  # Default duration 0 or set as needed
+            self.update_audio_table()
+            print("Audio added:", self.audio_files)  # Debugging output
+
+    def update_audio_table(self):
+        self.audio_table.setRowCount(len(self.audio_files))
+        for row, audio in enumerate(self.audio_files):
+            path_item = QTableWidgetItem(audio['path'])
+            duration_item = QTableWidgetItem(str(audio.get('duration', 0)))  # Default duration
+            self.audio_table.setItem(row, 0, path_item)
+            self.audio_table.setItem(row, 1, duration_item)
 
     def export_slideshow(self):
-        if not self.images or not self.audio_file:
+        print("Images:", self.images)  # Debugging output
+        print("Audio Files:", self.audio_files)  # Debugging output
+        if not self.images or not self.audio_files:
             print("Please add images and audio before exporting.")
             return
         
@@ -132,14 +157,14 @@ class SlideshowCreator(QMainWindow):
         filter_complex += f";{''.join(concat_inputs)}concat=n={len(self.images)}:v=1:a=0[outv]"
 
         # Add audio input
-        if self.audio_file:
+        if self.audio_files:
             audio_index = len(self.images)  # The next index after images
-            inputs.append(f'-i "{self.audio_file}"')
+            inputs.append(f'-i "{self.audio_files[0]["path"]}"')  # Use the first audio file
 
         # Construct final command
         command = f'ffmpeg {" ".join(inputs)} -filter_complex "{filter_complex}" -map "[outv]"'
         
-        if self.audio_file:
+        if self.audio_files:
             command += f' -map {audio_index}:a -c:a aac'  # Adjusted index dynamically
 
         command += ' -c:v libx264 -pix_fmt yuv420p -shortest output.mp4'
@@ -211,25 +236,27 @@ class SlideshowCreator(QMainWindow):
         file_name, _ = QFileDialog.getSaveFileName(self, "Save Project", "", "Project Files (*.slideshow);;All Files (*)", options=options)
         if file_name:
             with open(file_name, 'w', encoding='utf-8') as f:
-                f.write(f"{self.audio_file}\n")
-                # Save each image as a string with its duration
+                f.write(f"{self.audio_files[0]['path']}\n")  # Save the first audio file path
                 for img in self.images:
                     f.write(f"{img['path']},{img.get('duration', 5)}\n")  # Save path and duration
 
     def load_project(self):
-        # Function to load a previously saved project
         options = QFileDialog.Options()
         file_name, _ = QFileDialog.getOpenFileName(self, "Load Project", "", "Project Files (*.slideshow);;All Files (*)", options=options)
         if file_name:
             with open(file_name, 'r', encoding='utf-8') as f:
                 lines = f.readlines()
-                self.audio_file = lines[0].strip()
+                self.audio_files = []  # Clear existing audio files
+                self.audio_file = lines[0].strip()  # Load the first audio file path
+                self.audio_files.append({'path': self.audio_file, 'duration': 0})  # Add to the list
                 # Convert loaded strings back to image dictionaries with duration
                 self.images = []
                 for line in lines[1:]:
                     path, duration = line.strip().split(',')  # Split path and duration
                     self.images.append({'path': path, 'duration': int(duration)})  # Store as dict
                 self.update_image_table()
+                self.update_audio_table()  # Update the audio table to reflect loaded audio
+
 
     def create_menu(self):
         # Function to create a menu bar
