@@ -2,8 +2,8 @@ import sys
 import os
 import subprocess
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QInputDialog, QAction,
-                             QListWidget,QDialog, QPushButton, QLabel, QFileDialog, QSlider, QStyle, QTableWidgetItem, QSpinBox, QHeaderView, QTableWidget)
-from PyQt5.QtCore import Qt, QUrl, QSize
+                             QListWidget,QProgressBar,QMessageBox,QDialog, QPushButton, QLabel, QFileDialog, QSlider, QStyle, QTableWidgetItem, QSpinBox, QHeaderView, QTableWidget)
+from PyQt5.QtCore import Qt, QUrl, QSize, QProcess, QTimer
 from PyQt5.QtGui import QIcon, QFont, QPixmap
 
 class SlideshowCreator(QMainWindow):
@@ -60,6 +60,13 @@ class SlideshowCreator(QMainWindow):
         left_panel.addWidget(move_down_image_btn)
         left_panel.addWidget(delete_image_btn)
         left_panel.addWidget(btn_set_duration)
+
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)  # Start at 0%
+        
+
         
         # Center Panel - Preview
         center_panel = QVBoxLayout()
@@ -96,11 +103,15 @@ class SlideshowCreator(QMainWindow):
 
         
 
+        
+
 
         # Export Button
         btn_export = QPushButton("Export Slideshow")
         btn_export.clicked.connect(self.export_slideshow)
         right_panel.addWidget(btn_export)
+
+        right_panel.addWidget(self.progress_bar)
         
         # Add panels to main layout
         main_layout.addLayout(left_panel , 1)
@@ -190,8 +201,43 @@ class SlideshowCreator(QMainWindow):
         print("Exporting with command:", command)
         
         # Execute FFmpeg command
-        subprocess.run(command, shell=True)
+        self.process = QProcess(self)
+        self.process.readyReadStandardOutput.connect(self.update_progress)
+        self.process.readyReadStandardError.connect(self.update_progress)  # Capture FFmpeg logs
+        self.process.finished.connect(self.export_finished)
 
+        self.progress_bar.setValue(0)  # Reset progress bar
+        self.process.start(command)
+
+
+
+
+    def update_progress(self):
+        output = self.process.readAllStandardError().data().decode("utf-8")  # FFmpeg logs
+        print(output)
+
+        # Extract progress percentage from FFmpeg logs
+        for line in output.split("\n"):
+            if "time=" in line:
+                time_str = line.split("time=")[1].split(" ")[0]
+                time_parts = time_str.split(":")
+                if len(time_parts) == 3:
+                    hours, minutes, seconds = map(float, time_parts)
+                    current_time = hours * 3600 + minutes * 60 + seconds
+
+                    # Estimate progress percentage
+                    total_duration = sum(img['duration'] for img in self.images)
+                    progress = int((current_time / total_duration) * 100)
+                    self.progress_bar.setValue(progress)
+
+    def export_finished(self):
+        self.progress_bar.setValue(100)  # Mark as complete
+        msg = QMessageBox()
+        msg.setIcon(QMessageBox.Information)
+        msg.setWindowTitle("Export Complete")
+        msg.setText("Export finished successfully!")
+        msg.setStandardButtons(QMessageBox.Ok)
+        msg.exec_()
 
     def update_image_table(self):
         self.image_table.setRowCount(len(self.images))
@@ -243,7 +289,7 @@ class SlideshowCreator(QMainWindow):
             audio_map = f"-map {audio_index}:a"
 
         # Construct final command
-        command = f'ffmpeg {" ".join(inputs)} -filter_complex "{filter_complex}" -map "[outv]" {audio_map} -c:a aac -c:v libx264 -pix_fmt yuv420p -shortest output.mp4'
+        command = f'ffmpeg -y {" ".join(inputs)} -filter_complex "{filter_complex}" -map "[outv]" {audio_map} -c:a aac -c:v libx264 -pix_fmt yuv420p -shortest output.mp4'
 
         return command
 
