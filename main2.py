@@ -302,7 +302,12 @@ class SlideshowCreator(QMainWindow):
         file_name, _ = QFileDialog.getSaveFileName(self, "Save Project", "", "Project Files (*.slideshow);;All Files (*)", options=options)
         if file_name:
             with open(file_name, 'w', encoding='utf-8') as f:
-                f.write(f"{self.audio_files[0]['path']}\n")  # Save the first audio file path
+                count = 0
+                for audio in self.audio_files:
+                    count += 1
+                f.write(str(count) + "\n")
+                for audio in self.audio_files:
+                    f.write(f"{audio['path']}\n")  
                 for img in self.images:
                     f.write(f"{img['path']},{img.get('duration', 5)}\n") 
 
@@ -312,11 +317,17 @@ class SlideshowCreator(QMainWindow):
         if file_name:
             with open(file_name, 'r', encoding='utf-8') as f:
                 lines = f.readlines()
+                count = int(lines[0].strip())
                 self.audio_files = []  # Clear existing audio files
-                self.audio_file = lines[0].strip()  # Load the first audio file path
-                self.audio_files.append({'path': self.audio_file, 'duration': 0})  # Add to the list
+                if count == 1:
+                    self.audio_file = lines[1].strip()  # Load the first audio file path
+                    self.audio_files.append({'path': self.audio_file, 'duration': 0})  # Add to the list
+                if count > 1:
+                    for i in range(1, count + 1):
+                        self.audio_file = lines[i].strip()  # Load the first audio file path
+                        self.audio_files.append({'path': self.audio_file, 'duration': 0})  # Add to the list
                 self.images = []
-                for line in lines[1:]:
+                for line in lines[i+1:]:
                     path, duration = line.strip().split(',')  # Split path and duration
                     self.images.append({'path': path, 'duration': int(duration)})  # Store as dict
                 self.update_image_table()
