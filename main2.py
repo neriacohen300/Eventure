@@ -6,7 +6,7 @@ import subprocess
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QInputDialog, QAction,
                              QListWidget,QProgressBar,QMessageBox,QDialog, QPushButton, QLabel, QFileDialog, QSlider, QStyle, QTableWidgetItem, QSpinBox, QHeaderView, QTableWidget)
 from PyQt5.QtCore import Qt, QUrl, QSize, QProcess, QTimer
-from PyQt5.QtGui import QIcon, QFont, QPixmap
+from PyQt5.QtGui import QIcon, QFont, QPixmap, QCursor
 from PIL import Image, ImageFilter
 import Image_resizer
 
@@ -41,6 +41,9 @@ class SlideshowCreator(QMainWindow):
 
         btn_set_duration = QPushButton("Set Duration") # Button to set duration
         btn_set_duration.setFont(QFont(self.button_font, self.button_font_size, QFont.Bold))
+        btn_set_duration.setStyleSheet('QPushButton { background-color: #0078d4; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
+                                    'QPushButton:hover { background-color: #005a9e; }')
+        btn_set_duration.setCursor(QCursor(Qt.PointingHandCursor))  # Add hover effect
         btn_set_duration.clicked.connect(self.set_image_duration)
         
         
@@ -54,19 +57,28 @@ class SlideshowCreator(QMainWindow):
         
         btn_add_images = QPushButton("Add Images") # Button to add images
         btn_add_images.setFont(QFont(self.button_font, self.button_font_size, QFont.Bold))
+        btn_add_images.setStyleSheet('QPushButton { background-color: #0078d4; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
+                                    'QPushButton:hover { background-color: #005a9e; }')
+        btn_add_images.setCursor(QCursor(Qt.PointingHandCursor))  # Add hover effect
         btn_add_images.clicked.connect(self.add_images)
-        
-        btn_add_audio = QPushButton("Add Music") # Button to add audio
-        btn_add_audio.setFont(QFont(self.button_font, self.button_font_size, QFont.Bold))
-        btn_add_audio.clicked.connect(self.add_audio)
+    
 
         # For Images
         move_up_image_btn = QPushButton("Move Up", self) # Button to move image up
         move_up_image_btn.setFont(QFont(self.button_font, self.button_font_size, QFont.Bold))
+        move_up_image_btn.setStyleSheet('QPushButton { background-color: #0078d4; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
+                                    'QPushButton:hover { background-color: #005a9e; }')
+        move_up_image_btn.setCursor(QCursor(Qt.PointingHandCursor))  # Add hover effect
         move_down_image_btn = QPushButton("Move Down", self) # Button to move image down
         move_down_image_btn.setFont(QFont(self.button_font, self.button_font_size, QFont.Bold))
+        move_down_image_btn.setStyleSheet('QPushButton { background-color: #0078d4; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
+                                    'QPushButton:hover { background-color: #005a9e; }')
+        move_down_image_btn.setCursor(QCursor(Qt.PointingHandCursor))  # Add hover effect
         delete_image_btn = QPushButton("Delete Image", self) # Button to delete image
         delete_image_btn.setFont(QFont(self.button_font, self.button_font_size, QFont.Bold))
+        delete_image_btn.setStyleSheet('QPushButton { background-color: #0078d4; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
+                                    'QPushButton:hover { background-color: #005a9e; }')
+        delete_image_btn.setCursor(QCursor(Qt.PointingHandCursor))  # Add hover effect
         """-------------------------------"""
         move_up_image_btn.clicked.connect(self.move_image_up)
         move_down_image_btn.clicked.connect(self.move_image_down)
@@ -121,14 +133,30 @@ class SlideshowCreator(QMainWindow):
         # For Audio
         move_up_audio_btn = QPushButton("Move Up", self) # Button to move audio up
         move_up_audio_btn.setFont(QFont(self.button_font, self.button_font_size, QFont.Bold))
+        move_up_audio_btn.setStyleSheet('QPushButton { background-color: #0078d4; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
+                                    'QPushButton:hover { background-color: #005a9e; }')
+        move_up_audio_btn.setCursor(QCursor(Qt.PointingHandCursor))  # Add hover effect
         move_down_audio_btn = QPushButton("Move Down", self) # Button to move audio down
         move_down_audio_btn.setFont(QFont(self.button_font, self.button_font_size, QFont.Bold))
+        move_down_audio_btn.setStyleSheet('QPushButton { background-color: #0078d4; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
+                                    'QPushButton:hover { background-color: #005a9e; }')
+        move_down_audio_btn.setCursor(QCursor(Qt.PointingHandCursor))  # Add hover effect
         delete_audio_btn = QPushButton("Delete Audio", self) # Button to delete audio
         delete_audio_btn.setFont(QFont(self.button_font, self.button_font_size, QFont.Bold))
+        delete_audio_btn.setStyleSheet('QPushButton { background-color: #0078d4; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
+                                    'QPushButton:hover { background-color: #005a9e; }')
+        delete_audio_btn.setCursor(QCursor(Qt.PointingHandCursor))  # Add hover effect
         """-------------------------------"""
         move_up_audio_btn.clicked.connect(self.move_audio_up)
         move_down_audio_btn.clicked.connect(self.move_audio_down)
         delete_audio_btn.clicked.connect(self.delete_audio)
+
+        btn_add_audio = QPushButton("Add Music") # Button to add audio
+        btn_add_audio.setFont(QFont(self.button_font, self.button_font_size, QFont.Bold))
+        btn_add_audio.setStyleSheet('QPushButton { background-color: #0078d4; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
+                                    'QPushButton:hover { background-color: #005a9e; }')
+        btn_add_audio.setCursor(QCursor(Qt.PointingHandCursor))  # Add hover effect
+        btn_add_audio.clicked.connect(self.add_audio)
 
 
         
@@ -141,6 +169,9 @@ class SlideshowCreator(QMainWindow):
         btn_export = QPushButton("Export Slideshow")
         btn_export.clicked.connect(self.export_slideshow)
         btn_export.setFont(QFont(self.button_font, self.button_font_size, QFont.Bold))
+        btn_export.setStyleSheet('QPushButton { background-color: #0078d4; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
+                                    'QPushButton:hover { background-color: #005a9e; }')
+        btn_export.setCursor(QCursor(Qt.PointingHandCursor))  # Add hover effect
         right_panel.addWidget(btn_export)
 
         right_panel.addWidget(self.progress_bar)
