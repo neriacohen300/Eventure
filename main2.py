@@ -1,3 +1,5 @@
+"""imports"""
+
 import sys
 import os
 import subprocess
@@ -6,87 +8,97 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
 from PyQt5.QtCore import Qt, QUrl, QSize, QProcess, QTimer
 from PyQt5.QtGui import QIcon, QFont, QPixmap
 from PIL import Image, ImageFilter
-#from Image_resizer import process_image
 import Image_resizer
 
+"""main class"""
 class SlideshowCreator(QMainWindow):
+    """window creation"""
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Slideshow Creator")
-        self.setGeometry(100, 100, 1200, 800)
+        self.setWindowTitle("Slideshow Creator") # Set the window title
+        self.setGeometry(100, 100, 1200, 800) # Set the window size
         
         # Initialize variables
-        self.images = []
-        self.audio_file = ""
-        self.output_file = "output.mp4"
+        self.images = [] # List to store image paths and durations
+        self.audio_file = "" # Path to the audio file
+        self.output_file = "output.mp4" # Default output file name
         
-        self.create_ui()
-        
+        self.create_ui()  # Create the user interface
+    
+    """User Interface"""
     def create_ui(self):
+        # Create the main widget
         main_widget = QWidget()
         main_layout = QHBoxLayout(main_widget)
         
-        # Left Panel - Image List with Durations
+        """Left Panel - Image List with Durations"""
         left_panel = QVBoxLayout()
 
-        btn_set_duration = QPushButton("Set Duration")
+        btn_set_duration = QPushButton("Set Duration") # Button to set duration
         btn_set_duration.clicked.connect(self.set_image_duration)
         
         
         # Initialize the image_table attribute
-        self.image_table = QTableWidget()
+        self.image_table = QTableWidget() 
         self.image_table.setColumnCount(2)
         self.image_table.setHorizontalHeaderLabels(["Image", "Duration (sec)"])
         self.image_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)    
         self.image_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         
-        btn_add_images = QPushButton("Add Images")
+        btn_add_images = QPushButton("Add Images") # Button to add images
         btn_add_images.clicked.connect(self.add_images)
         
-        btn_add_audio = QPushButton("Add Music")
+        btn_add_audio = QPushButton("Add Music") # Button to add audio
         btn_add_audio.clicked.connect(self.add_audio)
 
         # For Images
-        move_up_image_btn = QPushButton("Move Up", self)
-        move_down_image_btn = QPushButton("Move Down", self)
-        delete_image_btn = QPushButton("Delete Image", self)
+        move_up_image_btn = QPushButton("Move Up", self) # Button to move image up
+        move_down_image_btn = QPushButton("Move Down", self) # Button to move image down
+        delete_image_btn = QPushButton("Delete Image", self) # Button to delete image
+        """-------------------------------"""
+        move_up_image_btn.clicked.connect(self.move_image_up)
+        move_down_image_btn.clicked.connect(self.move_image_down)
+        delete_image_btn.clicked.connect(self.delete_image)
+
 
         # For Audio
-        move_up_audio_btn = QPushButton("Move Up", self)
-        move_down_audio_btn = QPushButton("Move Down", self)
-        delete_audio_btn = QPushButton("Delete Audio", self)
-        
-        left_panel.addWidget(QLabel("Slides:"))
-        left_panel.addWidget(self.image_table)
-        left_panel.addWidget(btn_add_images)
-        left_panel.addWidget(move_up_image_btn)
-        left_panel.addWidget(move_down_image_btn)
-        left_panel.addWidget(delete_image_btn)
-        left_panel.addWidget(btn_set_duration)
-
-
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 100)
-        self.progress_bar.setValue(0)  # Start at 0%
-        
+        move_up_audio_btn = QPushButton("Move Up", self) # Button to move audio up
+        move_down_audio_btn = QPushButton("Move Down", self) # Button to move audio down
+        delete_audio_btn = QPushButton("Delete Audio", self) # Button to delete audio
+        """-------------------------------"""
+        move_up_audio_btn.clicked.connect(self.move_audio_up)
+        move_down_audio_btn.clicked.connect(self.move_audio_down)
+        delete_audio_btn.clicked.connect(self.delete_audio)
 
         
-        # Center Panel - Preview
+        left_panel.addWidget(QLabel("Slides:")) # Add label
+        left_panel.addWidget(self.image_table) # Add image table
+        left_panel.addWidget(btn_add_images) # Add button to add images
+        left_panel.addWidget(move_up_image_btn) # Add button to move image up
+        left_panel.addWidget(move_down_image_btn) # Add button to move image down
+        left_panel.addWidget(delete_image_btn) # Add button to delete image
+        left_panel.addWidget(btn_set_duration) # Add button to set duration
+
+
+        """Center Panel - Preview"""
         center_panel = QVBoxLayout()
         self.preview_label = QLabel("Preview")
         self.preview_label.setAlignment(Qt.AlignCenter)
         self.preview_label.setStyleSheet("border: 1px solid #444; background: #222;")
         
-        self.timeline_slider = QSlider(Qt.Horizontal)
-        self.timeline_slider.setEnabled(False)
         
         center_panel.addWidget(self.preview_label)
-        center_panel.addWidget(self.timeline_slider)
+
         
-        # Right Panel - Settings
+        """Right Panel - Audio Files"""
         right_panel = QVBoxLayout()
-        right_panel.addWidget(QLabel("Settings"))
         
+
+        self.progress_bar = QProgressBar() # Progress bar
+        self.progress_bar.setRange(0, 100) # Set range
+        self.progress_bar.setValue(0)  # Start at 0%
+
+
         # New Audio Files Table
         self.audio_table = QTableWidget()
         self.audio_table.setColumnCount(2)
@@ -103,11 +115,6 @@ class SlideshowCreator(QMainWindow):
         right_panel.addWidget(move_up_audio_btn)
         right_panel.addWidget(move_down_audio_btn)
         right_panel.addWidget(delete_audio_btn)
-
-        
-
-        
-
 
         # Export Button
         btn_export = QPushButton("Export Slideshow")
@@ -126,17 +133,13 @@ class SlideshowCreator(QMainWindow):
         # Initialize audio files list
         self.audio_files = []
 
-        # For Images
-        move_up_image_btn.clicked.connect(self.move_image_up)
-        move_down_image_btn.clicked.connect(self.move_image_down)
-        delete_image_btn.clicked.connect(self.delete_image)
-
-        # For Audio
-        move_up_audio_btn.clicked.connect(self.move_audio_up)
-        move_down_audio_btn.clicked.connect(self.move_audio_down)
-        delete_audio_btn.clicked.connect(self.delete_audio)
 
 
+
+
+
+
+    """01_Images Functions"""
     def set_image_duration(self):
         selected_items = self.image_table.selectedItems()
         if selected_items:
@@ -146,8 +149,6 @@ class SlideshowCreator(QMainWindow):
                 self.images[row]['duration'] = duration
                 self.update_image_table()  # Refresh the table to show updated duration
 
-
-
     def add_images(self):
         files, _ = QFileDialog.getOpenFileNames(self, "Select Images", "", "Images (*.png *.jpg *.jpeg *.bmp *.gif)")
         if files:
@@ -156,33 +157,51 @@ class SlideshowCreator(QMainWindow):
             self.update_image_table()
             print("Images added:", self.images)  # Debugging output
 
+    def update_image_table(self):
+        self.image_table.setRowCount(len(self.images))
+        for row, img in enumerate(self.images):
+            # Create NEW QTableWidgetItem instances each time
+            path_item = QTableWidgetItem(img['path'])  # Fresh item
+            duration_item = QTableWidgetItem(str(img.get('duration', 5)))  # Fresh item
+            
+            self.image_table.setItem(row, 0, path_item)
+            self.image_table.setItem(row, 1, duration_item)
+
+    def move_image_up(self):
+        selected_items = self.image_table.selectedItems()
+        if selected_items:
+            row = self.image_table.row(selected_items[0])
+            if row > 0:
+                self.images[row], self.images[row - 1] = self.images[row - 1], self.images[row]
+                self.update_image_table()
+
+    def move_image_down(self):
+        selected_items = self.image_table.selectedItems()
+        if selected_items:
+            row = self.image_table.row(selected_items[0])
+            if row < len(self.images) - 1:
+                self.images[row], self.images[row + 1] = self.images[row + 1], self.images[row]
+                self.update_image_table()
+
+    def delete_image(self):
+        selected_items = self.image_table.selectedItems()
+        if selected_items:
+            row = self.image_table.row(selected_items[0])
+            del self.images[row]
+            self.update_image_table()
+
+
+
+
+
+
+    """02_Audio Functions"""
     def add_audio(self):
         file, _ = QFileDialog.getOpenFileName(self, "Select Audio", "", "Audio Files (*.mp3 *.wav *.flac)")
         if file:
             self.audio_files.append({'path': file, 'duration': 0})  # Default duration 0 or set as needed
             self.update_audio_table()
             print("Audio added:", self.audio_files)  # Debugging output
-
-
-    """def show_duration_options(self):
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Duration Mismatch")
-
-        btn_silence = QPushButton("Export with Silence")
-        btn_add_song = QPushButton("Add Another Song")
-        btn_adjust = QPushButton("Adjust Image Durations")
-
-        # Connect buttons to actions
-        btn_silence.clicked.connect(lambda: self.handle_export(export_type="silence"))
-        btn_add_song.clicked.connect(lambda: self.handle_export(export_type="add_song"))
-        btn_adjust.clicked.connect(lambda: self.handle_export(export_type="adjust_durations"))
-
-        layout = QVBoxLayout()
-        layout.addWidget(btn_silence)
-        layout.addWidget(btn_add_song)
-        layout.addWidget(btn_adjust)
-        dialog.setLayout(layout)
-        dialog.exec_()"""
 
     def update_audio_table(self):
         self.audio_table.setRowCount(len(self.audio_files))
@@ -191,6 +210,34 @@ class SlideshowCreator(QMainWindow):
             duration_item = QTableWidgetItem(str(audio.get('duration', 0)))  # Default duration
             self.audio_table.setItem(row, 0, path_item)
             self.audio_table.setItem(row, 1, duration_item)
+
+    def move_audio_up(self):
+        selected_items = self.audio_table.selectedItems()
+        if selected_items:
+            row = self.audio_table.row(selected_items[0])
+            if row > 0:
+                self.audio_files[row], self.audio_files[row - 1] = self.audio_files[row - 1], self.audio_files[row]
+                self.update_audio_table()
+
+    def move_audio_down(self):
+        selected_items = self.audio_table.selectedItems()
+        if selected_items:
+            row = self.audio_table.row(selected_items[0])
+            if row < len(self.audio_files) - 1:
+                self.audio_files[row], self.audio_files[row + 1] = self.audio_files[row + 1], self.audio_files[row]
+                self.update_audio_table()
+
+    def delete_audio(self):
+        selected_items = self.audio_table.selectedItems()
+        if selected_items:
+            row = self.audio_table.row(selected_items[0])
+            del self.audio_files[row]
+            self.update_audio_table()
+
+
+
+
+    """03_Export Functions"""
 
     def export_slideshow(self):
         print("Images:", self.images)  # Debugging output
@@ -212,27 +259,6 @@ class SlideshowCreator(QMainWindow):
         self.progress_bar.setValue(0)  # Reset progress bar
         self.process.start(command)
 
-
-
-
-    def update_progress(self):
-        output = self.process.readAllStandardError().data().decode("utf-8")  # FFmpeg logs
-        print(output)
-
-        # Extract progress percentage from FFmpeg logs
-        for line in output.split("\n"):
-            if "time=" in line:
-                time_str = line.split("time=")[1].split(" ")[0]
-                time_parts = time_str.split(":")
-                if len(time_parts) == 3:
-                    hours, minutes, seconds = map(float, time_parts)
-                    current_time = hours * 3600 + minutes * 60 + seconds
-
-                    # Estimate progress percentage
-                    total_duration = sum(img['duration'] for img in self.images)
-                    progress = int((current_time / total_duration) * 100)
-                    self.progress_bar.setValue(progress)
-
     def export_finished(self):
         self.progress_bar.setValue(100)  # Mark as complete
         msg = QMessageBox()
@@ -241,16 +267,6 @@ class SlideshowCreator(QMainWindow):
         msg.setText("Export finished successfully!")
         msg.setStandardButtons(QMessageBox.Ok)
         msg.exec_()
-
-    def update_image_table(self):
-        self.image_table.setRowCount(len(self.images))
-        for row, img in enumerate(self.images):
-            # Create NEW QTableWidgetItem instances each time
-            path_item = QTableWidgetItem(img['path'])  # Fresh item
-            duration_item = QTableWidgetItem(str(img.get('duration', 5)))  # Fresh item
-            
-            self.image_table.setItem(row, 0, path_item)
-            self.image_table.setItem(row, 1, duration_item)
 
     def build_ffmpeg_command(self):
         inputs = []
@@ -320,6 +336,29 @@ class SlideshowCreator(QMainWindow):
         return command
 
 
+
+    """04_Progress Functions"""
+    def update_progress(self):
+        output = self.process.readAllStandardError().data().decode("utf-8")  # FFmpeg logs
+        print(output)
+
+        # Extract progress percentage from FFmpeg logs
+        for line in output.split("\n"):
+            if "time=" in line:
+                time_str = line.split("time=")[1].split(" ")[0]
+                time_parts = time_str.split(":")
+                if len(time_parts) == 3:
+                    hours, minutes, seconds = map(float, time_parts)
+                    current_time = hours * 3600 + minutes * 60 + seconds
+
+                    # Estimate progress percentage
+                    total_duration = sum(img['duration'] for img in self.images)
+                    progress = int((current_time / total_duration) * 100)
+                    self.progress_bar.setValue(progress)
+
+
+
+    """05_Preview Functions"""
     def update_preview(self):
         """Update preview when a slide is selected"""
         selected_items = self.image_table.selectedItems()  # Changed from image_list to image_table
@@ -335,38 +374,9 @@ class SlideshowCreator(QMainWindow):
         # Connect table selection changes to preview updates
         self.image_table.itemSelectionChanged.connect(self.update_preview)
 
-    def update_preview(self):
-        """Update preview when a slide is selected"""
-        selected_items = self.image_table.selectedItems()
-        if selected_items:
-            row = self.image_table.row(selected_items[0])
-            img_path = self.images[row]['path']
-            # Load and display the selected image in the preview
-            pixmap = QPixmap(img_path)
-            self.preview_label.setPixmap(pixmap.scaled(400, 300, Qt.KeepAspectRatio))
 
-    def add_text_overlay(self):
-        # Function to add text overlay to the selected image
-        text, ok = QInputDialog.getText(self, "Add Text Overlay", "Enter text:")
-        if ok and text:
-            current_row = self.image_table.currentRow()  # Changed from image_list to image_table
-            if current_row >= 0:
-                # Store the text overlay for the current image
-                self.image_table.item(current_row, 0).setText(f"{self.image_table.item(current_row, 0).text()} - {text}")  # Adjusted to access the correct column
 
-    def create_timeline(self):
-        # Function to create a visual representation of the timeline
-        self.timeline_slider.setEnabled(True)
-        self.timeline_slider.setMaximum(len(self.images) * 10)  # Example: 10 seconds per image
-        self.timeline_slider.valueChanged.connect(self.update_timeline)
-
-    def update_timeline(self, value):
-        # Update the preview based on the timeline slider
-        index = value // 10  # Assuming each image is displayed for 10 seconds
-        if index < len(self.images):
-            self.image_table.setCurrentCell(index, 0)  # Changed from image_list to image_table
-            self.update_preview()
-
+    """06_Project Functions"""
     def clear_project(self):
         self.images.clear()
         self.audio_files.clear()  # Clear audio files
@@ -413,55 +423,7 @@ class SlideshowCreator(QMainWindow):
 
 
 
-    def move_image_up(self):
-        selected_items = self.image_table.selectedItems()
-        if selected_items:
-            row = self.image_table.row(selected_items[0])
-            if row > 0:
-                self.images[row], self.images[row - 1] = self.images[row - 1], self.images[row]
-                self.update_image_table()
-
-    def move_image_down(self):
-        selected_items = self.image_table.selectedItems()
-        if selected_items:
-            row = self.image_table.row(selected_items[0])
-            if row < len(self.images) - 1:
-                self.images[row], self.images[row + 1] = self.images[row + 1], self.images[row]
-                self.update_image_table()
-
-    def delete_image(self):
-        selected_items = self.image_table.selectedItems()
-        if selected_items:
-            row = self.image_table.row(selected_items[0])
-            del self.images[row]
-            self.update_image_table()
-
-
-
-    def move_audio_up(self):
-        selected_items = self.audio_table.selectedItems()
-        if selected_items:
-            row = self.audio_table.row(selected_items[0])
-            if row > 0:
-                self.audio_files[row], self.audio_files[row - 1] = self.audio_files[row - 1], self.audio_files[row]
-                self.update_audio_table()
-
-    def move_audio_down(self):
-        selected_items = self.audio_table.selectedItems()
-        if selected_items:
-            row = self.audio_table.row(selected_items[0])
-            if row < len(self.audio_files) - 1:
-                self.audio_files[row], self.audio_files[row + 1] = self.audio_files[row + 1], self.audio_files[row]
-                self.update_audio_table()
-
-    def delete_audio(self):
-        selected_items = self.audio_table.selectedItems()
-        if selected_items:
-            row = self.audio_table.row(selected_items[0])
-            del self.audio_files[row]
-            self.update_audio_table()
-
-
+    """07_Menu Functions"""
     def create_menu(self):
         # Function to create a menu bar
         menubar = self.menuBar()
@@ -478,6 +440,8 @@ class SlideshowCreator(QMainWindow):
         clear_action = QAction("Clear Project", self)
         clear_action.triggered.connect(self.clear_project)
         file_menu.addAction(clear_action)
+
+
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
