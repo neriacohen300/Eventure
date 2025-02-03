@@ -3,13 +3,10 @@
 import sys
 import os
 import subprocess
-import time
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QInputDialog, QAction,
                              QListWidget,QProgressBar,QMessageBox,QDialog, QPushButton, QLabel, QFileDialog, QSlider, QStyle, QTableWidgetItem, QSpinBox, QHeaderView, QTableWidget)
 from PyQt5.QtCore import Qt, QUrl, QSize, QProcess, QTimer
 from PyQt5.QtGui import QIcon, QFont, QPixmap
-from PyQt5.QtMultimedia import QMediaPlaylist, QMediaPlayer, QMediaContent
-from PyQt5.QtMultimediaWidgets import QVideoWidget
 from PIL import Image, ImageFilter
 import Image_resizer
 
@@ -88,12 +85,9 @@ class SlideshowCreator(QMainWindow):
         self.preview_label = QLabel("Preview")
         self.preview_label.setAlignment(Qt.AlignCenter)
         self.preview_label.setStyleSheet("border: 1px solid #444; background: #222;")
-
-        preview_btn = QPushButton("Preview")
-        preview_btn.clicked.connect(self.preview_slideshow)
+        
         
         center_panel.addWidget(self.preview_label)
-        center_panel.addWidget(preview_btn)
 
         
         """Right Panel - Audio Files"""
@@ -388,75 +382,6 @@ class SlideshowCreator(QMainWindow):
         # Connect table selection changes to preview updates
         self.image_table.itemSelectionChanged.connect(self.update_preview)
 
-    def update_preview_with_image(self, img_path):
-            # Load and display the selected image in the preview
-            pixmap = QPixmap(img_path)
-            self.preview_label.setPixmap(pixmap.scaled(400, 300, Qt.KeepAspectRatio))
-
-    def preview_slideshow(self):
-        """Preview the slideshow with background music and multiple songs"""
-        self.current_preview_index = 0  # Track current image index
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.show_next_preview_image)
-
-        if self.audio_files:  # If audio files exist, play them
-            self.start_music()
-
-        self.show_next_preview_image()  # Show the first image
-        self.timer.start(self.images[self.current_preview_index]['duration'] * 1000)  # Start timer
-
-    def show_next_preview_image(self):
-        """Show the next image in the slideshow"""
-        if self.current_preview_index < len(self.images):
-            img_path = self.images[self.current_preview_index]['path']
-            self.update_preview_with_image(img_path)
-
-            # Move to the next image
-            self.current_preview_index += 1
-
-            # If there are more images, set the timer for the next one
-            if self.current_preview_index < len(self.images):
-                self.timer.start(self.images[self.current_preview_index]['duration'] * 1000)
-            else:
-                # The last image is shown, wait for its duration before stopping everything
-                self.end_timer = QTimer(self)
-                self.end_timer.setSingleShot(True)
-                self.end_timer.timeout.connect(self.finish_slideshow)
-                self.end_timer.start(self.images[self.current_preview_index - 1]['duration'] * 1000)  # Wait for last image duration
-
-    def finish_slideshow(self):
-        """Stops music and shows completion message after the last image duration"""
-        self.stop_music()
-
-        msg = QMessageBox()
-        msg.setIcon(QMessageBox.Information)
-        msg.setWindowTitle("Preview Complete")
-        msg.setText("Preview viewed successfully!")
-        msg.setStandardButtons(QMessageBox.Ok)
-        msg.exec_()
-
-        # Reset preview to the first image
-        self.update_preview_with_image(self.images[0]['path'])
-
-    def start_music(self):
-        """Play background music with multiple songs"""
-        self.player = QMediaPlayer()
-        self.playlist = QMediaPlaylist()
-
-        for audio in self.audio_files:
-            self.playlist.addMedia(QMediaContent(QUrl.fromLocalFile(audio['path'])))
-
-        self.playlist.setPlaybackMode(QMediaPlaylist.Loop)  # Loop the playlist if needed
-        self.player.setPlaylist(self.playlist)
-        self.player.setVolume(50)  # Adjust volume (0-100)
-        self.player.play()
-
-    def stop_music(self):
-        """Stop the background music"""
-        if hasattr(self, 'player') and self.player.state() == QMediaPlayer.PlayingState:
-            self.player.stop()
-        
-
 
 
     """06_Project Functions"""
@@ -466,6 +391,7 @@ class SlideshowCreator(QMainWindow):
         self.image_table.setRowCount(0)  # Proper way to clear the table
         self.audio_table.setRowCount(0)  # Clear audio table
         self.preview_label.clear()
+        self.timeline_slider.setEnabled(False)
 
     def save_project(self):
         options = QFileDialog.Options()
