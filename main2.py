@@ -246,6 +246,14 @@ class SlideshowCreator(QMainWindow):
             print("Please add images and audio before exporting.")
             return
         
+        options = QFileDialog.Options()
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save Slideshow", "", "Video Files (*.mp4);;All Files (*)", options=options)
+        if file_path:
+            self.output_file = file_path
+        else:
+            print("Please select a location for the exported video.")
+            return
+
         # Create FFmpeg command
         command = self.build_ffmpeg_command()
         print("Exporting with command:", command)
