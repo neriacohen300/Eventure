@@ -22,6 +22,11 @@ class SlideshowCreator(QMainWindow):
         self.images = [] # List to store image paths and durations
         self.audio_file = "" # Path to the audio file
         self.output_file = "output.mp4" # Default output file name
+        self.button_font = "Segoe UI"
+        self.deafult_font = "Segoe UI"
+        self.text_font = "Segoe UI"
+        self.text_font_size = 10
+        self.button_font_size = 9
         
         self.create_ui()  # Create the user interface
     
@@ -35,6 +40,7 @@ class SlideshowCreator(QMainWindow):
         left_panel = QVBoxLayout()
 
         btn_set_duration = QPushButton("Set Duration") # Button to set duration
+        btn_set_duration.setFont(QFont(self.button_font, self.button_font_size, QFont.Bold))
         btn_set_duration.clicked.connect(self.set_image_duration)
         
         
@@ -42,36 +48,34 @@ class SlideshowCreator(QMainWindow):
         self.image_table = QTableWidget() 
         self.image_table.setColumnCount(2)
         self.image_table.setHorizontalHeaderLabels(["Image", "Duration (sec)"])
+        self.image_table.setFont(QFont(self.deafult_font, 10, QFont.Bold))
         self.image_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)    
         self.image_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         
         btn_add_images = QPushButton("Add Images") # Button to add images
+        btn_add_images.setFont(QFont(self.button_font, self.button_font_size, QFont.Bold))
         btn_add_images.clicked.connect(self.add_images)
         
         btn_add_audio = QPushButton("Add Music") # Button to add audio
+        btn_add_audio.setFont(QFont(self.button_font, self.button_font_size, QFont.Bold))
         btn_add_audio.clicked.connect(self.add_audio)
 
         # For Images
         move_up_image_btn = QPushButton("Move Up", self) # Button to move image up
+        move_up_image_btn.setFont(QFont(self.button_font, self.button_font_size, QFont.Bold))
         move_down_image_btn = QPushButton("Move Down", self) # Button to move image down
+        move_down_image_btn.setFont(QFont(self.button_font, self.button_font_size, QFont.Bold))
         delete_image_btn = QPushButton("Delete Image", self) # Button to delete image
+        delete_image_btn.setFont(QFont(self.button_font, self.button_font_size, QFont.Bold))
         """-------------------------------"""
         move_up_image_btn.clicked.connect(self.move_image_up)
         move_down_image_btn.clicked.connect(self.move_image_down)
         delete_image_btn.clicked.connect(self.delete_image)
 
 
-        # For Audio
-        move_up_audio_btn = QPushButton("Move Up", self) # Button to move audio up
-        move_down_audio_btn = QPushButton("Move Down", self) # Button to move audio down
-        delete_audio_btn = QPushButton("Delete Audio", self) # Button to delete audio
-        """-------------------------------"""
-        move_up_audio_btn.clicked.connect(self.move_audio_up)
-        move_down_audio_btn.clicked.connect(self.move_audio_down)
-        delete_audio_btn.clicked.connect(self.delete_audio)
-
-        
-        left_panel.addWidget(QLabel("Slides:")) # Add label
+        slides_label = QLabel("Slides")
+        slides_label.setFont(QFont(self.text_font, self.text_font_size, QFont.Bold))
+        left_panel.addWidget(slides_label) # Add label
         left_panel.addWidget(self.image_table) # Add image table
         left_panel.addWidget(btn_add_images) # Add button to add images
         left_panel.addWidget(move_up_image_btn) # Add button to move image up
@@ -83,6 +87,8 @@ class SlideshowCreator(QMainWindow):
         """Center Panel - Preview"""
         center_panel = QVBoxLayout()
         self.preview_label = QLabel("Preview")
+        self.preview_label.setFont(QFont(self.text_font, 16, QFont.Bold))
+
         self.preview_label.setAlignment(Qt.AlignCenter)
         self.preview_label.setStyleSheet("border: 1px solid #444; background: #222;")
         
@@ -103,11 +109,26 @@ class SlideshowCreator(QMainWindow):
         self.audio_table = QTableWidget()
         self.audio_table.setColumnCount(2)
         self.audio_table.setHorizontalHeaderLabels(["Audio File", "Duration (sec)"])
+        self.audio_table.setFont(QFont(self.deafult_font, 10, QFont.Bold))
         self.audio_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.audio_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         
-        right_panel.addWidget(QLabel("Audio Files:"))
+        audio_files_label = QLabel("Audio Files:")
+        audio_files_label.setFont(QFont(self.text_font, self.text_font_size, QFont.Bold))
+        right_panel.addWidget(audio_files_label)
         right_panel.addWidget(self.audio_table)
+
+        # For Audio
+        move_up_audio_btn = QPushButton("Move Up", self) # Button to move audio up
+        move_up_audio_btn.setFont(QFont(self.button_font, self.button_font_size, QFont.Bold))
+        move_down_audio_btn = QPushButton("Move Down", self) # Button to move audio down
+        move_down_audio_btn.setFont(QFont(self.button_font, self.button_font_size, QFont.Bold))
+        delete_audio_btn = QPushButton("Delete Audio", self) # Button to delete audio
+        delete_audio_btn.setFont(QFont(self.button_font, self.button_font_size, QFont.Bold))
+        """-------------------------------"""
+        move_up_audio_btn.clicked.connect(self.move_audio_up)
+        move_down_audio_btn.clicked.connect(self.move_audio_down)
+        delete_audio_btn.clicked.connect(self.delete_audio)
 
 
         
@@ -119,6 +140,7 @@ class SlideshowCreator(QMainWindow):
         # Export Button
         btn_export = QPushButton("Export Slideshow")
         btn_export.clicked.connect(self.export_slideshow)
+        btn_export.setFont(QFont(self.button_font, self.button_font_size, QFont.Bold))
         right_panel.addWidget(btn_export)
 
         right_panel.addWidget(self.progress_bar)
