@@ -105,18 +105,19 @@ class SlideshowCreator(QMainWindow):
 
         self.preview_label.setAlignment(Qt.AlignCenter)
         self.preview_label.setStyleSheet("border: 1px solid #444; background: #222;")
-        
-        
-        center_panel.addWidget(self.preview_label)
-
-        
-        """Right Panel - Audio Files"""
-        right_panel = QVBoxLayout()
-        
 
         self.progress_bar = QProgressBar() # Progress bar
         self.progress_bar.setRange(0, 100) # Set range
         self.progress_bar.setValue(0)  # Start at 0%
+        self.progress_bar.setVisible(False)
+        
+        
+        center_panel.addWidget(self.preview_label)
+        center_panel.addWidget(self.progress_bar)
+
+        
+        """Right Panel - Audio Files"""
+        right_panel = QVBoxLayout()
 
 
         # New Audio Files Table
@@ -174,8 +175,6 @@ class SlideshowCreator(QMainWindow):
                                     'QPushButton:hover { background-color: #005a9e; }')
         btn_export.setCursor(QCursor(Qt.PointingHandCursor))  # Add hover effect
         right_panel.addWidget(btn_export)
-
-        right_panel.addWidget(self.progress_bar)
         
         # Add panels to main layout
         main_layout.addLayout(left_panel , 1)
@@ -339,12 +338,14 @@ class SlideshowCreator(QMainWindow):
         command = self.build_ffmpeg_command()
         print("Exporting with command:", command)
         
+        
         # Execute FFmpeg command
         self.process = QProcess(self)
         self.process.readyReadStandardOutput.connect(self.update_progress)
         self.process.readyReadStandardError.connect(self.update_progress)  # Capture FFmpeg logs
         self.process.finished.connect(self.export_finished)
 
+        self.progress_bar.setVisible(True)    
         self.progress_bar.setValue(0)  # Reset progress bar
         self.process.start(command)
 
@@ -356,6 +357,8 @@ class SlideshowCreator(QMainWindow):
         msg.setText("Export finished successfully!")
         msg.setStandardButtons(QMessageBox.Ok)
         msg.exec_()
+
+        self.progress_bar.setVisible(False)    
 
     def build_ffmpeg_command(self):
         inputs = []
