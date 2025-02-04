@@ -211,7 +211,7 @@ class SlideshowCreator(QMainWindow):
                 row = item.row()
                 item.setText(str(self.images[row]['duration']))
 
-            print("Duration updated:", self.images[row]['duration'], "\n")  # Debugging output
+            print(f"Duration updated for {self.images[row]['path']}    ----   {self.images[row]['duration']} \n")  # Debugging output
     def set_all_images_duration(self):
         selected_items = self.image_table.selectedItems()
         if selected_items:
@@ -235,12 +235,13 @@ class SlideshowCreator(QMainWindow):
         self.image_table.setRowCount(len(self.images))
         for row, img in enumerate(self.images):
             # Create NEW QTableWidgetItem instances each time
-            path_item = QTableWidgetItem(img['path'])  # Fresh item
+            path_img = os.path.basename(img['path'])
+            filename_item = QTableWidgetItem(path_img)  # Fresh item
             duration_item = QTableWidgetItem(str(img.get('duration', 5)))  # Fresh item
-            path_item.setFlags(path_item.flags() & ~Qt.ItemIsEditable)  # Make the item non-editable
+            filename_item.setFlags(filename_item.flags() & ~Qt.ItemIsEditable)  # Make the item non-editable
 
             
-            self.image_table.setItem(row, 0, path_item)
+            self.image_table.setItem(row, 0, filename_item)
             self.image_table.setItem(row, 1, duration_item)
 
     def move_image_up(self):
