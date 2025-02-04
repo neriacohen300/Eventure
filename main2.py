@@ -250,6 +250,7 @@ class SlideshowCreator(QMainWindow):
             row = self.image_table.row(selected_items[0])
             if row > 0:
                 self.images[row], self.images[row - 1] = self.images[row - 1], self.images[row]
+                self.image_table.setCurrentItem(self.image_table.item(row - 1, 0))
                 self.update_image_table()
 
     def move_image_down(self):
@@ -258,6 +259,7 @@ class SlideshowCreator(QMainWindow):
             row = self.image_table.row(selected_items[0])
             if row < len(self.images) - 1:
                 self.images[row], self.images[row + 1] = self.images[row + 1], self.images[row]
+                self.image_table.setCurrentItem(self.image_table.item(row + 1, 0))
                 self.update_image_table()
 
     def delete_image(self):
@@ -294,6 +296,7 @@ class SlideshowCreator(QMainWindow):
             row = self.audio_table.row(selected_items[0])
             if row > 0:
                 self.audio_files[row], self.audio_files[row - 1] = self.audio_files[row - 1], self.audio_files[row]
+                self.audio_table.setCurrentItem(self.audio_table.item(row - 1, 0))
                 self.update_audio_table()
 
     def move_audio_down(self):
@@ -302,6 +305,7 @@ class SlideshowCreator(QMainWindow):
             row = self.audio_table.row(selected_items[0])
             if row < len(self.audio_files) - 1:
                 self.audio_files[row], self.audio_files[row + 1] = self.audio_files[row + 1], self.audio_files[row]
+                self.audio_table.setCurrentItem(self.audio_table.item(row + 1, 0))
                 self.update_audio_table()
 
     def delete_audio(self):
