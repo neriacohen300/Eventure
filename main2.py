@@ -283,9 +283,10 @@ class SlideshowCreator(QMainWindow):
     def update_audio_table(self):
         self.audio_table.setRowCount(len(self.audio_files))
         for row, audio in enumerate(self.audio_files):
-            path_item = QTableWidgetItem(audio['path'])
-            path_item.setFlags(path_item.flags() & ~Qt.ItemIsEditable)  # Make the item non-editable
-            self.audio_table.setItem(row, 0, path_item)
+            filename = os.path.basename(audio['path'])
+            filename_item = QTableWidgetItem(filename)
+            filename_item.setFlags(filename_item.flags() & ~Qt.ItemIsEditable)  # Make the item non-editable
+            self.audio_table.setItem(row, 0, filename_item)
 
     def move_audio_up(self):
         selected_items = self.audio_table.selectedItems()
