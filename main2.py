@@ -39,12 +39,12 @@ class SlideshowCreator(QMainWindow):
         """Left Panel - Image List with Durations"""
         left_panel = QVBoxLayout()
 
-        btn_set_duration = QPushButton("Set Duration") # Button to set duration
-        btn_set_duration.setFont(QFont(self.button_font, self.button_font_size, QFont.Bold))
-        btn_set_duration.setStyleSheet('QPushButton { background-color: #0078d4; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
+        btn_set_all_img_duration = QPushButton("Set All Images Duration") # Button to set duration
+        btn_set_all_img_duration.setFont(QFont(self.button_font, self.button_font_size, QFont.Bold))
+        btn_set_all_img_duration.setStyleSheet('QPushButton { background-color: #0078d4; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
                                     'QPushButton:hover { background-color: #005a9e; }')
-        btn_set_duration.setCursor(QCursor(Qt.PointingHandCursor))  # Add hover effect
-        btn_set_duration.clicked.connect(self.set_image_duration)
+        btn_set_all_img_duration.setCursor(QCursor(Qt.PointingHandCursor))  # Add hover effect
+        btn_set_all_img_duration.clicked.connect(self.set_all_images_duration)
         
         
         # Initialize the image_table attribute
@@ -54,6 +54,8 @@ class SlideshowCreator(QMainWindow):
         self.image_table.setFont(QFont(self.deafult_font, 10, QFont.Bold))
         self.image_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)    
         self.image_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+
+        self.image_table.itemChanged.connect(self.on_duration_edit_on_table)
         
         btn_add_images = QPushButton("Add Images") # Button to add images
         btn_add_images.setFont(QFont(self.button_font, self.button_font_size, QFont.Bold))
@@ -93,7 +95,7 @@ class SlideshowCreator(QMainWindow):
         left_panel.addWidget(move_up_image_btn) # Add button to move image up
         left_panel.addWidget(move_down_image_btn) # Add button to move image down
         left_panel.addWidget(delete_image_btn) # Add button to delete image
-        left_panel.addWidget(btn_set_duration) # Add button to set duration
+        left_panel.addWidget(btn_set_all_img_duration) # Add button to set duration
 
 
         """Center Panel - Preview"""
@@ -119,11 +121,10 @@ class SlideshowCreator(QMainWindow):
 
         # New Audio Files Table
         self.audio_table = QTableWidget()
-        self.audio_table.setColumnCount(2)
-        self.audio_table.setHorizontalHeaderLabels(["Audio File", "Duration (sec)"])
+        self.audio_table.setColumnCount(1)
+        self.audio_table.setHorizontalHeaderLabels(["Audio File"])
         self.audio_table.setFont(QFont(self.deafult_font, 10, QFont.Bold))
         self.audio_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.audio_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         
         audio_files_label = QLabel("Audio Files:")
         audio_files_label.setFont(QFont(self.text_font, self.text_font_size, QFont.Bold))
@@ -193,15 +194,35 @@ class SlideshowCreator(QMainWindow):
 
 
     """01_Images Functions"""
-    def set_image_duration(self):
+    
+    """01_01_Duration Functions"""
+    def on_duration_edit_on_table(self, item):
+        """Handles editing the 'Duration' column."""
+        column = item.column()
+        if column == 1:  # Only handle edits for the 'Duration' column
+            try:
+                new_duration = int(item.text())
+                if new_duration < 1 or new_duration > 600:
+                    raise ValueError("Duration out of range (1-600).")
+                row = item.row()
+                self.images[row]['duration'] = new_duration  # Update the image data
+            except ValueError:
+                # Revert to the previous value if the input is invalid
+                row = item.row()
+                item.setText(str(self.images[row]['duration']))
+
+            print("Duration updated:", self.images[row]['duration'], "\n")  # Debugging output
+    def set_all_images_duration(self):
         selected_items = self.image_table.selectedItems()
         if selected_items:
             row = self.image_table.row(selected_items[0])
-            duration, ok = QInputDialog.getInt(self, "Set Duration", "Enter duration in seconds:", self.images[row]['duration'], 1, 600)
+            new_duration, ok = QInputDialog.getInt(self, "Set Duration", "Enter duration in seconds:", self.images[row]['duration'], 1, 600)
             if ok:
-                self.images[row]['duration'] = duration
-                self.update_image_table()  # Refresh the table to show updated duration
+                for i in range(len(self.images)):
+                    self.images[i]['duration'] = new_duration
+                self.update_image_table()
 
+    """01_02_Images Implementation Functions"""
     def add_images(self):
         files, _ = QFileDialog.getOpenFileNames(self, "Select Images", "", "Images (*.png *.jpg *.jpeg *.bmp *.gif)")
         if files:
@@ -216,6 +237,8 @@ class SlideshowCreator(QMainWindow):
             # Create NEW QTableWidgetItem instances each time
             path_item = QTableWidgetItem(img['path'])  # Fresh item
             duration_item = QTableWidgetItem(str(img.get('duration', 5)))  # Fresh item
+            path_item.setFlags(path_item.flags() & ~Qt.ItemIsEditable)  # Make the item non-editable
+
             
             self.image_table.setItem(row, 0, path_item)
             self.image_table.setItem(row, 1, duration_item)
@@ -252,7 +275,7 @@ class SlideshowCreator(QMainWindow):
     def add_audio(self):
         file, _ = QFileDialog.getOpenFileName(self, "Select Audio", "", "Audio Files (*.mp3 *.wav *.flac)")
         if file:
-            self.audio_files.append({'path': file, 'duration': 0})  # Default duration 0 or set as needed
+            self.audio_files.append({'path': file})  # Default duration 0 or set as needed
             self.update_audio_table()
             print("Audio added:", self.audio_files)  # Debugging output
 
@@ -260,9 +283,8 @@ class SlideshowCreator(QMainWindow):
         self.audio_table.setRowCount(len(self.audio_files))
         for row, audio in enumerate(self.audio_files):
             path_item = QTableWidgetItem(audio['path'])
-            duration_item = QTableWidgetItem(str(audio.get('duration', 0)))  # Default duration
+            path_item.setFlags(path_item.flags() & ~Qt.ItemIsEditable)  # Make the item non-editable
             self.audio_table.setItem(row, 0, path_item)
-            self.audio_table.setItem(row, 1, duration_item)
 
     def move_audio_up(self):
         selected_items = self.audio_table.selectedItems()
@@ -444,7 +466,6 @@ class SlideshowCreator(QMainWindow):
         self.image_table.setRowCount(0)  # Proper way to clear the table
         self.audio_table.setRowCount(0)  # Clear audio table
         self.preview_label.clear()
-        self.timeline_slider.setEnabled(False)
 
     def save_project(self):
         options = QFileDialog.Options()
