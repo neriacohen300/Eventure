@@ -236,7 +236,7 @@ class SlideshowCreator(QMainWindow):
             # Create NEW QTableWidgetItem instances each time
             path_img = os.path.basename(img['path'])
             filename_item = QTableWidgetItem(path_img)  # Fresh item
-            duration_item = QTableWidgetItem(str(img.get('duration', 5)))  # Fresh item
+            duration_item = QTableWidgetItem(str(img.get('duration', 5)))  # Fresh item, default duration is 5 seconds if not specified
             filename_item.setFlags(filename_item.flags() & ~Qt.ItemIsEditable)  # Make the item non-editable
 
             
@@ -333,6 +333,55 @@ class SlideshowCreator(QMainWindow):
         else:
             print("Please select a location for the exported video.")
             return
+        
+        total_image_duration = 0
+        #get the total image duration
+        for i in range(len(self.images)):
+            total_image_duration += self.images[i]['duration']
+        
+        #get the total audio duration
+        total_audio_duration = 0.0
+        for audio in self.audio_files:
+            audio_path = audio['path']
+            try:
+                # Enclose the file path in double quotes
+                cmd = [
+                    "ffprobe",
+                    "-v", "error",
+                    "-show_entries", "format=duration",
+                    "-of", "default=noprint_wrappers=1:nokey=1",
+                    f'"{audio_path}"'  # Quoting the path
+                ]
+                # Run the ffprobe command
+                output = subprocess.check_output(" ".join(cmd), shell=True, universal_newlines=True).strip()
+                total_audio_duration += float(output)
+            except Exception as e:
+                print(f"Error processing file {audio_path}: {e}")
+
+
+        
+        print("Total image duration:", total_image_duration, "seconds")
+        print("Total audio duration:", total_audio_duration, "seconds")
+
+        if total_image_duration > total_audio_duration:
+            msg = QMessageBox()
+            msg.setIcon(QMessageBox.Information)
+            msg.setWindowTitle("Audio and Video doesn't match")
+            msg.setText("the total image duration is bigger then the audio duration, would you like to change the audio duration to match the image duration?")
+            msg.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
+            reply = msg.exec_()
+            if reply == QMessageBox.Cancel:
+                print("Export canceled by user.")
+                return
+            else:
+                total_images = len(self.images)
+                new_duration_to_each_image = int(total_audio_duration / total_images)
+                for i in range(len(self.images)):
+                    self.images[i]['duration'] = new_duration_to_each_image
+                self.update_image_table()
+
+                
+            
 
         # Create FFmpeg command
         command = self.build_ffmpeg_command()
@@ -500,11 +549,11 @@ class SlideshowCreator(QMainWindow):
                 self.audio_files = []  # Clear existing audio files
                 if count == 1:
                     self.audio_file = lines[1].strip()  # Load the first audio file path
-                    self.audio_files.append({'path': self.audio_file, 'duration': 0})  # Add to the list
+                    self.audio_files.append({'path': self.audio_file})  # Add to the list
                 if count > 1:
                     for i in range(1, count + 1):
                         self.audio_file = lines[i].strip()  # Load the first audio file path
-                        self.audio_files.append({'path': self.audio_file, 'duration': 0})  # Add to the list
+                        self.audio_files.append({'path': self.audio_file})  # Add to the list
                 self.images = []
                 for line in lines[i+1:]:
                     path, duration = line.strip().split(',')  # Split path and duration
