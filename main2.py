@@ -445,12 +445,24 @@ class SlideshowCreator(QMainWindow):
             total_duration += duration
 
             # Ensure consistent resolution and SAR
-            filters.append(f"[{i}:v]scale={common_width}:{common_height},setsar=1,format=yuv420p[{i}v]")
+            filters.append(f"[{i}:v]scale=1920:1080,setsar=1,format=yuv420p[{i}v]")
             concat_inputs.append(f"[{i}v]")
 
-        # Concatenate images into a single video stream
+        # Add transitions between images using xfade
+        transition_duration = 1  # Duration of the transition in seconds
+        transition_type = "fade"  # Type of transition (e.g., fade, slideleft, slideright, etc.)
+
+        # Apply xfade transitions between images
+        for i in range(len(self.images) - 1):
+            offset = self.images[i]['duration'] - transition_duration  # Offset where the transition starts
+            filters.append(f"[{i}v][{i+1}v]xfade=transition={transition_type}:duration={transition_duration}:offset={offset}[v{i}{i+1}]")
+
+        # Connect the transition streams to the next stream in the chain
+        transition_streams = [f"[v{i}{i+1}]" for i in range(len(self.images) - 1)]
+
+        # Concatenate the final video stream (adjusted to the correct number of transitions)
         filter_complex = ";".join(filters)
-        filter_complex += f";{''.join(concat_inputs)}concat=n={len(self.images)}:v=1:a=0[outv]"
+        filter_complex += f";{''.join(transition_streams)}concat=n={len(self.images)-1}:v=1:a=0[outv]"
 
         # Add audio inputs
         audio_inputs = []
