@@ -409,13 +409,12 @@ class SlideshowCreator(QMainWindow):
     def build_ffmpeg_command(self):
         inputs = []
         filters = []
-        concat_inputs = []
         total_duration = 0
 
         common_width = 1920
         common_height = 1080
 
-        # Assuming self.images is a list of dictionaries with 'path' as one of the keys
+        # Assuming self.images is a list of dictionaries with 'path' and 'duration' as keys
         image_path22 = self.images[0]['path']
         output_folder22 = os.path.join(os.path.dirname(image_path22), "A_Blur")  # Ensure correct folder structure
 
@@ -438,31 +437,33 @@ class SlideshowCreator(QMainWindow):
             except Exception as e:
                 print(f"Error opening image {img}: {e}")
 
-        # Handle image inputs with durations
+        transition_duration = 1  # Duration of each transition in seconds
+            # Add image inputs and scaling filters
         for i, img in enumerate(self.images):
-            duration = img['duration']
+            if i == 0:
+                duration = img['duration']
+            else:
+                duration = img['duration'] + transition_duration
             inputs.append(f'-loop 1 -t {duration} -i "{img["path"]}"')
+            filters.append(f"[{i}:v]scale=1920:1080,setsar=1,format=yuv420p[{i}v]")
             total_duration += duration
 
-            # Ensure consistent resolution and SAR
-            filters.append(f"[{i}:v]scale=1920:1080,setsar=1,format=yuv420p[{i}v]")
-            concat_inputs.append(f"[{i}v]")
+        # Add xfade transitions
+        
+        transition_type = "fade"  # Transition type
 
-        # Add transitions between images using xfade
-        transition_duration = 1  # Duration of the transition in seconds
-        transition_type = "fade"  # Type of transition (e.g., fade, slideleft, slideright, etc.)
-
-        # Apply xfade transitions between images
         for i in range(len(self.images) - 1):
-            offset = self.images[i]['duration'] - transition_duration  # Offset where the transition starts
-            filters.append(f"[{i}v][{i+1}v]xfade=transition={transition_type}:duration={transition_duration}:offset={offset}[v{i}{i+1}]")
+            # Calculate the offset where the transition starts
+            start_offset = sum(img['duration'] for img in self.images[:i + 1]) - transition_duration
+            if i == 0:
+                # Connect the first two video streams
+                filters.append(f"[{i}v][{i+1}v]xfade=transition={transition_type}:duration={transition_duration}:offset={start_offset}[v{i+1}]")
+            else:
+                # Chain subsequent xfade transitions
+                filters.append(f"[v{i}][{i+1}v]xfade=transition={transition_type}:duration={transition_duration}:offset={start_offset}[v{i+1}]")
 
-        # Connect the transition streams to the next stream in the chain
-        transition_streams = [f"[v{i}{i+1}]" for i in range(len(self.images) - 1)]
-
-        # Concatenate the final video stream (adjusted to the correct number of transitions)
-        filter_complex = ";".join(filters)
-        filter_complex += f";{''.join(transition_streams)}concat=n={len(self.images)-1}:v=1:a=0[outv]"
+        # Final video stream
+        final_stream = f"[v{len(self.images) - 1}]"
 
         # Add audio inputs
         audio_inputs = []
@@ -473,17 +474,23 @@ class SlideshowCreator(QMainWindow):
             inputs.append(f'-i "{audio["path"]}"')
             audio_streams.append(f"[{audio_index + i}:a]")
 
-        # Concatenate audio files sequentially
+        # Concatenate audio streams if multiple audio files exist
         if len(audio_streams) > 1:
-            filter_complex += f";{''.join(audio_streams)}concat=n={len(audio_streams)}:v=0:a=1[outa]"
+            filters.append(f"{''.join(audio_streams)}concat=n={len(audio_streams)}:v=0:a=1[outa]")
             audio_map = "-map [outa]"
+        elif len(audio_streams) == 1:
+            audio_map = f"-map {audio_streams[0]}"
         else:
-            audio_map = f"-map {audio_index}:a"
+            audio_map = ""  # No audio
 
-        # Construct final command
-        command = f'ffmpeg -y {" ".join(inputs)} -filter_complex "{filter_complex}" -map "[outv]" {audio_map} -c:a aac -c:v libx264 -pix_fmt yuv420p -shortest "{self.output_file}"'
+        # Build the filter_complex
+        filter_complex = ";".join(filters)
+
+        # Construct the FFmpeg command
+        command = f'ffmpeg -y {" ".join(inputs)} -filter_complex "{filter_complex}" -map {final_stream} {audio_map} -c:a aac -c:v libx264 -pix_fmt yuv420p -preset ultrafast -shortest "{self.output_file}"'
 
         return command
+
 
 
 
