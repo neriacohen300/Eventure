@@ -4,7 +4,7 @@ import sys
 import os
 import subprocess
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QInputDialog, QAction,
-                             QListWidget,QProgressBar,QMessageBox,QDialog, QPushButton, QLabel, QFileDialog, QSlider, QStyle, QTableWidgetItem, QSpinBox, QHeaderView, QTableWidget)
+                             QListWidget,QProgressBar,QComboBox,QMessageBox,QDialog, QPushButton, QLabel, QFileDialog, QSlider, QStyle, QTableWidgetItem, QSpinBox, QHeaderView, QTableWidget)
 from PyQt5.QtCore import Qt, QUrl, QSize, QProcess, QTimer
 from PyQt5.QtGui import QIcon, QFont, QPixmap, QCursor
 from PIL import Image, ImageFilter
@@ -60,15 +60,11 @@ class SlideshowCreator(QMainWindow):
                                         "QHeaderView::section { background-color: #1E1E1E; color: white; }")
         self.image_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.image_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.image_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.image_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
 
         self.image_table.itemChanged.connect(self.on_edit_on_table)
-
-        btn_add_images = QPushButton("Add Images")
-        btn_add_images.setFont(QFont(self.button_font, self.button_font_size, QFont.Bold))
-        btn_add_images.setStyleSheet('QPushButton { background-color: #1E1E1E; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
-                                    'QPushButton:hover { background-color: #0078d4; }')
-        btn_add_images.setCursor(QCursor(Qt.PointingHandCursor))
-        btn_add_images.clicked.connect(self.add_images)
+        
 
         # For Images
         move_up_image_btn = QPushButton("Move Up", self)
@@ -95,7 +91,6 @@ class SlideshowCreator(QMainWindow):
         slides_label.setFont(QFont(self.text_font, self.text_font_size, QFont.Bold))
         left_panel.addWidget(slides_label)
         left_panel.addWidget(self.image_table)
-        left_panel.addWidget(btn_add_images)
         left_panel.addWidget(move_up_image_btn)
         left_panel.addWidget(move_down_image_btn)
         left_panel.addWidget(delete_image_btn)
@@ -154,26 +149,9 @@ class SlideshowCreator(QMainWindow):
         move_down_audio_btn.clicked.connect(self.move_audio_down)
         delete_audio_btn.clicked.connect(self.delete_audio)
 
-        btn_add_audio = QPushButton("Add Music")
-        btn_add_audio.setFont(QFont(self.button_font, self.button_font_size, QFont.Bold))
-        btn_add_audio.setStyleSheet('QPushButton { background-color: #1E1E1E; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
-                                    'QPushButton:hover { background-color: #0078d4; }')
-        btn_add_audio.setCursor(QCursor(Qt.PointingHandCursor))
-        btn_add_audio.clicked.connect(self.add_audio)
-
-        right_panel.addWidget(btn_add_audio)
         right_panel.addWidget(move_up_audio_btn)
         right_panel.addWidget(move_down_audio_btn)
         right_panel.addWidget(delete_audio_btn)
-
-        # Export Button
-        btn_export = QPushButton("Export Slideshow")
-        btn_export.clicked.connect(self.export_slideshow)
-        btn_export.setFont(QFont(self.button_font, self.button_font_size, QFont.Bold))
-        btn_export.setStyleSheet('QPushButton { background-color: #1E1E1E; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
-                                'QPushButton:hover { background-color: #0078d4; }')
-        btn_export.setCursor(QCursor(Qt.PointingHandCursor))
-        right_panel.addWidget(btn_export)
 
         # Add panels to main layout
         main_layout.addLayout(left_panel, 1)
@@ -256,16 +234,21 @@ class SlideshowCreator(QMainWindow):
             path_img = os.path.basename(img['path'])
             filename_item = QTableWidgetItem(path_img)  # Fresh item
             duration_item = QTableWidgetItem(str(img.get('duration', 5)))  # Fresh item, default duration is 5 seconds if not specified
-            transition_item = QTableWidgetItem(img.get('transition', 'fade'))  # Fresh item, default transition is 'fade' if not specified
+            transition_item = QComboBox()  # Use QComboBox for transitions
+            transition_item.addItems(["fade", "wipeleft", "slideleft", "zoomin"])  # Add transition options
+            transition_item.setCurrentText(img.get('transition', 'fade'))  # Set current transition
             transition_length_item = QTableWidgetItem(str(img.get('transition_duration', 1)))  # Fresh item, default 1 if not specified
             filename_item.setFlags(filename_item.flags() & ~Qt.ItemIsEditable)  # Make the item non-editable
-            transition_item.setFlags(filename_item.flags() & ~Qt.ItemIsEditable)  # Make the item non-editable
+            #transition_item.setFlags(filename_item.flags() & ~Qt.ItemIsEditable)  # Make the item non-editable
 
             
             self.image_table.setItem(row, 0, filename_item)
             self.image_table.setItem(row, 1, duration_item)
-            self.image_table.setItem(row, 2, transition_item)
+            self.image_table.setCellWidget(row, 2, transition_item)  # Set QComboBox in the table
             self.image_table.setItem(row, 3, transition_length_item)
+
+            # Connect the QComboBox signal to update the transition in self.images
+            transition_item.currentTextChanged.connect(lambda text, row=row: self.update_transition(row, text))
 
     def move_image_up(self):
         selected_items = self.image_table.selectedItems()
@@ -624,53 +607,9 @@ class SlideshowCreator(QMainWindow):
 
 
     """07_Transition Functions"""
-    def set_transition_length(self):
-        selected_items = self.image_table.selectedItems()
-        if selected_items:
-            """
-            if self.image_table.row[selected_items[0]] == 0:
-                msg = QMessageBox()
-                msg.setIcon(QMessageBox.Warning)
-                msg.setWindowTitle("Error")
-                msg.setText("Error: You have to choose something different than the first row")
-                msg.exec_()
-                return
-                """
-            #else:
-        
-            row = self.image_table.row(selected_items[0])
-            min_length = 1
-            max_length = self.images[row]['duration'] -1
-            if max_length > 60:
-                max_length = 60
-            new_length, ok = QInputDialog.getInt(self, "Set Duration", "Enter duration in seconds:", min_length, min_length, max_length)
-            if ok:
-                self.images[row]['transition_duration'] = new_length
-                self.update_image_table()
-        
-            
-            
-
-    def set_transition(self):
-        selected_items = self.image_table.selectedItems()
-        if selected_items:
-            """
-            if self.image_table.row[selected_items[0]] == 0:
-                msg = QMessageBox()
-                msg.setIcon(QMessageBox.Warning)
-                msg.setWindowTitle("Error")
-                msg.setText("Error: You have to choose something different than the first row")
-                msg.exec_()
-                return
-                """
-            #else:
-        
-            row = self.image_table.row(selected_items[0])
-            transitions = ["fade", "wipeleft", "slideleft", "zoomin"]
-            new_transition, ok = QInputDialog.getItem(self, "Set Transition", "Choose a transition:", transitions, 0, False)  # False means that the combo box is not editable
-            if ok:
-                self.images[row]['transition'] = new_transition
-                self.update_image_table()
+    def update_transition(self, row, transition):
+        self.images[row]['transition'] = transition
+        print(f"Transition updated for {self.images[row]['path']} ---- {transition}")  # Debugging output
 
 
     """08_Menu Functions"""
@@ -686,6 +625,19 @@ class SlideshowCreator(QMainWindow):
                                 "QMenu::item { background: #1E1E1E; color: white; }"
                                 "QMenu::item:selected { background: #0078d4; }")
 
+        import_menu = file_menu.addMenu("Import")
+        import_menu.setStyleSheet("QMenu { background-color: #1E1E1E; color: white; }"
+                                "QMenu::item { background: #1E1E1E; color: white; }"
+                                "QMenu::item:selected { background: #0078d4; }")
+        
+        import_images = QAction("Images", self)
+        import_images.triggered.connect(self.add_images)
+        import_menu.addAction(import_images)
+
+        import_audio = QAction("Audio", self)
+        import_audio.triggered.connect(self.add_audio)
+        import_menu.addAction(import_audio)
+
         load_action = QAction("Load Project", self)
         load_action.triggered.connect(self.load_project)
         file_menu.addAction(load_action)
@@ -698,18 +650,9 @@ class SlideshowCreator(QMainWindow):
         clear_action.triggered.connect(self.clear_project)
         file_menu.addAction(clear_action)
 
-        transition_menu = menubar.addMenu("Transitions")
-        transition_menu.setStyleSheet("QMenu { background-color: #1E1E1E; color: white; }"
-                                "QMenu::item { background: #1E1E1E; color: white; }"
-                                "QMenu::item:selected { background: #0078d4; }")
-        
-        set_transition_length = QAction("Set Transition Length", self)
-        set_transition_length.triggered.connect(self.set_transition_length)
-        transition_menu.addAction(set_transition_length)
-
-        set_transition = QAction("Set Transition", self)
-        set_transition.triggered.connect(self.set_transition)
-        transition_menu.addAction(set_transition)
+        export_action = QAction("Export Slideshow", self)
+        export_action.triggered.connect(self.export_slideshow)
+        file_menu.addAction(export_action)
 
 
 
