@@ -61,7 +61,7 @@ class SlideshowCreator(QMainWindow):
         self.image_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.image_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
 
-        self.image_table.itemChanged.connect(self.on_duration_edit_on_table)
+        self.image_table.itemChanged.connect(self.on_edit_on_table)
 
         btn_add_images = QPushButton("Add Images")
         btn_add_images.setFont(QFont(self.button_font, self.button_font_size, QFont.Bold))
@@ -194,7 +194,7 @@ class SlideshowCreator(QMainWindow):
     """01_Images Functions"""
     
     """01_01_Duration Functions"""
-    def on_duration_edit_on_table(self, item):
+    def on_edit_on_table(self, item):
         """Handles editing the 'Duration' column."""
         column = item.column()
         if column == 1:  # Only handle edits for the 'Duration' column
@@ -204,12 +204,32 @@ class SlideshowCreator(QMainWindow):
                     raise ValueError("Duration out of range (2-600).")
                 row = item.row()
                 self.images[row]['duration'] = new_duration  # Update the image data
+                if self.images[row]['transition_duration'] > self.images[row]['duration'] -1:
+                    self.images[row]['transition_duration'] = self.images[row]['duration'] -1
+                    self.update_image_table()
             except ValueError:
                 # Revert to the previous value if the input is invalid
                 row = item.row()
                 item.setText(str(self.images[row]['duration']))
-
             print(f"Duration updated for {self.images[row]['path']}    ----   {self.images[row]['duration']} \n")  # Debugging output
+        if column == 3:  # Only handle edits for the 'Duration' column
+            try:
+                row = item.row()
+                new_transition_length = int(item.text())
+                min_length = 1
+                max_length = self.images[row]['duration'] -1
+                if max_length > 60:
+                    max_length = 60
+                if new_transition_length < min_length or new_transition_length > max_length:
+                    raise ValueError(f"Duration out of range ({min_length}-{max_length}).")
+                self.images[row]['transition_duration'] = new_transition_length  # Update the image data
+            except ValueError:
+                # Revert to the previous value if the input is invalid
+                row = item.row()
+                item.setText(str(self.images[row]['transition_duration']))
+            print(f"Transition Length updated for {self.images[row]['path']}    ----   {self.images[row]['transition_duration']} \n")  # Debugging output
+
+            
     def set_all_images_duration(self):
         selected_items = self.image_table.selectedItems()
         if selected_items:
@@ -240,7 +260,6 @@ class SlideshowCreator(QMainWindow):
             transition_length_item = QTableWidgetItem(str(img.get('transition_duration', 1)))  # Fresh item, default 1 if not specified
             filename_item.setFlags(filename_item.flags() & ~Qt.ItemIsEditable)  # Make the item non-editable
             transition_item.setFlags(filename_item.flags() & ~Qt.ItemIsEditable)  # Make the item non-editable
-            transition_length_item.setFlags(filename_item.flags() & ~Qt.ItemIsEditable)  # Make the item non-editable
 
             
             self.image_table.setItem(row, 0, filename_item)
