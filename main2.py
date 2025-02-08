@@ -28,6 +28,7 @@ class SlideshowCreator(QMainWindow):
         self.text_font = "Segoe UI"
         self.text_font_size = 10
         self.button_font_size = 9
+        self.transitions_types = ["fade", "wipeleft", "slideleft", "zoomin"]
         #self.transition_type = "fade" # default fade
         #self.transition_duration = 1 #default 1
         
@@ -234,9 +235,9 @@ class SlideshowCreator(QMainWindow):
             path_img = os.path.basename(img['path'])
             filename_item = QTableWidgetItem(path_img)  # Fresh item
             duration_item = QTableWidgetItem(str(img.get('duration', 5)))  # Fresh item, default duration is 5 seconds if not specified
-            transition_item = QComboBox()  # Use QComboBox for transitions
-            transition_item.addItems(["fade", "wipeleft", "slideleft", "zoomin"])  # Add transition options
-            transition_item.setCurrentText(img.get('transition', 'fade'))  # Set current transition
+            self.transition_item = QComboBox()  # Use QComboBox for transitions
+            self.transition_item.addItems(self.transitions_types)  # Add transition options
+            self.transition_item.setCurrentText(img.get('transition', 'fade'))  # Set current transition
             transition_length_item = QTableWidgetItem(str(img.get('transition_duration', 1)))  # Fresh item, default 1 if not specified
             filename_item.setFlags(filename_item.flags() & ~Qt.ItemIsEditable)  # Make the item non-editable
             #transition_item.setFlags(filename_item.flags() & ~Qt.ItemIsEditable)  # Make the item non-editable
@@ -244,11 +245,11 @@ class SlideshowCreator(QMainWindow):
             
             self.image_table.setItem(row, 0, filename_item)
             self.image_table.setItem(row, 1, duration_item)
-            self.image_table.setCellWidget(row, 2, transition_item)  # Set QComboBox in the table
+            self.image_table.setCellWidget(row, 2, self.transition_item)  # Set QComboBox in the table
             self.image_table.setItem(row, 3, transition_length_item)
 
             # Connect the QComboBox signal to update the transition in self.images
-            transition_item.currentTextChanged.connect(lambda text, row=row: self.update_transition(row, text))
+            self.transition_item.currentTextChanged.connect(lambda text, row=row: self.update_transition(row, text))
 
     def set_random_images_order(self):
         random.shuffle(self.images)
@@ -629,6 +630,22 @@ class SlideshowCreator(QMainWindow):
                 for i in range(len(self.images)):
                     self.images[i]['transition_duration'] = new_length
                 self.update_image_table()
+    
+    def set_all_images_transition(self):
+        transition, ok = QInputDialog.getItem(self, "Set Transition", "Select transition:", self.transitions_types, 0, False)
+        for i in range(len(self.images)):
+            self.images[i]['transition'] = transition
+            self.transition_item.setCurrentText(transition)  # Set current transition
+        self.update_image_table()
+
+    def set_random_transition_for_each_image(self):
+        
+        for i in range(len(self.images)):
+            random_i = random.randint(0, len(self.transitions_types) - 1)
+            transition = self.transitions_types[random_i]
+            self.images[i]['transition'] = transition
+            self.transition_item.setCurrentText(transition)  # Set current transition
+        self.update_image_table()
 
 
     """08_Menu Functions"""
@@ -699,6 +716,15 @@ class SlideshowCreator(QMainWindow):
         set_all_images_transition_length_action = QAction("Set All Images Transition Length", self)
         set_all_images_transition_length_action.triggered.connect(self.set_all_images_transition_length)
         Transitions_menu.addAction(set_all_images_transition_length_action)
+
+
+        set_all_images_transition_type_action = QAction("Set All Images Transition Type", self)
+        set_all_images_transition_type_action.triggered.connect(self.set_all_images_transition)
+        Transitions_menu.addAction(set_all_images_transition_type_action)
+        
+        set_random_transition_for_each_image_action = QAction("Set Random Transition For Each Image", self)
+        set_random_transition_for_each_image_action.triggered.connect(self.set_random_transition_for_each_image)
+        Transitions_menu.addAction(set_random_transition_for_each_image_action)
 
 
 
