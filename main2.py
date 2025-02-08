@@ -27,6 +27,8 @@ class SlideshowCreator(QMainWindow):
         self.text_font = "Segoe UI"
         self.text_font_size = 10
         self.button_font_size = 9
+        #self.transition_type = "fade" # default fade
+        #self.transition_duration = 1 #default 1
         
         self.create_ui()  # Create the user interface
     
@@ -51,8 +53,8 @@ class SlideshowCreator(QMainWindow):
 
         # Initialize the image_table attribute
         self.image_table = QTableWidget()
-        self.image_table.setColumnCount(2)
-        self.image_table.setHorizontalHeaderLabels(["Image", "Duration (sec)"])
+        self.image_table.setColumnCount(4)
+        self.image_table.setHorizontalHeaderLabels(["Image", "Duration (sec)", "Transition Type", "Transition Duration (sec)"])
         self.image_table.setFont(QFont(self.deafult_font, 10, QFont.Bold))
         self.image_table.setStyleSheet("QTableWidget { background-color: #1E1E1E; color: white; }"
                                         "QHeaderView::section { background-color: #1E1E1E; color: white; }")
@@ -198,8 +200,8 @@ class SlideshowCreator(QMainWindow):
         if column == 1:  # Only handle edits for the 'Duration' column
             try:
                 new_duration = int(item.text())
-                if new_duration < 1 or new_duration > 600:
-                    raise ValueError("Duration out of range (1-600).")
+                if new_duration < 2 or new_duration > 600:
+                    raise ValueError("Duration out of range (2-600).")
                 row = item.row()
                 self.images[row]['duration'] = new_duration  # Update the image data
             except ValueError:
@@ -212,7 +214,7 @@ class SlideshowCreator(QMainWindow):
         selected_items = self.image_table.selectedItems()
         if selected_items:
             row = self.image_table.row(selected_items[0])
-            new_duration, ok = QInputDialog.getInt(self, "Set Duration", "Enter duration in seconds:", self.images[row]['duration'], 1, 600)
+            new_duration, ok = QInputDialog.getInt(self, "Set Duration", "Enter duration in seconds:", self.images[row]['duration'], 2, 600)
             if ok:
                 for i in range(len(self.images)):
                     self.images[i]['duration'] = new_duration
@@ -223,7 +225,7 @@ class SlideshowCreator(QMainWindow):
         files, _ = QFileDialog.getOpenFileNames(self, "Select Images", "", "Images (*.png *.jpg *.jpeg *.bmp *.gif)")
         if files:
             for file in files:
-                self.images.append({'path': file, 'duration': 5})  # Default duration 5 seconds
+                self.images.append({'path': file, 'duration': 5, 'transition': 'fade', 'transition_duration': 1})  # Default duration 5 seconds
             self.update_image_table()
             print("Images added:", self.images)  # Debugging output
 
@@ -234,11 +236,17 @@ class SlideshowCreator(QMainWindow):
             path_img = os.path.basename(img['path'])
             filename_item = QTableWidgetItem(path_img)  # Fresh item
             duration_item = QTableWidgetItem(str(img.get('duration', 5)))  # Fresh item, default duration is 5 seconds if not specified
+            transition_item = QTableWidgetItem(img.get('transition', 'fade'))  # Fresh item, default transition is 'fade' if not specified
+            transition_length_item = QTableWidgetItem(str(img.get('transition_duration', 1)))  # Fresh item, default 1 if not specified
             filename_item.setFlags(filename_item.flags() & ~Qt.ItemIsEditable)  # Make the item non-editable
+            transition_item.setFlags(filename_item.flags() & ~Qt.ItemIsEditable)  # Make the item non-editable
+            transition_length_item.setFlags(filename_item.flags() & ~Qt.ItemIsEditable)  # Make the item non-editable
 
             
             self.image_table.setItem(row, 0, filename_item)
             self.image_table.setItem(row, 1, duration_item)
+            self.image_table.setItem(row, 2, transition_item)
+            self.image_table.setItem(row, 3, transition_length_item)
 
     def move_image_up(self):
         selected_items = self.image_table.selectedItems()
@@ -373,9 +381,18 @@ class SlideshowCreator(QMainWindow):
             else:
                 total_images = len(self.images)
                 new_duration_to_each_image = int(total_audio_duration / total_images)
-                for i in range(len(self.images)):
-                    self.images[i]['duration'] = new_duration_to_each_image
-                self.update_image_table()
+                if new_duration_to_each_image < 2 or new_duration_to_each_image > 600:
+                    msg = QMessageBox()
+                    msg.setIcon(QMessageBox.Information)
+                    msg.setWindowTitle("Audio and Video doesn't match")
+                    msg.setText("Sorry! \n couldn't match the audio duration to the image duration because of min and max issues, please add another song or choose a longer one!")
+                    msg.setStandardButtons(QMessageBox.Ok)
+                    msg.exec_()
+                    return
+                else:
+                    for i in range(len(self.images)):
+                        self.images[i]['duration'] = new_duration_to_each_image
+                    self.update_image_table()
 
                 
             
@@ -437,30 +454,32 @@ class SlideshowCreator(QMainWindow):
             except Exception as e:
                 print(f"Error opening image {img}: {e}")
 
-        transition_duration = 1  # Duration of each transition in seconds
+        #transition_duration = self.transition_duration
             # Add image inputs and scaling filters
         for i, img in enumerate(self.images):
             if i == 0:
                 duration = img['duration']
+            elif i == len(self.images) - 1:
+                duration = img['duration'] + self.images[i-1]['transition_duration']
             else:
-                duration = img['duration'] + transition_duration
+                duration = img['duration'] + img['transition_duration']
             inputs.append(f'-loop 1 -t {duration} -i "{img["path"]}"')
             filters.append(f"[{i}:v]scale=1920:1080,setsar=1,format=yuv420p[{i}v]")
             total_duration += duration
 
         # Add xfade transitions
         
-        transition_type = "fade"  # Transition type
+        #transition_type = self.transition_type
 
         for i in range(len(self.images) - 1):
             # Calculate the offset where the transition starts
-            start_offset = sum(img['duration'] for img in self.images[:i + 1]) - transition_duration
+            start_offset = sum(img['duration'] for img in self.images[:i + 1]) - self.images[i]['transition_duration']
             if i == 0:
                 # Connect the first two video streams
-                filters.append(f"[{i}v][{i+1}v]xfade=transition={transition_type}:duration={transition_duration}:offset={start_offset}[v{i+1}]")
+                filters.append(f"[{i}v][{i+1}v]xfade=transition={self.images[i]['transition']}:duration={self.images[i]['transition_duration']}:offset={start_offset}[v{i+1}]")
             else:
                 # Chain subsequent xfade transitions
-                filters.append(f"[v{i}][{i+1}v]xfade=transition={transition_type}:duration={transition_duration}:offset={start_offset}[v{i+1}]")
+                filters.append(f"[v{i}][{i+1}v]xfade=transition={self.images[i]['transition']}:duration={self.images[i]['transition_duration']}:offset={start_offset}[v{i+1}]")
 
         # Final video stream
         final_stream = f"[v{len(self.images) - 1}]"
@@ -553,7 +572,7 @@ class SlideshowCreator(QMainWindow):
                 for audio in self.audio_files:
                     f.write(f"{audio['path']}\n")  
                 for img in self.images:
-                    f.write(f"{img['path']},{img.get('duration', 5)}\n") 
+                    f.write(f"{img['path']},{img.get('duration', 5)},{img.get('transition', 'fade')},{img.get('transition_duration', 1)}\n") 
 
     def load_project(self):
         options = QFileDialog.Options()
@@ -561,25 +580,81 @@ class SlideshowCreator(QMainWindow):
         if file_name:
             with open(file_name, 'r', encoding='utf-8') as f:
                 lines = f.readlines()
-                count = int(lines[0].strip())
+                count = int(lines[0].strip())  # Number of audio files
+                
                 self.audio_files = []  # Clear existing audio files
-                if count == 1:
-                    self.audio_file = lines[1].strip()  # Load the first audio file path
-                    self.audio_files.append({'path': self.audio_file})  # Add to the list
-                if count > 1:
-                    for i in range(1, count + 1):
-                        self.audio_file = lines[i].strip()  # Load the first audio file path
-                        self.audio_files.append({'path': self.audio_file})  # Add to the list
+                
+                # Load audio files
+                for i in range(1, count + 1):
+                    audio_path = lines[i].strip()
+                    self.audio_files.append({'path': audio_path})  # Add each audio file to the list
+                
+                # Load images
                 self.images = []
-                for line in lines[i+1:]:
-                    path, duration = line.strip().split(',')  # Split path and duration
-                    self.images.append({'path': path, 'duration': int(duration)})  # Store as dict
+                for line in lines[count + 1:]:  # Start after the audio file lines
+                    path, duration, transition, transition_duration = line.strip().split(',')
+                    self.images.append({
+                        'path': path,
+                        'duration': int(duration),
+                        'transition': transition,
+                        'transition_duration': int(transition_duration)
+                    })
+                
+                # Update the UI tables
                 self.update_image_table()
-                self.update_audio_table()  # Update the audio table to reflect loaded audio
+                self.update_audio_table()
 
 
 
-    """07_Menu Functions"""
+    """07_Transition Functions"""
+    def set_transition_length(self):
+        selected_items = self.image_table.selectedItems()
+        if selected_items:
+            """
+            if self.image_table.row[selected_items[0]] == 0:
+                msg = QMessageBox()
+                msg.setIcon(QMessageBox.Warning)
+                msg.setWindowTitle("Error")
+                msg.setText("Error: You have to choose something different than the first row")
+                msg.exec_()
+                return
+                """
+            #else:
+        
+            row = self.image_table.row(selected_items[0])
+            min_length = 1
+            max_length = self.images[row]['duration'] -1
+            new_length, ok = QInputDialog.getInt(self, "Set Duration", "Enter duration in seconds:", min_length, min_length, max_length)
+            if ok:
+                self.images[row]['transition_duration'] = new_length
+                self.update_image_table()
+        
+            
+            
+
+    def set_transition(self):
+        selected_items = self.image_table.selectedItems()
+        if selected_items:
+            """
+            if self.image_table.row[selected_items[0]] == 0:
+                msg = QMessageBox()
+                msg.setIcon(QMessageBox.Warning)
+                msg.setWindowTitle("Error")
+                msg.setText("Error: You have to choose something different than the first row")
+                msg.exec_()
+                return
+                """
+            #else:
+        
+            row = self.image_table.row(selected_items[0])
+            transitions = ["fade", "wipeleft", "slideleft", "zoomin"]
+            new_transition, ok = QInputDialog.getItem(self, "Set Transition", "Choose a transition:", transitions, 0, False)  # False means that the combo box is not editable
+            if ok:
+                self.images[row]['transition'] = new_transition
+                self.update_image_table()
+
+
+    """08_Menu Functions"""
     def create_menu(self):
         # Function to create a menu bar
         menubar = self.menuBar()
@@ -603,6 +678,19 @@ class SlideshowCreator(QMainWindow):
         clear_action = QAction("Clear Project", self)
         clear_action.triggered.connect(self.clear_project)
         file_menu.addAction(clear_action)
+
+        transition_menu = menubar.addMenu("Transitions")
+        transition_menu.setStyleSheet("QMenu { background-color: #1E1E1E; color: white; }"
+                                "QMenu::item { background: #1E1E1E; color: white; }"
+                                "QMenu::item:selected { background: #0078d4; }")
+        
+        set_transition_length = QAction("Set Transition Length", self)
+        set_transition_length.triggered.connect(self.set_transition_length)
+        transition_menu.addAction(set_transition_length)
+
+        set_transition = QAction("Set Transition", self)
+        set_transition.triggered.connect(self.set_transition)
+        transition_menu.addAction(set_transition)
 
 
 
