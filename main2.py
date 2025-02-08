@@ -622,6 +622,8 @@ class SlideshowCreator(QMainWindow):
             row = self.image_table.row(selected_items[0])
             min_length = 1
             max_length = self.images[row]['duration'] -1
+            if max_length > 60:
+                max_length = 60
             new_length, ok = QInputDialog.getInt(self, "Set Duration", "Enter duration in seconds:", min_length, min_length, max_length)
             if ok:
                 self.images[row]['transition_duration'] = new_length
