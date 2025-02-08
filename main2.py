@@ -1,5 +1,6 @@
 """imports"""
 
+import random
 import sys
 import os
 import subprocess
@@ -44,12 +45,6 @@ class SlideshowCreator(QMainWindow):
         """Left Panel - Image List with Durations"""
         left_panel = QVBoxLayout()
 
-        btn_set_all_img_duration = QPushButton("Set All Images Duration")
-        btn_set_all_img_duration.setFont(QFont(self.button_font, self.button_font_size, QFont.Bold))
-        btn_set_all_img_duration.setStyleSheet('QPushButton { background-color: #1E1E1E; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
-                                                'QPushButton:hover { background-color: #0078d4; }')
-        btn_set_all_img_duration.setCursor(QCursor(Qt.PointingHandCursor))
-        btn_set_all_img_duration.clicked.connect(self.set_all_images_duration)
 
         # Initialize the image_table attribute
         self.image_table = QTableWidget()
@@ -94,7 +89,6 @@ class SlideshowCreator(QMainWindow):
         left_panel.addWidget(move_up_image_btn)
         left_panel.addWidget(move_down_image_btn)
         left_panel.addWidget(delete_image_btn)
-        left_panel.addWidget(btn_set_all_img_duration)
 
         """Center Panel - Preview"""
         center_panel = QVBoxLayout()
@@ -217,6 +211,12 @@ class SlideshowCreator(QMainWindow):
                 for i in range(len(self.images)):
                     self.images[i]['duration'] = new_duration
                 self.update_image_table()
+        else:
+            new_duration, ok = QInputDialog.getInt(self, "Set Duration", "Enter duration in seconds:", 2, 2, 600)
+            if ok:
+                for i in range(len(self.images)):
+                    self.images[i]['duration'] = new_duration
+                self.update_image_table()
 
     """01_02_Images Implementation Functions"""
     def add_images(self):
@@ -249,6 +249,12 @@ class SlideshowCreator(QMainWindow):
 
             # Connect the QComboBox signal to update the transition in self.images
             transition_item.currentTextChanged.connect(lambda text, row=row: self.update_transition(row, text))
+
+    def set_random_images_order(self):
+        random.shuffle(self.images)
+        print("Images reordered:", self.images)  # Debugging output
+        self.update_image_table()
+        self.update_preview()
 
     def move_image_up(self):
         selected_items = self.image_table.selectedItems()
@@ -611,6 +617,19 @@ class SlideshowCreator(QMainWindow):
         self.images[row]['transition'] = transition
         print(f"Transition updated for {self.images[row]['path']} ---- {transition}")  # Debugging output
 
+    def set_all_images_transition_length(self):
+            min_length = 1
+            min_image_duration = min(image['duration'] for image in self.images)
+
+            max_length = min_image_duration -1
+            if max_length > 60:
+                max_length = 60
+            new_length, ok = QInputDialog.getInt(self, "Set Duration", "Enter duration in seconds:", min_length, min_length, max_length)
+            if ok:
+                for i in range(len(self.images)):
+                    self.images[i]['transition_duration'] = new_length
+                self.update_image_table()
+
 
     """08_Menu Functions"""
     def create_menu(self):
@@ -653,6 +672,33 @@ class SlideshowCreator(QMainWindow):
         export_action = QAction("Export Slideshow", self)
         export_action.triggered.connect(self.export_slideshow)
         file_menu.addAction(export_action)
+
+        options_menu = menubar.addMenu("Options")
+        options_menu.setStyleSheet("QMenu { background-color: #1E1E1E; color: white; }"
+                                "QMenu::item { background: #1E1E1E; color: white; }"
+                                "QMenu::item:selected { background: #0078d4; }")
+        
+        Img_menu = options_menu.addMenu("Images")
+        Img_menu.setStyleSheet("QMenu { background-color: #1E1E1E; color: white; }"
+                                "QMenu::item { background: #1E1E1E; color: white; }"
+                                "QMenu::item:selected { background: #0078d4; }")
+        
+        set_all_images_duration_action = QAction("Set All Images Duration", self)
+        set_all_images_duration_action.triggered.connect(self.set_all_images_duration)
+        Img_menu.addAction(set_all_images_duration_action)
+
+        set_random_images_order_action = QAction("Set Random Images Order", self)
+        set_random_images_order_action.triggered.connect(self.set_random_images_order)
+        Img_menu.addAction(set_random_images_order_action)
+
+        Transitions_menu = options_menu.addMenu("Transitions")
+        Transitions_menu.setStyleSheet("QMenu { background-color: #1E1E1E; color: white; }"
+                                "QMenu::item { background: #1E1E1E; color: white; }"
+                                "QMenu::item:selected { background: #0078d4; }")
+        
+        set_all_images_transition_length_action = QAction("Set All Images Transition Length", self)
+        set_all_images_transition_length_action.triggered.connect(self.set_all_images_transition_length)
+        Transitions_menu.addAction(set_all_images_transition_length_action)
 
 
 
