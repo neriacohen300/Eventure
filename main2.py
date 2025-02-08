@@ -493,14 +493,12 @@ class SlideshowCreator(QMainWindow):
             inputs.append(f'-i "{audio["path"]}"')
             audio_streams.append(f"[{audio_index + i}:a]")
 
-        # Concatenate audio streams if multiple audio files exist
+        # Concatenate audio files sequentially
         if len(audio_streams) > 1:
             filters.append(f"{''.join(audio_streams)}concat=n={len(audio_streams)}:v=0:a=1[outa]")
             audio_map = "-map [outa]"
-        elif len(audio_streams) == 1:
-            audio_map = f"-map {audio_streams[0]}"
         else:
-            audio_map = ""  # No audio
+            audio_map = f"-map {audio_index}:a"
 
         # Build the filter_complex
         filter_complex = ";".join(filters)
