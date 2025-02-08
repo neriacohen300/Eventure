@@ -236,12 +236,6 @@ class SlideshowCreator(QMainWindow):
             # Connect the QComboBox signal to update the transition in self.images
             self.transition_item.currentTextChanged.connect(lambda text, row=row: self.update_transition(row, text))
 
-    def set_random_images_order(self):
-        random.shuffle(self.images)
-        print("Images reordered:", self.images)  # Debugging output
-        self.update_image_table()
-        self.update_preview()
-
     def move_image_up(self, row):
         if row > 0:
             self.images[row], self.images[row - 1] = self.images[row - 1], self.images[row]
@@ -341,6 +335,8 @@ class SlideshowCreator(QMainWindow):
     """03_Export Functions"""
 
     def export_slideshow(self):
+        if not self.validate_transitions():
+            return
         print("Images:", self.images)  # Debugging output
         print("Audio Files:", self.audio_files)  # Debugging output
         if not self.images or not self.audio_files:
@@ -661,6 +657,14 @@ class SlideshowCreator(QMainWindow):
             self.transition_item.setCurrentText(transition)  # Set current transition
         self.update_image_table()
 
+    def validate_transitions(self):
+        for img in self.images:
+            if img['transition_duration'] >= img['duration']:
+                QMessageBox.warning(self, "Invalid Transition Duration", 
+                                f"Transition duration for {img['path']} is too long. It must be less than the image duration.")
+                return False
+        return True
+
 
     """08_Menu Functions"""
     def create_menu(self):
@@ -717,10 +721,6 @@ class SlideshowCreator(QMainWindow):
         set_all_images_duration_action = QAction("Set All Images Duration", self)
         set_all_images_duration_action.triggered.connect(self.set_all_images_duration)
         Img_menu.addAction(set_all_images_duration_action)
-
-        set_random_images_order_action = QAction("Set Random Images Order", self)
-        set_random_images_order_action.triggered.connect(self.set_random_images_order)
-        Img_menu.addAction(set_random_images_order_action)
 
         Transitions_menu = options_menu.addMenu("Transitions")
         Transitions_menu.setStyleSheet("QMenu { background-color: #1E1E1E; color: white; }"
