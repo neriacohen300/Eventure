@@ -49,54 +49,34 @@ class SlideshowCreator(QMainWindow):
 
         # Initialize the image_table attribute
         self.image_table = QTableWidget()
-        self.image_table.setColumnCount(4)
-        self.image_table.setHorizontalHeaderLabels(["Image", "Duration (sec)", "Transition Type", "Transition Duration (sec)"])
+        self.image_table.setColumnCount(5)
+        self.image_table.setHorizontalHeaderLabels(["Actions", "Image", "Duration (sec)", "Transition Type", "Transition Duration (sec)"])
         self.image_table.setFont(QFont(self.deafult_font, 10, QFont.Bold))
         self.image_table.setStyleSheet("QTableWidget { background-color: #1E1E1E; color: white; }"
                                         "QHeaderView::section { background-color: #1E1E1E; color: white; }")
-        self.image_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.image_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.image_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.image_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.image_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
         self.image_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.image_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
+
 
         self.image_table.itemChanged.connect(self.on_edit_on_table)
-        
-
-        # For Images
-        move_up_image_btn = QPushButton("Move Up", self)
-        move_up_image_btn.setFont(QFont(self.button_font, self.button_font_size, QFont.Bold))
-        move_up_image_btn.setStyleSheet('QPushButton { background-color: #1E1E1E; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
-                                        'QPushButton:hover { background-color: #0078d4; }')
-        move_up_image_btn.setCursor(QCursor(Qt.PointingHandCursor))
-        move_down_image_btn = QPushButton("Move Down", self)
-        move_down_image_btn.setFont(QFont(self.button_font, self.button_font_size, QFont.Bold))
-        move_down_image_btn.setStyleSheet('QPushButton { background-color: #1E1E1E; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
-                                        'QPushButton:hover { background-color: #0078d4; }')
-        move_down_image_btn.setCursor(QCursor(Qt.PointingHandCursor))
-        delete_image_btn = QPushButton("Delete Image", self)
-        delete_image_btn.setFont(QFont(self.button_font, self.button_font_size, QFont.Bold))
-        delete_image_btn.setStyleSheet('QPushButton { background-color: #1E1E1E; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
-                                        'QPushButton:hover { background-color: #0078d4; }')
-        delete_image_btn.setCursor(QCursor(Qt.PointingHandCursor))
-
-        move_up_image_btn.clicked.connect(self.move_image_up)
-        move_down_image_btn.clicked.connect(self.move_image_down)
-        delete_image_btn.clicked.connect(self.delete_image)
 
         slides_label = QLabel("Slides")
         slides_label.setFont(QFont(self.text_font, self.text_font_size, QFont.Bold))
         left_panel.addWidget(slides_label)
         left_panel.addWidget(self.image_table)
-        left_panel.addWidget(move_up_image_btn)
-        left_panel.addWidget(move_down_image_btn)
-        left_panel.addWidget(delete_image_btn)
 
-        """Center Panel - Preview"""
-        center_panel = QVBoxLayout()
+
+        
+        """Right Panel - Audio Files + Preview"""
         self.preview_label = QLabel("Preview")
         self.preview_label.setFont(QFont(self.text_font, 16, QFont.Bold))
         self.preview_label.setAlignment(Qt.AlignCenter)
         self.preview_label.setStyleSheet("border: 1px solid #444; background: #222; color: white;")
+        self.preview_label.setFixedHeight(300)
+
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
@@ -105,52 +85,31 @@ class SlideshowCreator(QMainWindow):
         self.progress_bar.setStyleSheet("QProgressBar { background-color: #1E1E1E; color: white; }"
                                         "QProgressBar::chunk { background-color: #0078d4; }")
 
-        center_panel.addWidget(self.preview_label)
-        center_panel.addWidget(self.progress_bar)
-
-        """Right Panel - Audio Files"""
         right_panel = QVBoxLayout()
+        right_panel.addWidget(self.preview_label)
+
+
+        
+        
 
         self.audio_table = QTableWidget()
-        self.audio_table.setColumnCount(1)
-        self.audio_table.setHorizontalHeaderLabels(["Audio File"])
+        self.audio_table.setColumnCount(2)
+        self.audio_table.setHorizontalHeaderLabels(["Actions", "Audio File"])
         self.audio_table.setFont(QFont(self.deafult_font, 10, QFont.Bold))
         self.audio_table.setStyleSheet("QTableWidget { background-color: #1E1E1E; color: white; }"
                                         "QHeaderView::section { background-color: #1E1E1E; color: white; }")
-        self.audio_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.audio_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.audio_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+
 
         audio_files_label = QLabel("Audio Files:")
         audio_files_label.setFont(QFont(self.text_font, self.text_font_size, QFont.Bold))
         right_panel.addWidget(audio_files_label)
         right_panel.addWidget(self.audio_table)
-
-        move_up_audio_btn = QPushButton("Move Up", self)
-        move_up_audio_btn.setFont(QFont(self.button_font, self.button_font_size, QFont.Bold))
-        move_up_audio_btn.setStyleSheet('QPushButton { background-color: #1E1E1E; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
-                                        'QPushButton:hover { background-color: #0078d4; }')
-        move_up_audio_btn.setCursor(QCursor(Qt.PointingHandCursor))
-        move_down_audio_btn = QPushButton("Move Down", self)
-        move_down_audio_btn.setFont(QFont(self.button_font, self.button_font_size, QFont.Bold))
-        move_down_audio_btn.setStyleSheet('QPushButton { background-color: #1E1E1E; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
-                                        'QPushButton:hover { background-color: #0078d4; }')
-        move_down_audio_btn.setCursor(QCursor(Qt.PointingHandCursor))
-        delete_audio_btn = QPushButton("Delete Audio", self)
-        delete_audio_btn.setFont(QFont(self.button_font, self.button_font_size, QFont.Bold))
-        delete_audio_btn.setStyleSheet('QPushButton { background-color: #1E1E1E; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
-                                        'QPushButton:hover { background-color: #0078d4; }')
-        delete_audio_btn.setCursor(QCursor(Qt.PointingHandCursor))
-
-        move_up_audio_btn.clicked.connect(self.move_audio_up)
-        move_down_audio_btn.clicked.connect(self.move_audio_down)
-        delete_audio_btn.clicked.connect(self.delete_audio)
-
-        right_panel.addWidget(move_up_audio_btn)
-        right_panel.addWidget(move_down_audio_btn)
-        right_panel.addWidget(delete_audio_btn)
+        right_panel.addWidget(self.progress_bar)
 
         # Add panels to main layout
-        main_layout.addLayout(left_panel, 1)
-        main_layout.addLayout(center_panel, 2)
+        main_layout.addLayout(left_panel, 2)
         main_layout.addLayout(right_panel, 1)
 
         self.setCentralWidget(main_widget)
@@ -170,7 +129,7 @@ class SlideshowCreator(QMainWindow):
     def on_edit_on_table(self, item):
         """Handles editing the 'Duration' column."""
         column = item.column()
-        if column == 1:  # Only handle edits for the 'Duration' column
+        if column == 2:  # Only handle edits for the 'Duration' column
             try:
                 new_duration = int(item.text())
                 if new_duration < 2 or new_duration > 600:
@@ -185,7 +144,7 @@ class SlideshowCreator(QMainWindow):
                 row = item.row()
                 item.setText(str(self.images[row]['duration']))
             print(f"Duration updated for {self.images[row]['path']}    ----   {self.images[row]['duration']} \n")  # Debugging output
-        if column == 3:  # Only handle edits for the 'Duration' column
+        if column == 4:  # Only handle edits for the 'Duration' column
             try:
                 row = item.row()
                 new_transition_length = int(item.text())
@@ -240,13 +199,39 @@ class SlideshowCreator(QMainWindow):
             self.transition_item.setCurrentText(img.get('transition', 'fade'))  # Set current transition
             transition_length_item = QTableWidgetItem(str(img.get('transition_duration', 1)))  # Fresh item, default 1 if not specified
             filename_item.setFlags(filename_item.flags() & ~Qt.ItemIsEditable)  # Make the item non-editable
-            #transition_item.setFlags(filename_item.flags() & ~Qt.ItemIsEditable)  # Make the item non-editable
 
-            
-            self.image_table.setItem(row, 0, filename_item)
-            self.image_table.setItem(row, 1, duration_item)
-            self.image_table.setCellWidget(row, 2, self.transition_item)  # Set QComboBox in the table
-            self.image_table.setItem(row, 3, transition_length_item)
+            self.image_table.setItem(row, 1, filename_item)
+            self.image_table.setItem(row, 2, duration_item)
+            self.image_table.setCellWidget(row, 3, self.transition_item)  # Set QComboBox in the table
+            self.image_table.setItem(row, 4, transition_length_item)
+
+            # Add move up, move down, and delete buttons
+            move_up_btn = QPushButton("↑")
+            move_up_btn.setStyleSheet('QPushButton { background-color: #1E1E1E; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
+                                    'QPushButton:hover { background-color: #0078d4; }')
+            move_up_btn.clicked.connect(lambda _, r=row: self.move_image_up(r))
+
+            move_down_btn = QPushButton("↓")
+            move_down_btn.setStyleSheet('QPushButton { background-color: #1E1E1E; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
+                                        'QPushButton:hover { background-color: #0078d4; }')
+            move_down_btn.clicked.connect(lambda _, r=row: self.move_image_down(r))
+
+            delete_btn = QPushButton("✖")
+            delete_btn.setStyleSheet('QPushButton { background-color: #1E1E1E; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
+                                    'QPushButton:hover { background-color: #ff0000; }')
+            delete_btn.clicked.connect(lambda _, r=row: self.delete_image(r))
+
+            # Create a widget to hold the buttons
+            button_widget = QWidget()
+            button_layout = QHBoxLayout(button_widget)
+            button_layout.addWidget(move_up_btn)
+            button_layout.addWidget(move_down_btn)
+            button_layout.addWidget(delete_btn)
+            button_layout.setContentsMargins(0, 0, 0, 0)
+            button_widget.setLayout(button_layout)
+
+            # Set the button widget in the table
+            self.image_table.setCellWidget(row, 0, button_widget)
 
             # Connect the QComboBox signal to update the transition in self.images
             self.transition_item.currentTextChanged.connect(lambda text, row=row: self.update_transition(row, text))
@@ -257,30 +242,29 @@ class SlideshowCreator(QMainWindow):
         self.update_image_table()
         self.update_preview()
 
-    def move_image_up(self):
-        selected_items = self.image_table.selectedItems()
-        if selected_items:
-            row = self.image_table.row(selected_items[0])
-            if row > 0:
-                self.images[row], self.images[row - 1] = self.images[row - 1], self.images[row]
-                self.image_table.setCurrentItem(self.image_table.item(row - 1, 0))
-                self.update_image_table()
-
-    def move_image_down(self):
-        selected_items = self.image_table.selectedItems()
-        if selected_items:
-            row = self.image_table.row(selected_items[0])
-            if row < len(self.images) - 1:
-                self.images[row], self.images[row + 1] = self.images[row + 1], self.images[row]
-                self.image_table.setCurrentItem(self.image_table.item(row + 1, 0))
-                self.update_image_table()
-
-    def delete_image(self):
-        selected_items = self.image_table.selectedItems()
-        if selected_items:
-            row = self.image_table.row(selected_items[0])
-            del self.images[row]
+    def move_image_up(self, row):
+        if row > 0:
+            self.images[row], self.images[row - 1] = self.images[row - 1], self.images[row]
             self.update_image_table()
+            self.update_preview_with_row(row - 1)
+            self.image_table.setCurrentCell(row -1, 1)
+
+    def move_image_down(self, row):
+        if row < len(self.images) - 1:
+            self.images[row], self.images[row + 1] = self.images[row + 1], self.images[row]
+            self.update_image_table()
+            self.update_preview_with_row(row + 1)
+            self.image_table.setCurrentCell(row +1, 1)
+
+    def delete_image(self, row):
+        del self.images[row]
+        self.update_image_table()
+        if row - 1 <0:
+            self.update_preview_with_row(0)
+            self.image_table.setCurrentCell(0, 1)
+        else:
+            self.update_preview_with_row(row - 1)
+            self.image_table.setCurrentCell(row -1, 1)
 
 
 
@@ -301,32 +285,55 @@ class SlideshowCreator(QMainWindow):
             filename = os.path.basename(audio['path'])
             filename_item = QTableWidgetItem(filename)
             filename_item.setFlags(filename_item.flags() & ~Qt.ItemIsEditable)  # Make the item non-editable
-            self.audio_table.setItem(row, 0, filename_item)
+            self.audio_table.setItem(row, 1, filename_item)
 
-    def move_audio_up(self):
-        selected_items = self.audio_table.selectedItems()
-        if selected_items:
-            row = self.audio_table.row(selected_items[0])
-            if row > 0:
-                self.audio_files[row], self.audio_files[row - 1] = self.audio_files[row - 1], self.audio_files[row]
-                self.audio_table.setCurrentItem(self.audio_table.item(row - 1, 0))
-                self.update_audio_table()
+            # Add move up, move down, and delete buttons
+            move_up_btn = QPushButton("↑")
+            move_up_btn.setStyleSheet('QPushButton { background-color: #1E1E1E; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
+                                    'QPushButton:hover { background-color: #0078d4; }')
+            move_up_btn.clicked.connect(lambda _, r=row: self.move_audio_up(r))
 
-    def move_audio_down(self):
-        selected_items = self.audio_table.selectedItems()
-        if selected_items:
-            row = self.audio_table.row(selected_items[0])
-            if row < len(self.audio_files) - 1:
-                self.audio_files[row], self.audio_files[row + 1] = self.audio_files[row + 1], self.audio_files[row]
-                self.audio_table.setCurrentItem(self.audio_table.item(row + 1, 0))
-                self.update_audio_table()
+            move_down_btn = QPushButton("↓")
+            move_down_btn.setStyleSheet('QPushButton { background-color: #1E1E1E; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
+                                        'QPushButton:hover { background-color: #0078d4; }')
+            move_down_btn.clicked.connect(lambda _, r=row: self.move_audio_down(r))
 
-    def delete_audio(self):
-        selected_items = self.audio_table.selectedItems()
-        if selected_items:
-            row = self.audio_table.row(selected_items[0])
-            del self.audio_files[row]
+            delete_btn = QPushButton("✖")
+            delete_btn.setStyleSheet('QPushButton { background-color: #1E1E1E; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
+                                    'QPushButton:hover { background-color: #ff0000; }')
+            delete_btn.clicked.connect(lambda _, r=row: self.delete_audio(r))
+
+            # Create a widget to hold the buttons
+            button_widget = QWidget()
+            button_layout = QHBoxLayout(button_widget)
+            button_layout.addWidget(move_up_btn)
+            button_layout.addWidget(move_down_btn)
+            button_layout.addWidget(delete_btn)
+            button_layout.setContentsMargins(0, 0, 0, 0)
+            button_widget.setLayout(button_layout)
+
+            # Set the button widget in the table
+            self.audio_table.setCellWidget(row, 0, button_widget)
+
+    def move_audio_up(self, row):
+        if row > 0:
+            self.audio_files[row], self.audio_files[row - 1] = self.audio_files[row - 1], self.audio_files[row]
             self.update_audio_table()
+            self.audio_table.setCurrentCell(row -1, 1)
+
+    def move_audio_down(self, row):
+        if row < len(self.audio_files) - 1:
+            self.audio_files[row], self.audio_files[row + 1] = self.audio_files[row + 1], self.audio_files[row]
+            self.update_audio_table()
+            self.audio_table.setCurrentCell(row +1, 1)
+
+    def delete_audio(self, row):
+        del self.audio_files[row]
+        self.update_audio_table()
+        if row - 1 <0:
+            self.audio_table.setCurrentCell(row +1, 1)
+        else:
+            self.audio_table.setCurrentCell(row -1, 1)
 
 
 
@@ -551,6 +558,13 @@ class SlideshowCreator(QMainWindow):
             # Load and display the selected image in the preview
             pixmap = QPixmap(img_path)
             self.preview_label.setPixmap(pixmap.scaled(400, 300, Qt.KeepAspectRatio))
+
+    def update_preview_with_row(self, row):
+        """Update preview when a slide is selected"""
+        img_path = self.images[row]['path']
+        # Load and display the selected image in the preview
+        pixmap = QPixmap(img_path)
+        self.preview_label.setPixmap(pixmap.scaled(400, 300, Qt.KeepAspectRatio))
 
     def setup_connections(self):
         """Connect signals to slots"""
