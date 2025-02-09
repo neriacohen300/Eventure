@@ -28,7 +28,25 @@ class SlideshowCreator(QMainWindow):
         self.text_font = "Segoe UI"
         self.text_font_size = 10
         self.button_font_size = 9
-        self.transitions_types = ["fade", "wipeleft", "slideleft", "zoomin"]
+        self.transitions_types = [
+            "fade", "fadeblack", "fadewhite", "distance", 
+            "wipeleft", "wiperight", "wipeup", "wipedown",
+            "slideleft", "slideright", "slideup", "slidedown",
+            "smoothleft", "smoothright", "smoothup", "smoothdown",
+            "circlecrop", "rectcrop", "circleclose", "circleopen",
+            "horzclose", "horzopen", "vertclose", "vertopen",
+            "diagbl", "diagbr", "diagtl", "diagtr","zoomin",
+            "hlslice", "hrslice", "vuslice", "vdslice",
+            "dissolve", "pixelize", "radial", "hblur",
+            "wipetl", "wipetr", "wipebl", "wipebr",
+            "fadegrays", "squeezev", "squeezeh",
+            "hlwind", "hrwind", "vuwind", "vdwind",
+            "coverleft", "coverright", "coverup", "coverdown",
+            "revealleft", "revealright", "revealup", "revealdown"
+        ]
+
+        self.default_transition_duration = 1
+
         #self.transition_type = "fade" # default fade
         #self.transition_duration = 1 #default 1
         
@@ -144,22 +162,6 @@ class SlideshowCreator(QMainWindow):
                 row = item.row()
                 item.setText(str(self.images[row]['duration']))
             print(f"Duration updated for {self.images[row]['path']}    ----   {self.images[row]['duration']} \n")  # Debugging output
-        if column == 4:  # Only handle edits for the 'Duration' column
-            try:
-                row = item.row()
-                new_transition_length = int(item.text())
-                min_length = 1
-                max_length = self.images[row]['duration'] -1
-                if max_length > 60:
-                    max_length = 60
-                if new_transition_length < min_length or new_transition_length > max_length:
-                    raise ValueError(f"Duration out of range ({min_length}-{max_length}).")
-                self.images[row]['transition_duration'] = new_transition_length  # Update the image data
-            except ValueError:
-                # Revert to the previous value if the input is invalid
-                row = item.row()
-                item.setText(str(self.images[row]['transition_duration']))
-            print(f"Transition Length updated for {self.images[row]['path']}    ----   {self.images[row]['transition_duration']} \n")  # Debugging output
 
             
     def set_all_images_duration(self):
@@ -183,7 +185,7 @@ class SlideshowCreator(QMainWindow):
         files, _ = QFileDialog.getOpenFileNames(self, "Select Images", "", "Images (*.png *.jpg *.jpeg *.bmp *.gif)")
         if files:
             for file in files:
-                self.images.append({'path': file, 'duration': 5, 'transition': 'fade', 'transition_duration': 1})  # Default duration 5 seconds
+                self.images.append({'path': file, 'duration': 5, 'transition': 'fade', 'transition_duration': self.default_transition_duration})  # Default duration 5 seconds
             self.update_image_table()
             print("Images added:", self.images)  # Debugging output
 
@@ -197,8 +199,9 @@ class SlideshowCreator(QMainWindow):
             self.transition_item = QComboBox()  # Use QComboBox for transitions
             self.transition_item.addItems(self.transitions_types)  # Add transition options
             self.transition_item.setCurrentText(img.get('transition', 'fade'))  # Set current transition
-            transition_length_item = QTableWidgetItem(str(img.get('transition_duration', 1)))  # Fresh item, default 1 if not specified
+            transition_length_item = QTableWidgetItem(str(img.get('transition_duration', self.default_transition_duration)))  # Fresh item, default 1 if not specified
             filename_item.setFlags(filename_item.flags() & ~Qt.ItemIsEditable)  # Make the item non-editable
+            transition_length_item.setFlags(transition_length_item.flags() & ~Qt.ItemIsEditable)  # Make the item non-editable
 
             self.image_table.setItem(row, 1, filename_item)
             self.image_table.setItem(row, 2, duration_item)
@@ -259,6 +262,10 @@ class SlideshowCreator(QMainWindow):
         else:
             self.update_preview_with_row(row - 1)
             self.image_table.setCurrentCell(row -1, 1)
+
+    def set_random_images_order(self):
+        random.shuffle(self.images)
+        self.update_image_table()
 
 
 
@@ -610,12 +617,16 @@ class SlideshowCreator(QMainWindow):
                 self.images = []
                 for line in lines[count + 1:]:  # Start after the audio file lines
                     path, duration, transition, transition_duration = line.strip().split(',')
+                    if transition_duration != self.default_transition_duration:
+                        transition_duration = self.default_transition_duration
                     self.images.append({
                         'path': path,
                         'duration': int(duration),
                         'transition': transition,
-                        'transition_duration': int(transition_duration)
+                        'transition_duration': float(transition_duration)
                     })
+
+                print(self.images)
                 
                 # Update the UI tables
                 self.update_image_table()
@@ -627,19 +638,6 @@ class SlideshowCreator(QMainWindow):
     def update_transition(self, row, transition):
         self.images[row]['transition'] = transition
         print(f"Transition updated for {self.images[row]['path']} ---- {transition}")  # Debugging output
-
-    def set_all_images_transition_length(self):
-            min_length = 1
-            min_image_duration = min(image['duration'] for image in self.images)
-
-            max_length = min_image_duration -1
-            if max_length > 60:
-                max_length = 60
-            new_length, ok = QInputDialog.getInt(self, "Set Duration", "Enter duration in seconds:", min_length, min_length, max_length)
-            if ok:
-                for i in range(len(self.images)):
-                    self.images[i]['transition_duration'] = new_length
-                self.update_image_table()
     
     def set_all_images_transition(self):
         transition, ok = QInputDialog.getItem(self, "Set Transition", "Select transition:", self.transitions_types, 0, False)
@@ -722,14 +720,15 @@ class SlideshowCreator(QMainWindow):
         set_all_images_duration_action.triggered.connect(self.set_all_images_duration)
         Img_menu.addAction(set_all_images_duration_action)
 
+        set_random_image_order_action = QAction("Set Random Images Order", self)
+        set_random_image_order_action.triggered.connect(self.set_random_images_order)
+        Img_menu.addAction(set_random_image_order_action)
+
         Transitions_menu = options_menu.addMenu("Transitions")
         Transitions_menu.setStyleSheet("QMenu { background-color: #1E1E1E; color: white; }"
                                 "QMenu::item { background: #1E1E1E; color: white; }"
                                 "QMenu::item:selected { background: #0078d4; }")
         
-        set_all_images_transition_length_action = QAction("Set All Images Transition Length", self)
-        set_all_images_transition_length_action.triggered.connect(self.set_all_images_transition_length)
-        Transitions_menu.addAction(set_all_images_transition_length_action)
 
 
         set_all_images_transition_type_action = QAction("Set All Images Transition Type", self)
