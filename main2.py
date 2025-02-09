@@ -6,7 +6,7 @@ import os
 import subprocess
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QInputDialog, QAction,
                              QListWidget,QProgressBar,QComboBox,QMessageBox,QDialog, QPushButton, QLabel, QFileDialog, QSlider, QStyle, QTableWidgetItem, QSpinBox, QHeaderView, QTableWidget)
-from PyQt5.QtCore import Qt, QUrl, QSize, QProcess, QTimer
+from PyQt5.QtCore import Qt, QUrl, QSize, QProcess, QTimer, QThread, pyqtSignal
 from PyQt5.QtGui import QIcon, QFont, QPixmap, QCursor
 from PIL import Image, ImageFilter
 import Image_resizer
@@ -46,6 +46,8 @@ class SlideshowCreator(QMainWindow):
         ]
 
         self.default_transition_duration = 1
+        self.common_width = 1920
+        self.common_height = 1080
 
         #self.transition_type = "fade" # default fade
         #self.transition_duration = 1 #default 1
@@ -102,6 +104,13 @@ class SlideshowCreator(QMainWindow):
         self.progress_bar.setVisible(False)
         self.progress_bar.setStyleSheet("QProgressBar { background-color: #1E1E1E; color: white; }"
                                         "QProgressBar::chunk { background-color: #0078d4; }")
+        
+        self.image_progress_bar = QProgressBar()
+        self.image_progress_bar.setRange(0, 100)
+        self.image_progress_bar.setValue(0)
+        self.image_progress_bar.setVisible(False)
+        self.image_progress_bar.setStyleSheet("QProgressBar { background-color: #1E1E1E; color: white; }"
+                                             "QProgressBar::chunk { background-color: #ff0000; }")  # Red for image exporting
 
         right_panel = QVBoxLayout()
         right_panel.addWidget(self.preview_label)
@@ -125,6 +134,8 @@ class SlideshowCreator(QMainWindow):
         right_panel.addWidget(audio_files_label)
         right_panel.addWidget(self.audio_table)
         right_panel.addWidget(self.progress_bar)
+        right_panel.addWidget(self.image_progress_bar)
+
 
         # Add panels to main layout
         main_layout.addLayout(left_panel, 2)
@@ -254,18 +265,30 @@ class SlideshowCreator(QMainWindow):
             self.image_table.setCurrentCell(row +1, 1)
 
     def delete_image(self, row):
-        del self.images[row]
-        self.update_image_table()
-        if row - 1 <0:
-            self.update_preview_with_row(0)
-            self.image_table.setCurrentCell(0, 1)
-        else:
-            self.update_preview_with_row(row - 1)
-            self.image_table.setCurrentCell(row -1, 1)
+        if 0 <= row < len(self.images):  # Ensure the row is valid
+            del self.images[row]  # Delete the image
+            self.update_image_table()  # Update the table
+
+            # Update the preview after deletion
+            if len(self.images) == 0:  # If no images are left, clear the preview
+                self.preview_label.clear()
+            else:
+                # If the deleted row was the last one, show the previous row
+                if row >= len(self.images):
+                    row = len(self.images) - 1
+                self.update_preview_with_row(row)  # Update the preview with the new row
+                self.image_table.setCurrentCell(row, 1)  # Set the current cell in the table
 
     def set_random_images_order(self):
         random.shuffle(self.images)
         self.update_image_table()
+
+    def update_image_progress(self, value):
+        self.image_progress_bar.setValue(value)
+
+    def on_image_processing_finished(self):
+        self.image_progress_bar.setVisible(False)
+        self.continue_with_video_export()
 
 
 
@@ -341,29 +364,13 @@ class SlideshowCreator(QMainWindow):
 
     """03_Export Functions"""
 
-    def export_slideshow(self):
-        if not self.validate_transitions():
-            return
-        print("Images:", self.images)  # Debugging output
-        print("Audio Files:", self.audio_files)  # Debugging output
-        if not self.images or not self.audio_files:
-            print("Please add images and audio before exporting.")
-            return
-        
-        options = QFileDialog.Options()
-        file_path, _ = QFileDialog.getSaveFileName(self, "Save Slideshow", "", "Video Files (*.mp4);;All Files (*)", options=options)
-        if file_path:
-            self.output_file = file_path
-        else:
-            print("Please select a location for the exported video.")
-            return
-        
+    def continue_with_video_export(self):
         total_image_duration = 0
-        #get the total image duration
+        # Get the total image duration
         for i in range(len(self.images)):
             total_image_duration += self.images[i]['duration']
-        
-        #get the total audio duration
+
+        # Get the total audio duration
         total_audio_duration = 0.0
         for audio in self.audio_files:
             audio_path = audio['path']
@@ -382,8 +389,6 @@ class SlideshowCreator(QMainWindow):
             except Exception as e:
                 print(f"Error processing file {audio_path}: {e}")
 
-
-        
         print("Total image duration:", total_image_duration, "seconds")
         print("Total audio duration:", total_audio_duration, "seconds")
 
@@ -391,7 +396,7 @@ class SlideshowCreator(QMainWindow):
             msg = QMessageBox()
             msg.setIcon(QMessageBox.Information)
             msg.setWindowTitle("Audio and Video doesn't match")
-            msg.setText("the total image duration is bigger then the audio duration, would you like to change the audio duration to match the image duration?")
+            msg.setText("The total image duration is bigger than the audio duration. Would you like to change the audio duration to match the image duration?")
             msg.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
             reply = msg.exec_()
             if reply == QMessageBox.Cancel:
@@ -404,7 +409,7 @@ class SlideshowCreator(QMainWindow):
                     msg = QMessageBox()
                     msg.setIcon(QMessageBox.Information)
                     msg.setWindowTitle("Audio and Video doesn't match")
-                    msg.setText("Sorry! \n couldn't match the audio duration to the image duration because of min and max issues, please add another song or choose a longer one!")
+                    msg.setText("Sorry! \n Couldn't match the audio duration to the image duration because of min and max issues. Please add another song or choose a longer one!")
                     msg.setStandardButtons(QMessageBox.Ok)
                     msg.exec_()
                     return
@@ -413,23 +418,49 @@ class SlideshowCreator(QMainWindow):
                         self.images[i]['duration'] = new_duration_to_each_image
                     self.update_image_table()
 
-                
-            
-
         # Create FFmpeg command
         command = self.build_ffmpeg_command()
         print("Exporting with command:", command)
-        
-        
+
         # Execute FFmpeg command
         self.process = QProcess(self)
         self.process.readyReadStandardOutput.connect(self.update_progress)
         self.process.readyReadStandardError.connect(self.update_progress)  # Capture FFmpeg logs
         self.process.finished.connect(self.export_finished)
 
-        self.progress_bar.setVisible(True)    
+        self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)  # Reset progress bar
         self.process.start(command)
+
+    def export_slideshow(self):
+        if not self.validate_transitions():
+            return
+        print("Images:", self.images)  # Debugging output
+        print("Audio Files:", self.audio_files)  # Debugging output
+        if not self.images or not self.audio_files:
+            print("Please add images and audio before exporting.")
+            return
+        
+        options = QFileDialog.Options()
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save Slideshow", "", "Video Files (*.mp4);;All Files (*)", options=options)
+        if file_path:
+            self.output_file = file_path
+        else:
+            print("Please select a location for the exported video.")
+            return
+        
+        # Start image processing in a separate thread
+        self.image_progress_bar.setVisible(True)
+        self.image_progress_bar.setValue(0)
+
+        # Assuming self.images is a list of dictionaries with 'path' and 'duration' as keys
+        image_path22 = self.images[0]['path']
+        output_folder22 = os.path.join(os.path.dirname(image_path22), "A_Blur")  # Ensure correct folder structure
+
+        self.image_worker = ImageProcessingWorker(self.images, output_folder22, self.common_width, self.common_height)
+        self.image_worker.progress.connect(self.update_image_progress)
+        self.image_worker.finished.connect(self.on_image_processing_finished)
+        self.image_worker.start()
 
     def export_finished(self):
         self.progress_bar.setValue(100)  # Mark as complete
@@ -447,31 +478,10 @@ class SlideshowCreator(QMainWindow):
         filters = []
         total_duration = 0
 
-        common_width = 1920
-        common_height = 1080
+        common_width = self.common_width
+        common_height = self.common_height
 
-        # Assuming self.images is a list of dictionaries with 'path' and 'duration' as keys
-        image_path22 = self.images[0]['path']
-        output_folder22 = os.path.join(os.path.dirname(image_path22), "A_Blur")  # Ensure correct folder structure
-
-        # Ensure output folder exists
-        if not os.path.exists(output_folder22):
-            os.makedirs(output_folder22)
-
-        for i in range(len(self.images)):
-            img = self.images[i]['path']
-            
-            try:
-                original_image = Image.open(img)
-                if original_image.size != (common_width, common_height):
-                    new_image_path = Image_resizer.process_image(img, output_folder22)
-                    
-                    if new_image_path:  # Only update path if the new image was created successfully
-                        self.images[i]['path'] = new_image_path
-                    else:
-                        print(f"Failed to process image: {img}")
-            except Exception as e:
-                print(f"Error opening image {img}: {e}")
+        
 
         #transition_duration = self.transition_duration
             # Add image inputs and scaling filters
@@ -554,13 +564,14 @@ class SlideshowCreator(QMainWindow):
     """05_Preview Functions"""
     def update_preview(self):
         """Update preview when a slide is selected"""
-        selected_items = self.image_table.selectedItems()  # Changed from image_list to image_table
-        if selected_items:
+        selected_items = self.image_table.selectedItems()
+        if selected_items and self.images:  # Check if images list is not empty
             row = self.image_table.row(selected_items[0])
-            img_path = self.images[row]['path']
-            # Load and display the selected image in the preview
-            pixmap = QPixmap(img_path)
-            self.preview_label.setPixmap(pixmap.scaled(400, 300, Qt.KeepAspectRatio))
+            if 0 <= row < len(self.images):  # Ensure the row is valid
+                img_path = self.images[row]['path']
+                # Load and display the selected image in the preview
+                pixmap = QPixmap(img_path)
+                self.preview_label.setPixmap(pixmap.scaled(400, 300, Qt.KeepAspectRatio))
 
     def update_preview_with_row(self, row):
         """Update preview when a slide is selected"""
@@ -623,7 +634,7 @@ class SlideshowCreator(QMainWindow):
                         'path': path,
                         'duration': int(duration),
                         'transition': transition,
-                        'transition_duration': float(transition_duration)
+                        'transition_duration': int(transition_duration)
                     })
 
                 print(self.images)
@@ -739,6 +750,40 @@ class SlideshowCreator(QMainWindow):
         set_random_transition_for_each_image_action.triggered.connect(self.set_random_transition_for_each_image)
         Transitions_menu.addAction(set_random_transition_for_each_image_action)
 
+
+
+
+
+class ImageProcessingWorker(QThread):
+    progress = pyqtSignal(int)  # Signal to update the progress bar
+    finished = pyqtSignal()  # Signal to indicate that processing is finished
+
+    def __init__(self, images, output_folder, common_width, common_height):
+        super().__init__()
+        self.images = images
+        self.output_folder = output_folder
+        self.common_width = common_width
+        self.common_height = common_height
+
+    def run(self):
+        for i in range(len(self.images)):
+            img = self.images[i]['path']
+            try:
+                original_image = Image.open(img)
+                if original_image.size != (self.common_width, self.common_height):
+                    new_image_path = Image_resizer.process_image(img, self.output_folder)
+                    if new_image_path:  # Only update path if the new image was created successfully
+                        self.images[i]['path'] = new_image_path
+                    else:
+                        print(f"Failed to process image: {img}")
+            except Exception as e:
+                print(f"Error opening image {img}: {e}")
+
+            # Emit progress update
+            self.progress.emit(int((i + 1) / len(self.images) * 100))
+
+        # Emit finished signal
+        self.finished.emit()
 
 
 if __name__ == "__main__":
