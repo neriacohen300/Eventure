@@ -691,6 +691,35 @@ class SlideshowCreator(QMainWindow):
             self.transition_item.setCurrentText(transition)  # Set current transition
         self.update_image_table()
 
+    def auto_calc_image_duration(self):
+        total_images_count = 0
+        total_audio_duration = 0.0
+        for audio in self.audio_files:
+            audio_path = audio['path']
+            try:
+                # Enclose the file path in double quotes
+                cmd = [
+                    "ffprobe",
+                    "-v", "error",
+                    "-show_entries", "format=duration",
+                    "-of", "default=noprint_wrappers=1:nokey=1",
+                    f'"{audio_path}"'  # Quoting the path
+                ]
+                # Run the ffprobe command
+                output = subprocess.check_output(" ".join(cmd), shell=True, universal_newlines=True).strip()
+                total_audio_duration += float(output)
+            except Exception as e:
+                print(f"Error processing file {audio_path}: {e}")
+
+        for i in range(len(self.images)):
+            total_images_count += 1
+
+
+        new_image_duration = int((total_audio_duration - 2) / total_images_count)
+        for i in range(len(self.images)):
+            self.images[i]['duration'] = new_image_duration
+        self.update_image_table()
+
     def validate_transitions(self):
         for img in self.images:
             if img['transition_duration'] >= img['duration']:
@@ -759,6 +788,12 @@ class SlideshowCreator(QMainWindow):
         set_random_image_order_action = QAction("Set Random Images Order", self)
         set_random_image_order_action.triggered.connect(self.set_random_images_order)
         Img_menu.addAction(set_random_image_order_action)
+
+        auto_set_images_action = QAction("Auto Calculate Images Duration", self)
+        auto_set_images_action.triggered.connect(self.auto_calc_image_duration)
+        Img_menu.addAction(auto_set_images_action)
+
+        
 
         Transitions_menu = options_menu.addMenu("Transitions")
         Transitions_menu.setStyleSheet("QMenu { background-color: #1E1E1E; color: white; }"
