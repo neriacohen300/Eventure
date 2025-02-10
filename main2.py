@@ -69,16 +69,17 @@ class SlideshowCreator(QMainWindow):
 
         # Initialize the image_table attribute
         self.image_table = QTableWidget()
-        self.image_table.setColumnCount(5)
-        self.image_table.setHorizontalHeaderLabels(["Actions", "Image", "Duration (sec)", "Transition Type", "Transition Duration (sec)"])
+        self.image_table.setColumnCount(6)
+        self.image_table.setHorizontalHeaderLabels([".", "Image", "Duration (sec)", "Transition", "Length (sec)", "Text"])
         self.image_table.setFont(QFont(self.deafult_font, 10, QFont.Bold))
         self.image_table.setStyleSheet("QTableWidget { background-color: #1E1E1E; color: white; }"
                                         "QHeaderView::section { background-color: #1E1E1E; color: white; }")
         self.image_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        self.image_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.image_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.image_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
         self.image_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
         self.image_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        self.image_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents)
 
 
         self.image_table.itemChanged.connect(self.on_edit_on_table)
@@ -158,21 +159,30 @@ class SlideshowCreator(QMainWindow):
     def on_edit_on_table(self, item):
         """Handles editing the 'Duration' column."""
         column = item.column()
+        row = item.row()
         if column == 2:  # Only handle edits for the 'Duration' column
             try:
                 new_duration = int(item.text())
                 if new_duration < 2 or new_duration > 600:
                     raise ValueError("Duration out of range (2-600).")
-                row = item.row()
                 self.images[row]['duration'] = new_duration  # Update the image data
                 if self.images[row]['transition_duration'] > self.images[row]['duration'] -1:
                     self.images[row]['transition_duration'] = self.images[row]['duration'] -1
                     self.update_image_table()
             except ValueError:
                 # Revert to the previous value if the input is invalid
-                row = item.row()
                 item.setText(str(self.images[row]['duration']))
             print(f"Duration updated for {self.images[row]['path']}    ----   {self.images[row]['duration']} \n")  # Debugging output
+        
+        elif column == 5:  # Handle edits for the 'Text' column
+            try:
+                new_text = str(item.text())
+                self.images[row]['text'] = new_text  # Update the image data
+                #self.update_image_table()
+            except ValueError:
+                # Revert to the previous value if the input is invalid
+                item.setText(str(self.images[row]['text']))
+            print(f"Text updated for {self.images[row]['path']}    ----   {self.images[row]['text']} \n")  # Debugging output
 
             
     def set_all_images_duration(self):
@@ -196,7 +206,7 @@ class SlideshowCreator(QMainWindow):
         files, _ = QFileDialog.getOpenFileNames(self, "Select Images", "", "Images (*.png *.jpg *.jpeg *.bmp *.gif)")
         if files:
             for file in files:
-                self.images.append({'path': file, 'duration': 5, 'transition': 'fade', 'transition_duration': self.default_transition_duration})  # Default duration 5 seconds
+                self.images.append({'path': file, 'duration': 5, 'transition': 'fade', 'transition_duration': self.default_transition_duration, 'text': ""})  # Default duration 5 seconds
             self.update_image_table()
             print("Images added:", self.images)  # Debugging output
 
@@ -211,6 +221,8 @@ class SlideshowCreator(QMainWindow):
             self.transition_item.addItems(self.transitions_types)  # Add transition options
             self.transition_item.setCurrentText(img.get('transition', 'fade'))  # Set current transition
             transition_length_item = QTableWidgetItem(str(img.get('transition_duration', self.default_transition_duration)))  # Fresh item, default 1 if not specified
+            text_item = QTableWidgetItem(str(img.get('text', "")))
+            text_item.setFlags(text_item.flags() | Qt.ItemIsEditable)  # Ensure the text item is editable
             filename_item.setFlags(filename_item.flags() & ~Qt.ItemIsEditable)  # Make the item non-editable
             transition_length_item.setFlags(transition_length_item.flags() & ~Qt.ItemIsEditable)  # Make the item non-editable
 
@@ -218,6 +230,7 @@ class SlideshowCreator(QMainWindow):
             self.image_table.setItem(row, 2, duration_item)
             self.image_table.setCellWidget(row, 3, self.transition_item)  # Set QComboBox in the table
             self.image_table.setItem(row, 4, transition_length_item)
+            self.image_table.setItem(row, 5, text_item)
 
             # Add move up, move down, and delete buttons
             move_up_btn = QPushButton("↑")
@@ -607,7 +620,7 @@ class SlideshowCreator(QMainWindow):
                 for audio in self.audio_files:
                     f.write(f"{audio['path']}\n")  
                 for img in self.images:
-                    f.write(f"{img['path']},{img.get('duration', 5)},{img.get('transition', 'fade')},{img.get('transition_duration', 1)}\n") 
+                    f.write(f"{img['path']},{img.get('duration', 5)},{img.get('transition', 'fade')},{img.get('transition_duration', 1)},{img.get('text', '')}\n") 
 
     def load_project(self):
         options = QFileDialog.Options()
@@ -627,14 +640,15 @@ class SlideshowCreator(QMainWindow):
                 # Load images
                 self.images = []
                 for line in lines[count + 1:]:  # Start after the audio file lines
-                    path, duration, transition, transition_duration = line.strip().split(',')
+                    path, duration, transition, transition_duration, text = line.strip().split(',')
                     if transition_duration != self.default_transition_duration:
                         transition_duration = self.default_transition_duration
                     self.images.append({
                         'path': path,
                         'duration': int(duration),
                         'transition': transition,
-                        'transition_duration': int(transition_duration)
+                        'transition_duration': int(transition_duration),
+                        'text': str(text)
                     })
 
                 print(self.images)
