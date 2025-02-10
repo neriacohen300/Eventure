@@ -49,7 +49,7 @@ def process_image(image_path, output_folder, text):
             draw = ImageDraw.Draw(final_image)
 
             # Use your custom font (make sure the path is correct)
-            font = ImageFont.truetype(r"E:\------ תכנות ------\Even Monatge Maker 2.0\Fonts\Birzia-Black.otf", 56)
+            font = ImageFont.truetype(r"E:\------ תכנות ------\Even Monatge Maker 2.0\Fonts\Birzia-Black.otf", 85)
 
             # Convert the text for RTL using `get_display`
             hebrew_text = get_display(text)
