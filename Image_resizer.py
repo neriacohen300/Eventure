@@ -1,7 +1,8 @@
 import os
-from PIL import Image, ImageFilter
+from bidi.algorithm import get_display  # Handles RTL text
+from PIL import Image, ImageFilter, ImageDraw, ImageFont
 
-def process_image(image_path, output_folder):
+def process_image(image_path, output_folder, text):
     try:
         # Open the image
         original_image = Image.open(image_path)
@@ -42,6 +43,38 @@ def process_image(image_path, output_folder):
 
         # Paste the scaled original image onto the blank image at calculated position
         final_image.paste(original_image_scaled, (x_offset, y_offset))
+
+        # Add text if it's not empty
+        if text:
+            draw = ImageDraw.Draw(final_image)
+
+            # Use your custom font (make sure the path is correct)
+            font = ImageFont.truetype(r"E:\------ תכנות ------\Even Monatge Maker 2.0\Fonts\Birzia-Black.otf", 56)
+
+            # Convert the text for RTL using `get_display`
+            hebrew_text = get_display(text)
+
+            # Calculate text size
+            text_width, text_height = draw.textsize(hebrew_text, font=font)
+
+            # Calculate background dimensions and position
+            bg_width = text_width + 40  # Add padding
+            bg_height = text_height + 20
+            bg_x = (1920 - bg_width) // 2
+            bg_y = 20
+
+            # Draw rounded rectangle as the background
+            radius = 10  # Border radius
+            draw.rounded_rectangle(
+                (bg_x, bg_y, bg_x + bg_width, bg_y + bg_height),
+                radius=radius,
+                fill="white"
+            )
+
+            # Add the text in black
+            text_x = (1920 - text_width) // 2
+            text_y = bg_y + 10  # Center text vertically within the background
+            draw.text((text_x, text_y), hebrew_text, font=font, fill="black")
 
         # Create the output folder if it doesn't exist
         if not os.path.exists(output_folder):

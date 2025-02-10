@@ -1,5 +1,6 @@
 """imports"""
 
+import copy
 import random
 import sys
 import os
@@ -48,6 +49,8 @@ class SlideshowCreator(QMainWindow):
         self.default_transition_duration = 1
         self.common_width = 1920
         self.common_height = 1080
+        self.images_backup = []
+        self.backup_state = False
 
         #self.transition_type = "fade" # default fade
         #self.transition_duration = 1 #default 1
@@ -470,6 +473,9 @@ class SlideshowCreator(QMainWindow):
         image_path22 = self.images[0]['path']
         output_folder22 = os.path.join(os.path.dirname(image_path22), "A_Blur")  # Ensure correct folder structure
 
+        self.images_backup = copy.deepcopy(self.images)
+        self.backup_state = True
+
         self.image_worker = ImageProcessingWorker(self.images, output_folder22, self.common_width, self.common_height)
         self.image_worker.progress.connect(self.update_image_progress)
         self.image_worker.finished.connect(self.on_image_processing_finished)
@@ -547,6 +553,11 @@ class SlideshowCreator(QMainWindow):
 
         # Construct the FFmpeg command
         command = f'ffmpeg -y {" ".join(inputs)} -filter_complex "{filter_complex}" -map {final_stream} {audio_map} -c:a aac -c:v libx264 -pix_fmt yuv420p -preset ultrafast -shortest "{self.output_file}"'
+
+        if self.backup_state == True:
+            self.images = self.images_backup
+            self.backup_state = False
+            self.update_image_table()
 
         return command
 
@@ -782,10 +793,11 @@ class ImageProcessingWorker(QThread):
     def run(self):
         for i in range(len(self.images)):
             img = self.images[i]['path']
+            text_on_slide = self.images[i]['text']
             try:
                 original_image = Image.open(img)
                 if original_image.size != (self.common_width, self.common_height):
-                    new_image_path = Image_resizer.process_image(img, self.output_folder)
+                    new_image_path = Image_resizer.process_image(img, self.output_folder, text_on_slide)
                     if new_image_path:  # Only update path if the new image was created successfully
                         self.images[i]['path'] = new_image_path
                     else:
