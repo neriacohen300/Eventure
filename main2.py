@@ -2,6 +2,7 @@
 
 import copy
 import random
+import shutil
 import sys
 import os
 import subprocess
@@ -10,7 +11,8 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
 from PyQt5.QtCore import Qt, QUrl, QSize, QProcess, QTimer, QThread, pyqtSignal
 from PyQt5.QtGui import QIcon, QFont, QPixmap, QCursor
 from PIL import Image, ImageFilter
-import Image_resizer
+from openpyxl import Workbook
+import Image_resizer, premiere_export
 
 """main class"""
 class SlideshowCreator(QMainWindow):
@@ -51,6 +53,7 @@ class SlideshowCreator(QMainWindow):
         self.common_height = 1080
         self.images_backup = []
         self.backup_state = False
+        self.premiere_project_folder = ""
 
         #self.transition_type = "fade" # default fade
         #self.transition_duration = 1 #default 1
@@ -115,6 +118,13 @@ class SlideshowCreator(QMainWindow):
         self.image_progress_bar.setVisible(False)
         self.image_progress_bar.setStyleSheet("QProgressBar { background-color: #1E1E1E; color: white; }"
                                              "QProgressBar::chunk { background-color: #ff0000; }")  # Red for image exporting
+        
+        self.image_premiere_progress_bar = QProgressBar()
+        self.image_premiere_progress_bar.setRange(0, 100)
+        self.image_premiere_progress_bar.setValue(0)
+        self.image_premiere_progress_bar.setVisible(False)
+        self.image_premiere_progress_bar.setStyleSheet("QProgressBar { background-color: #1E1E1E; color: white; }"
+                                             "QProgressBar::chunk { background-color: #800080; }")  # Dark purple for image exporting
 
         right_panel = QVBoxLayout()
         right_panel.addWidget(self.preview_label)
@@ -139,6 +149,7 @@ class SlideshowCreator(QMainWindow):
         right_panel.addWidget(self.audio_table)
         right_panel.addWidget(self.progress_bar)
         right_panel.addWidget(self.image_progress_bar)
+        right_panel.addWidget(self.image_premiere_progress_bar)
 
 
         # Add panels to main layout
@@ -560,6 +571,7 @@ class SlideshowCreator(QMainWindow):
             self.update_image_table()
 
         return command
+    
 
 
 
@@ -729,7 +741,131 @@ class SlideshowCreator(QMainWindow):
         return True
 
 
-    """08_Menu Functions"""
+    """08_Premiere_Functions"""
+    def export_premiere_slideshow(self):
+
+        options = QFileDialog.Options()
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save Premiere Slideshow", "", "Folder", options=options)
+        if file_path:
+            self.premiere_project_folder = file_path
+        else:
+            print("Please select a location for the exported Premiere project.")
+            return
+
+        self.image_premiere_progress_bar.setVisible(True)
+        self.image_premiere_progress_bar.setValue(0)
+
+
+        self.image_premiere_worker = ImageProcessingPremiereWorker(self.images, self.premiere_project_folder, self.common_width, self.common_height)
+        self.image_premiere_worker.progress.connect(self.update_image_premiere_progress)
+        self.image_premiere_worker.finished.connect(self.on_image_premiere_processing_finished)
+        self.image_premiere_worker.start()
+
+    
+    def update_image_premiere_progress(self, value):
+        self.image_premiere_progress_bar.setValue(value)
+
+    def on_image_premiere_processing_finished(self):
+        self.image_premiere_progress_bar.setVisible(False)
+        self.export_premiere_audio()
+        self.export_premiere_text()
+        self.export_premiere_duration_excel()
+        self.copy_premiere_project_file()
+
+    def export_premiere_audio(self):
+        # Create the "Audios" folder if it doesn't exist
+        premiere_audio_folder = os.path.join(self.premiere_project_folder, "02_אודיו")
+        os.makedirs(premiere_audio_folder, exist_ok=True)
+
+        for i, audio_file in enumerate(self.audio_files, start=1):
+            audio_path = audio_file['path']
+            audio_extension = os.path.splitext(audio_path)[1]  # Get the file extension (e.g., .mp3)
+            audio_file_name = os.path.splitext(os.path.basename(audio_path))[0]  # Get the audio file name without extension
+            new_audio_name = f"audio{i}_{audio_file_name}{audio_extension}"  # Generate new name (e.g., audio1_filename.mp3)
+            premiere_audio_path = os.path.join(premiere_audio_folder, new_audio_name)
+
+            # Copy the audio file to the new location with the new name
+            shutil.copy(audio_path, premiere_audio_path)
+
+            print(f"Copied {audio_path} to {premiere_audio_path}")
+
+    def format_time(self, seconds):
+        """Convert seconds to SRT time format: HH:MM:SS,mmm."""
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        secs = int(seconds % 60)
+        millis = int((seconds - int(seconds)) * 1000)
+        return f"{hours:02}:{minutes:02}:{secs:02},{millis:03}"
+
+    def export_premiere_text(self):
+        # Create the "Texts" folder if it doesn't exist
+        premiere_text_folder = os.path.join(self.premiere_project_folder, "03_טקסט")
+        os.makedirs(premiere_text_folder, exist_ok=True)
+
+        # Define the output file path
+        srt_file_path = os.path.join(premiere_text_folder, "exported_texts.srt")
+
+        # Initialize time tracking
+        current_time = 0
+
+        # Write the SRT file
+        with open(srt_file_path, "w", encoding="utf-8") as srt_file:
+            for idx, image in enumerate(self.images, start=1):
+                start_time = self.format_time(current_time)
+                end_time = self.format_time(current_time + image['duration'])
+
+                # Write the subtitle entry
+                srt_file.write(f"{idx}\n")
+                srt_file.write(f"{start_time} --> {end_time}\n")
+                srt_file.write(f"{image['text']}\n\n")
+
+                # Update current_time
+                current_time += image['duration']
+
+        print(f"SRT file created at: {srt_file_path}")
+
+    def export_premiere_duration_excel(self):
+        # Create the "Texts" folder if it doesn't exist
+        premiere_text_folder = os.path.join(self.premiere_project_folder, "03_טקסט")
+        os.makedirs(premiere_text_folder, exist_ok=True)
+
+        # Define the output Excel file path
+        excel_file_path = os.path.join(premiere_text_folder, "exported_durations.xlsx")
+
+        # Create a new Workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Durations"
+
+        # Write the header row
+        ws.append(["Path", "Duration", "Text"])
+
+        # Write the image data
+        for image in self.images:
+            ws.append([image["path"], image["duration"], image["text"]])
+
+        # Save the workbook to the file
+        wb.save(excel_file_path)
+
+        print(f"Excel file created at: {excel_file_path}")
+
+    def copy_premiere_project_file(self):
+        # Define the source and destination paths for the Premiere project file
+        premiere_project_source = "E:\------ תכנות ------\Even Monatge Maker 2.0\Premiere_Project\Project.prproj"
+        project_destination_folder = os.path.join(self.premiere_project_folder, "04_פרוייקט")
+        os.makedirs(project_destination_folder, exist_ok=True)
+        project_destination_path = os.path.join(project_destination_folder, "Project.prproj")
+
+        # Copy the Premiere project file
+        shutil.copy(premiere_project_source, project_destination_path)
+
+        print(f"Premiere project file copied to: {project_destination_path}")
+
+
+        
+
+
+    """09_Menu Functions"""
     def create_menu(self):
         # Function to create a menu bar
         menubar = self.menuBar()
@@ -767,9 +903,18 @@ class SlideshowCreator(QMainWindow):
         clear_action.triggered.connect(self.clear_project)
         file_menu.addAction(clear_action)
 
-        export_action = QAction("Export Slideshow", self)
-        export_action.triggered.connect(self.export_slideshow)
-        file_menu.addAction(export_action)
+        export_menu = file_menu.addMenu("Export")
+        export_menu.setStyleSheet("QMenu { background-color: #1E1E1E; color: white; }"
+                                "QMenu::item { background: #1E1E1E; color: white; }"
+                                "QMenu::item:selected { background: #0078d4; }")
+
+        export_slideshow_action = QAction("Export Slideshow", self)
+        export_slideshow_action.triggered.connect(self.export_slideshow)
+        export_menu.addAction(export_slideshow_action)
+
+        export_premiere_action = QAction("Export To Premiere", self)
+        export_premiere_action.triggered.connect(self.export_premiere_slideshow)
+        export_menu.addAction(export_premiere_action)
 
         options_menu = menubar.addMenu("Options")
         options_menu.setStyleSheet("QMenu { background-color: #1E1E1E; color: white; }"
@@ -842,6 +987,29 @@ class ImageProcessingWorker(QThread):
 
             # Emit progress update
             self.progress.emit(int((i + 1) / len(self.images) * 100))
+
+        # Emit finished signal
+        self.finished.emit()
+
+
+class ImageProcessingPremiereWorker(QThread):
+    progress = pyqtSignal(int)  # Signal to update the progress bar
+    finished = pyqtSignal()  # Signal to indicate that processing is finished
+
+    def __init__(self, images, output_folder, common_width, common_height):
+        super().__init__()
+        self.images = images
+        self.output_folder = output_folder
+        self.common_width = common_width
+        self.common_height = common_height
+
+    def run(self):
+        # Define a progress callback function
+        def progress_callback(progress):
+            self.progress.emit(progress)  # Emit the progress to the main thread
+
+        # Call the process_images function with the progress callback
+        premiere_export.process_images(self.images, self.output_folder, progress_callback)
 
         # Emit finished signal
         self.finished.emit()

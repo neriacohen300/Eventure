@@ -25,7 +25,7 @@ def process_image(image_path, output_folder, text):
         final_image = Image.new("RGB", (1920, 1080))
 
         # Blur the resized image with a reduced blur radius for faster processing
-        blurred_image = resized_image.resize((1920, 1080), Image.Resampling.LANCZOS).filter(ImageFilter.GaussianBlur(radius=5))
+        blurred_image = resized_image.resize((1920, 1080), Image.Resampling.LANCZOS).filter(ImageFilter.GaussianBlur(radius=7))
 
         # Paste the blurred image onto the blank image
         final_image.paste(blurred_image, (0, 0))
