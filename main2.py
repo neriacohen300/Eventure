@@ -213,18 +213,20 @@ class SlideshowCreator(QMainWindow):
             if ok:
                 for i in range(len(self.images)):
                     self.images[i]['duration'] = new_duration
-                self.update_image_table()
+            self.update_image_table()
 
     """01_02_Images Implementation Functions"""
     def add_images(self):
         files, _ = QFileDialog.getOpenFileNames(self, "Select Images", "", "Images (*.png *.jpg *.jpeg *.bmp *.gif)")
         if files:
-            for file in files:
-                self.images.append({'path': file, 'duration': 5, 'transition': 'fade', 'transition_duration': self.default_transition_duration, 'text': ""})  # Default duration 5 seconds
-            self.update_image_table()
-            print("Images added:", self.images)  # Debugging output
+            new_images = [{'path': file, 'duration': 5, 'transition': 'fade', 'transition_duration': self.default_transition_duration, 'text': ""} for file in files]
+            self.images.extend(new_images)
+            self.update_image_table()  # Single update after all images are added
 
     def update_image_table(self):
+        self.image_table.setUpdatesEnabled(False)
+        self.image_table.setSortingEnabled(False)
+
         self.image_table.setRowCount(len(self.images))
         for row, img in enumerate(self.images):
             # Create NEW QTableWidgetItem instances each time
@@ -274,22 +276,53 @@ class SlideshowCreator(QMainWindow):
             # Set the button widget in the table
             self.image_table.setCellWidget(row, 0, button_widget)
 
+            # Re-enable updates and sorting after the batch update
+            self.image_table.setSortingEnabled(True)
+            self.image_table.setUpdatesEnabled(True)
+
             # Connect the QComboBox signal to update the transition in self.images
             self.transition_item.currentTextChanged.connect(lambda text, row=row: self.update_transition(row, text))
 
     def move_image_up(self, row):
         if row > 0:
+            # Swap images in the data structure
             self.images[row], self.images[row - 1] = self.images[row - 1], self.images[row]
-            self.update_image_table()
+            
+            # Update only the two affected rows in the UI
+            self.update_image_row(row)
+            self.update_image_row(row - 1)
+            
+            # Update selection and preview
+            self.image_table.setCurrentCell(row - 1, 1)
             self.update_preview_with_row(row - 1)
-            self.image_table.setCurrentCell(row -1, 1)
 
     def move_image_down(self, row):
         if row < len(self.images) - 1:
             self.images[row], self.images[row + 1] = self.images[row + 1], self.images[row]
-            self.update_image_table()
+            self.update_image_row(row)
+            self.update_image_row(row + 1)
+            self.image_table.setCurrentCell(row + 1, 1)
             self.update_preview_with_row(row + 1)
-            self.image_table.setCurrentCell(row +1, 1)
+
+    def update_image_row(self, row):
+        """Update a single row in the image table."""
+        img = self.images[row]
+        path_img = os.path.basename(img['path'])
+        duration_item = QTableWidgetItem(str(img.get('duration', 5)))
+        transition_length_item = QTableWidgetItem(str(img.get('transition_duration', self.default_transition_duration)))
+        text_item = QTableWidgetItem(str(img.get('text', "")))
+        text_item.setFlags(text_item.flags() | Qt.ItemIsEditable)
+
+        filename_item = QTableWidgetItem(path_img)
+        filename_item.setFlags(filename_item.flags() & ~Qt.ItemIsEditable)
+        transition_length_item.setFlags(transition_length_item.flags() & ~Qt.ItemIsEditable)
+
+        self.image_table.setItem(row, 1, filename_item)
+        self.image_table.setItem(row, 2, duration_item)
+        self.image_table.setItem(row, 4, transition_length_item)
+        self.image_table.setItem(row, 5, text_item)
+
+        
 
     def delete_image(self, row):
         if 0 <= row < len(self.images):  # Ensure the row is valid
