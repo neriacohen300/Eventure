@@ -350,6 +350,24 @@ class SlideshowCreator(QMainWindow):
         self.image_progress_bar.setVisible(False)
         self.continue_with_video_export()
 
+    def set_image_location(self):
+        selected_items = self.image_table.selectedItems()
+        if selected_items:
+
+            current_row = self.image_table.row(selected_items[0])
+            new_position, ok = QInputDialog.getInt(self, "Set Image Location", "Enter new position (1-based index):", current_row + 1, 1, len(self.images))
+            if ok:
+                self.image_table.setUpdatesEnabled(False)
+                self.image_table.setSortingEnabled(False)
+                new_position -= 1  # Convert to 0-based index
+                image = self.images.pop(current_row)  # Remove the image from the current position
+                self.images.insert(new_position, image)  # Insert it at the new position
+                self.update_image_table()  # Refresh the table
+                self.image_table.setCurrentCell(new_position, 1)  # Set focus on the moved image
+                # Re-enable updates and sorting after the batch update
+                self.image_table.setSortingEnabled(True)
+                self.image_table.setUpdatesEnabled(True)
+
 
 
 
@@ -970,6 +988,10 @@ class SlideshowCreator(QMainWindow):
         auto_set_images_action = QAction("Auto Calculate Images Duration", self)
         auto_set_images_action.triggered.connect(self.auto_calc_image_duration)
         Img_menu.addAction(auto_set_images_action)
+
+        set_image_location_action = QAction("Set Image Location", self)
+        set_image_location_action.triggered.connect(self.set_image_location)
+        Img_menu.addAction(set_image_location_action)
 
         
 
