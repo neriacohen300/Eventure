@@ -19,23 +19,23 @@ def process_image(image_path, output_folder, text):
             new_width = int(1080 * original_aspect)
 
         # Resize the original image to fit within 1920x1080
-        original_image = original_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        resized_image = original_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
 
         # Create a new blank image with size 1920x1080
         final_image = Image.new("RGB", (1920, 1080))
 
-        # Blur the resized image with increased blur radius for more blur
-        blurred_image = original_image.resize((1920, 1080), Image.Resampling.LANCZOS).filter(ImageFilter.GaussianBlur(radius=10))
+        # Blur the resized image with a reduced blur radius for faster processing
+        blurred_image = resized_image.resize((1920, 1080), Image.Resampling.LANCZOS).filter(ImageFilter.GaussianBlur(radius=5))
 
         # Paste the blurred image onto the blank image
         final_image.paste(blurred_image, (0, 0))
 
-        # Calculate the size for the original image to be 90% of the blurred image size
+        # Calculate the size for the original image to be 90% of the resized image size
         scaled_width = int(new_width * 0.9)
         scaled_height = int(new_height * 0.9)
 
         # Resize the original image to 90% of its size
-        original_image_scaled = original_image.resize((scaled_width, scaled_height), Image.Resampling.LANCZOS)
+        original_image_scaled = resized_image.resize((scaled_width, scaled_height), Image.Resampling.LANCZOS)
 
         # Calculate the position to place the resized original image in the middle
         x_offset = (1920 - scaled_width) // 2
@@ -61,7 +61,7 @@ def process_image(image_path, output_folder, text):
             bg_width = text_width + 40  # Add padding
             bg_height = text_height + 20
             bg_x = (1920 - bg_width) // 2
-            bg_y = 20
+            bg_y = 1080 - bg_height - 50  # Place the background near the bottom, adjust the offset for height
 
             # Draw rounded rectangle as the background
             radius = 10  # Border radius
@@ -83,7 +83,7 @@ def process_image(image_path, output_folder, text):
         # Save the final image to the output folder
         filename = os.path.basename(image_path)
         output_path = os.path.join(output_folder, filename)
-        final_image.save(output_path)
+        final_image.save(output_path, quality=100)  # Adjust quality for faster saving
 
         return output_path  # Return the new image path
     except Exception as e:
