@@ -306,38 +306,46 @@ class SlideshowCreator(QMainWindow):
 
     def update_image_row(self, row):
         """Update a single row in the image table."""
-        img = self.images[row]
-        path_img = os.path.basename(img['path'])
-        duration_item = QTableWidgetItem(str(img.get('duration', 5)))
-        transition_length_item = QTableWidgetItem(str(img.get('transition_duration', self.default_transition_duration)))
-        text_item = QTableWidgetItem(str(img.get('text', "")))
-        text_item.setFlags(text_item.flags() | Qt.ItemIsEditable)
+        if 0 <= row < len(self.images):  # Ensure the row is within bounds
+            img = self.images[row]
+            path_img = os.path.basename(img['path'])
+            duration_item = QTableWidgetItem(str(img.get('duration', 5)))
+            transition_length_item = QTableWidgetItem(str(img.get('transition_duration', self.default_transition_duration)))
+            text_item = QTableWidgetItem(str(img.get('text', "")))
+            text_item.setFlags(text_item.flags() | Qt.ItemIsEditable)
 
-        filename_item = QTableWidgetItem(path_img)
-        filename_item.setFlags(filename_item.flags() & ~Qt.ItemIsEditable)
-        transition_length_item.setFlags(transition_length_item.flags() & ~Qt.ItemIsEditable)
+            filename_item = QTableWidgetItem(path_img)
+            filename_item.setFlags(filename_item.flags() & ~Qt.ItemIsEditable)
+            transition_length_item.setFlags(transition_length_item.flags() & ~Qt.ItemIsEditable)
 
-        self.image_table.setItem(row, 1, filename_item)
-        self.image_table.setItem(row, 2, duration_item)
-        self.image_table.setItem(row, 4, transition_length_item)
-        self.image_table.setItem(row, 5, text_item)
+            self.image_table.setItem(row, 1, filename_item)
+            self.image_table.setItem(row, 2, duration_item)
+            self.image_table.setItem(row, 4, transition_length_item)
+            self.image_table.setItem(row, 5, text_item)
+
 
         
 
     def delete_image(self, row):
         if 0 <= row < len(self.images):  # Ensure the row is valid
-            del self.images[row]  # Delete the image
-            self.update_image_table()  # Update the table
+            del self.images[row]  # Delete the image from the list
 
-            # Update the preview after deletion
+            # Update the table rows to reflect the deletion
+            for i in range(row, len(self.images)):
+                self.update_image_row(i)  # Update each subsequent row
+            
+            self.image_table.removeRow(len(self.images))  # Remove the last row from the table
+            
+            # Update selection and preview
             if len(self.images) == 0:  # If no images are left, clear the preview
                 self.preview_label.clear()
             else:
-                # If the deleted row was the last one, show the previous row
+                # If the deleted row was the last one, adjust the row index
                 if row >= len(self.images):
                     row = len(self.images) - 1
                 self.update_preview_with_row(row)  # Update the preview with the new row
                 self.image_table.setCurrentCell(row, 1)  # Set the current cell in the table
+
 
     def set_random_images_order(self):
         random.shuffle(self.images)
@@ -353,20 +361,14 @@ class SlideshowCreator(QMainWindow):
     def set_image_location(self):
         selected_items = self.image_table.selectedItems()
         if selected_items:
-
             current_row = self.image_table.row(selected_items[0])
             new_position, ok = QInputDialog.getInt(self, "Set Image Location", "Enter new position (1-based index):", current_row + 1, 1, len(self.images))
             if ok:
-                self.image_table.setUpdatesEnabled(False)
-                self.image_table.setSortingEnabled(False)
                 new_position -= 1  # Convert to 0-based index
                 image = self.images.pop(current_row)  # Remove the image from the current position
                 self.images.insert(new_position, image)  # Insert it at the new position
                 self.update_image_table()  # Refresh the table
                 self.image_table.setCurrentCell(new_position, 1)  # Set focus on the moved image
-                # Re-enable updates and sorting after the batch update
-                self.image_table.setSortingEnabled(True)
-                self.image_table.setUpdatesEnabled(True)
 
 
 

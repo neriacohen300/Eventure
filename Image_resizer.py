@@ -4,7 +4,6 @@ from PIL import Image, ImageFilter, ImageDraw, ImageFont
 
 def process_image(image_path, output_folder, text):
     try:
-        # Open the image
         original_image = Image.open(image_path)
 
         # Calculate the new size while maintaining aspect ratio
@@ -83,7 +82,7 @@ def process_image(image_path, output_folder, text):
         # Save the final image to the output folder
         filename = os.path.basename(image_path)
         output_path = os.path.join(output_folder, filename)
-        final_image.save(output_path, quality=100)  # Adjust quality for faster saving
+        final_image.save(output_path, quality=95)  # Adjust quality for faster saving
 
         return output_path  # Return the new image path
     except Exception as e:
