@@ -9,7 +9,7 @@ import subprocess
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QInputDialog, QAction,
                              QListWidget,QProgressBar,QComboBox,QMessageBox,QDialog, QPushButton, QLabel, QFileDialog, QSlider, QStyle, QTableWidgetItem, QSpinBox, QHeaderView, QTableWidget)
 from PyQt5.QtCore import Qt, QUrl, QSize, QProcess, QTimer, QThread, pyqtSignal
-from PyQt5.QtGui import QIcon, QFont, QPixmap, QCursor
+from PyQt5.QtGui import QIcon, QFont, QPixmap, QCursor, QTransform
 from PIL import Image, ImageFilter
 from openpyxl import Workbook
 import Image_resizer, premiere_export
@@ -214,6 +214,7 @@ class SlideshowCreator(QMainWindow):
                 if new_rotation < 0 or new_rotation > 359:
                     raise ValueError("Duration out of range (0-359).")
                 self.images[row]['rotation'] = new_rotation  # Update the image data
+                self.update_preview_with_row(row)
                 #self.update_image_table()
             except ValueError:
                 # Revert to the previous value if the input is invalid
@@ -393,15 +394,6 @@ class SlideshowCreator(QMainWindow):
                 self.images.insert(new_position, image)  # Insert it at the new position
                 self.update_image_table()  # Refresh the table
                 self.image_table.setCurrentCell(new_position, 1)  # Set focus on the moved image
-
-    def set_image_rotation(self):
-        selected_items = self.image_table.selectedItems()
-        if selected_items:
-            current_row = self.image_table.row(selected_items[0])
-            new_rotation, ok = QInputDialog.getInt(self, "Set Image Rotation", "Enter new rotation (0-359):", self.images[current_row].get('rotation', 0), 0, 359)
-            if ok:
-                self.images[current_row]['rotation'] = new_rotation
-                self.update_image_row(current_row)
 
 
 
@@ -690,17 +682,40 @@ class SlideshowCreator(QMainWindow):
         if selected_items and self.images:  # Check if images list is not empty
             row = self.image_table.row(selected_items[0])
             if 0 <= row < len(self.images):  # Ensure the row is valid
-                img_path = self.images[row]['path']
-                # Load and display the selected image in the preview
+                img_data = self.images[row]
+                img_path = img_data['path']
+                rotation = img_data.get('rotation', 0)  # Default to 0 if 'rotation' is not set
+                
+                # Load the image
                 pixmap = QPixmap(img_path)
+                if rotation != 0:
+                    # Apply rotation
+                    transform = QTransform()
+                    transform.rotate(rotation)
+                    pixmap = pixmap.transformed(transform, Qt.SmoothTransformation)
+                
+                # Display the rotated image in the preview
                 self.preview_label.setPixmap(pixmap.scaled(400, 300, Qt.KeepAspectRatio))
+
 
     def update_preview_with_row(self, row):
         """Update preview when a slide is selected"""
-        img_path = self.images[row]['path']
-        # Load and display the selected image in the preview
-        pixmap = QPixmap(img_path)
-        self.preview_label.setPixmap(pixmap.scaled(400, 300, Qt.KeepAspectRatio))
+        if 0 <= row < len(self.images):  # Ensure the row is valid
+            img_data = self.images[row]
+            img_path = img_data['path']
+            rotation = img_data.get('rotation', 0)  # Default to 0 if 'rotation' is not set
+            
+            # Load the image
+            pixmap = QPixmap(img_path)
+            if rotation != 0:
+                # Apply rotation
+                transform = QTransform()
+                transform.rotate(rotation)
+                pixmap = pixmap.transformed(transform, Qt.SmoothTransformation)
+            
+            # Display the rotated image in the preview
+            self.preview_label.setPixmap(pixmap.scaled(400, 300, Qt.KeepAspectRatio))
+
 
     def setup_connections(self):
         """Connect signals to slots"""
@@ -1028,10 +1043,6 @@ class SlideshowCreator(QMainWindow):
         set_image_location_action = QAction("Set Image Location", self)
         set_image_location_action.triggered.connect(self.set_image_location)
         Img_menu.addAction(set_image_location_action)
-
-        set_image_rotation_action = QAction("Set Image Rotation", self)
-        set_image_rotation_action.triggered.connect(self.set_image_rotation)
-        Img_menu.addAction(set_image_rotation_action)
 
         
 
