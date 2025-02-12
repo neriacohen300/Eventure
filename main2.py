@@ -13,6 +13,11 @@ from PyQt5.QtGui import QIcon, QFont, QPixmap, QCursor
 from PIL import Image, ImageFilter
 from openpyxl import Workbook
 import Image_resizer, premiere_export
+from concurrent.futures import ThreadPoolExecutor
+
+
+
+
 
 """main class"""
 class SlideshowCreator(QMainWindow):
@@ -54,6 +59,10 @@ class SlideshowCreator(QMainWindow):
         self.images_backup = []
         self.backup_state = False
         self.premiere_project_folder = ""
+
+        self.executor = ThreadPoolExecutor(max_workers=3)
+        
+
 
         #self.transition_type = "fade" # default fade
         #self.transition_duration = 1 #default 1
@@ -186,7 +195,7 @@ class SlideshowCreator(QMainWindow):
             except ValueError:
                 # Revert to the previous value if the input is invalid
                 item.setText(str(self.images[row]['duration']))
-            print(f"Duration updated for {self.images[row]['path']}    ----   {self.images[row]['duration']} \n")  # Debugging output
+            #print(f"Duration updated for {self.images[row]['path']}    ----   {self.images[row]['duration']} \n")  # Debugging output
         
         elif column == 5:  # Handle edits for the 'Text' column
             try:
@@ -196,7 +205,7 @@ class SlideshowCreator(QMainWindow):
             except ValueError:
                 # Revert to the previous value if the input is invalid
                 item.setText(str(self.images[row]['text']))
-            print(f"Text updated for {self.images[row]['path']}    ----   {self.images[row]['text']} \n")  # Debugging output
+            #print(f"Text updated for {self.images[row]['path']}    ----   {self.images[row]['text']} \n")  # Debugging output
 
             
     def set_all_images_duration(self):
@@ -252,17 +261,17 @@ class SlideshowCreator(QMainWindow):
             move_up_btn = QPushButton("↑")
             move_up_btn.setStyleSheet('QPushButton { background-color: #1E1E1E; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
                                     'QPushButton:hover { background-color: #0078d4; }')
-            move_up_btn.clicked.connect(lambda _, r=row: self.move_image_up(r))
+            move_up_btn.clicked.connect(lambda _, r=row: self.executor.submit(self.move_image_up, r))
 
             move_down_btn = QPushButton("↓")
             move_down_btn.setStyleSheet('QPushButton { background-color: #1E1E1E; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
                                         'QPushButton:hover { background-color: #0078d4; }')
-            move_down_btn.clicked.connect(lambda _, r=row: self.move_image_down(r))
+            move_down_btn.clicked.connect(lambda _, r=row: self.executor.submit(self.move_image_down, r))
 
             delete_btn = QPushButton("✖")
             delete_btn.setStyleSheet('QPushButton { background-color: #1E1E1E; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
                                     'QPushButton:hover { background-color: #ff0000; }')
-            delete_btn.clicked.connect(lambda _, r=row: self.delete_image(r))
+            delete_btn.clicked.connect(lambda _, r=row: self.executor.submit(self.delete_image, r))
 
             # Create a widget to hold the buttons
             button_widget = QWidget()
@@ -738,7 +747,7 @@ class SlideshowCreator(QMainWindow):
     """07_Transition Functions"""
     def update_transition(self, row, transition):
         self.images[row]['transition'] = transition
-        print(f"Transition updated for {self.images[row]['path']} ---- {transition}")  # Debugging output
+        #print(f"Transition updated for {self.images[row]['path']} ---- {transition}")  # Debugging output
     
     def set_all_images_transition(self):
         transition, ok = QInputDialog.getItem(self, "Set Transition", "Select transition:", self.transitions_types, 0, False)
