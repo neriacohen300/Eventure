@@ -84,8 +84,8 @@ class SlideshowCreator(QMainWindow):
 
         # Initialize the image_table attribute
         self.image_table = QTableWidget()
-        self.image_table.setColumnCount(6)
-        self.image_table.setHorizontalHeaderLabels([".", "Image", "Duration (sec)", "Transition", "Length (sec)", "Text"])
+        self.image_table.setColumnCount(7)
+        self.image_table.setHorizontalHeaderLabels([".", "Image", "Duration (sec)", "Transition", "Length (sec)", "Text", "Rotation (deg)"])
         self.image_table.setFont(QFont(self.deafult_font, 10, QFont.Bold))
         self.image_table.setStyleSheet("QTableWidget { background-color: #1E1E1E; color: white; }"
                                         "QHeaderView::section { background-color: #1E1E1E; color: white; }")
@@ -95,6 +95,7 @@ class SlideshowCreator(QMainWindow):
         self.image_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
         self.image_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
         self.image_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents)
+        self.image_table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeToContents)
 
 
         self.image_table.itemChanged.connect(self.on_edit_on_table)
@@ -207,6 +208,18 @@ class SlideshowCreator(QMainWindow):
                 item.setText(str(self.images[row]['text']))
             #print(f"Text updated for {self.images[row]['path']}    ----   {self.images[row]['text']} \n")  # Debugging output
 
+        elif column == 6:  # Handle edits for the 'Text' column
+            try:
+                new_rotation = int(item.text())
+                if new_rotation < 0 or new_rotation > 359:
+                    raise ValueError("Duration out of range (0-359).")
+                self.images[row]['rotation'] = new_rotation  # Update the image data
+                #self.update_image_table()
+            except ValueError:
+                # Revert to the previous value if the input is invalid
+                item.setText(str(self.images[row]['rotation']))
+            #print(f"Duration updated for {self.images[row]['path']}    ----   {self.images[row]['duration']} \n")  # Debugging output
+
             
     def set_all_images_duration(self):
         selected_items = self.image_table.selectedItems()
@@ -228,34 +241,36 @@ class SlideshowCreator(QMainWindow):
     def add_images(self):
         files, _ = QFileDialog.getOpenFileNames(self, "Select Images", "", "Images (*.png *.jpg *.jpeg *.bmp *.gif)")
         if files:
-            new_images = [{'path': file, 'duration': 5, 'transition': 'fade', 'transition_duration': self.default_transition_duration, 'text': ""} for file in files]
+            new_images = [{'path': file, 'duration': 5, 'transition': 'fade', 'transition_duration': self.default_transition_duration, 'text': "", 'rotation': 0} for file in files]
             self.images.extend(new_images)
             self.update_image_table()  # Single update after all images are added
 
     def update_image_table(self):
+        self.image_table.blockSignals(True)  # Disable signals
         self.image_table.setUpdatesEnabled(False)
         self.image_table.setSortingEnabled(False)
 
         self.image_table.setRowCount(len(self.images))
         for row, img in enumerate(self.images):
-            # Create NEW QTableWidgetItem instances each time
             path_img = os.path.basename(img['path'])
-            filename_item = QTableWidgetItem(path_img)  # Fresh item
-            duration_item = QTableWidgetItem(str(img.get('duration', 5)))  # Fresh item, default duration is 5 seconds if not specified
-            self.transition_item = QComboBox()  # Use QComboBox for transitions
-            self.transition_item.addItems(self.transitions_types)  # Add transition options
-            self.transition_item.setCurrentText(img.get('transition', 'fade'))  # Set current transition
-            transition_length_item = QTableWidgetItem(str(img.get('transition_duration', self.default_transition_duration)))  # Fresh item, default 1 if not specified
+            filename_item = QTableWidgetItem(path_img)
+            duration_item = QTableWidgetItem(str(img.get('duration', 5)))
+            self.transition_item = QComboBox()
+            self.transition_item.addItems(self.transitions_types)
+            self.transition_item.setCurrentText(img.get('transition', 'fade'))
+            transition_length_item = QTableWidgetItem(str(img.get('transition_duration', self.default_transition_duration)))
             text_item = QTableWidgetItem(str(img.get('text', "")))
-            text_item.setFlags(text_item.flags() | Qt.ItemIsEditable)  # Ensure the text item is editable
-            filename_item.setFlags(filename_item.flags() & ~Qt.ItemIsEditable)  # Make the item non-editable
-            transition_length_item.setFlags(transition_length_item.flags() & ~Qt.ItemIsEditable)  # Make the item non-editable
+            text_item.setFlags(text_item.flags() | Qt.ItemIsEditable)
+            filename_item.setFlags(filename_item.flags() & ~Qt.ItemIsEditable)
+            transition_length_item.setFlags(transition_length_item.flags() & ~Qt.ItemIsEditable)
+            rotation_item = QTableWidgetItem(str(img.get('rotation', 0)))
 
             self.image_table.setItem(row, 1, filename_item)
             self.image_table.setItem(row, 2, duration_item)
-            self.image_table.setCellWidget(row, 3, self.transition_item)  # Set QComboBox in the table
+            self.image_table.setCellWidget(row, 3, self.transition_item)
             self.image_table.setItem(row, 4, transition_length_item)
             self.image_table.setItem(row, 5, text_item)
+            self.image_table.setItem(row, 6, rotation_item)
 
             # Add move up, move down, and delete buttons
             move_up_btn = QPushButton("↑")
@@ -273,7 +288,6 @@ class SlideshowCreator(QMainWindow):
                                     'QPushButton:hover { background-color: #ff0000; }')
             delete_btn.clicked.connect(lambda _, r=row: self.executor.submit(self.delete_image, r))
 
-            # Create a widget to hold the buttons
             button_widget = QWidget()
             button_layout = QHBoxLayout(button_widget)
             button_layout.addWidget(move_up_btn)
@@ -282,15 +296,14 @@ class SlideshowCreator(QMainWindow):
             button_layout.setContentsMargins(0, 0, 0, 0)
             button_widget.setLayout(button_layout)
 
-            # Set the button widget in the table
             self.image_table.setCellWidget(row, 0, button_widget)
-
-            # Re-enable updates and sorting after the batch update
-            self.image_table.setSortingEnabled(True)
-            self.image_table.setUpdatesEnabled(True)
 
             # Connect the QComboBox signal to update the transition in self.images
             self.transition_item.currentTextChanged.connect(lambda text, row=row: self.update_transition(row, text))
+
+        self.image_table.setSortingEnabled(True)
+        self.image_table.setUpdatesEnabled(True)
+        self.image_table.blockSignals(False)  # Re-enable signals
 
     def move_image_up(self, row):
         if row > 0:
@@ -322,6 +335,7 @@ class SlideshowCreator(QMainWindow):
             transition_length_item = QTableWidgetItem(str(img.get('transition_duration', self.default_transition_duration)))
             text_item = QTableWidgetItem(str(img.get('text', "")))
             text_item.setFlags(text_item.flags() | Qt.ItemIsEditable)
+            rotation_item = QTableWidgetItem(str(img.get('rotation', 0)))
 
             filename_item = QTableWidgetItem(path_img)
             filename_item.setFlags(filename_item.flags() & ~Qt.ItemIsEditable)
@@ -331,6 +345,7 @@ class SlideshowCreator(QMainWindow):
             self.image_table.setItem(row, 2, duration_item)
             self.image_table.setItem(row, 4, transition_length_item)
             self.image_table.setItem(row, 5, text_item)
+            self.image_table.setItem(row, 6, rotation_item)
 
 
         
@@ -378,6 +393,15 @@ class SlideshowCreator(QMainWindow):
                 self.images.insert(new_position, image)  # Insert it at the new position
                 self.update_image_table()  # Refresh the table
                 self.image_table.setCurrentCell(new_position, 1)  # Set focus on the moved image
+
+    def set_image_rotation(self):
+        selected_items = self.image_table.selectedItems()
+        if selected_items:
+            current_row = self.image_table.row(selected_items[0])
+            new_rotation, ok = QInputDialog.getInt(self, "Set Image Rotation", "Enter new rotation (0-359):", self.images[current_row].get('rotation', 0), 0, 359)
+            if ok:
+                self.images[current_row]['rotation'] = new_rotation
+                self.update_image_row(current_row)
 
 
 
@@ -705,7 +729,7 @@ class SlideshowCreator(QMainWindow):
                 for audio in self.audio_files:
                     f.write(f"{audio['path']}\n")  
                 for img in self.images:
-                    f.write(f"{img['path']},{img.get('duration', 5)},{img.get('transition', 'fade')},{img.get('transition_duration', 1)},{img.get('text', '')}\n") 
+                    f.write(f"{img['path']},{img.get('duration', 5)},{img.get('transition', 'fade')},{img.get('transition_duration', 1)},{img.get('text', '')},{img.get('rotation', '')}\n") 
 
     def load_project(self):
         options = QFileDialog.Options()
@@ -725,7 +749,7 @@ class SlideshowCreator(QMainWindow):
                 # Load images
                 self.images = []
                 for line in lines[count + 1:]:  # Start after the audio file lines
-                    path, duration, transition, transition_duration, text = line.strip().split(',')
+                    path, duration, transition, transition_duration, text, rotation = line.strip().split(',')
                     if transition_duration != self.default_transition_duration:
                         transition_duration = self.default_transition_duration
                     self.images.append({
@@ -733,7 +757,8 @@ class SlideshowCreator(QMainWindow):
                         'duration': int(duration),
                         'transition': transition,
                         'transition_duration': int(transition_duration),
-                        'text': str(text)
+                        'text': str(text),
+                        'rotation': int(rotation)
                     })
 
                 print(self.images)
@@ -1004,6 +1029,10 @@ class SlideshowCreator(QMainWindow):
         set_image_location_action.triggered.connect(self.set_image_location)
         Img_menu.addAction(set_image_location_action)
 
+        set_image_rotation_action = QAction("Set Image Rotation", self)
+        set_image_rotation_action.triggered.connect(self.set_image_rotation)
+        Img_menu.addAction(set_image_rotation_action)
+
         
 
         Transitions_menu = options_menu.addMenu("Transitions")
@@ -1039,11 +1068,12 @@ class ImageProcessingWorker(QThread):
     def run(self):
         for i in range(len(self.images)):
             img = self.images[i]['path']
+            rotation = self.images[i]['rotation']
             text_on_slide = self.images[i]['text']
             try:
                 original_image = Image.open(img)
                 if original_image.size != (self.common_width, self.common_height):
-                    new_image_path = Image_resizer.process_image(img, self.output_folder, text_on_slide)
+                    new_image_path = Image_resizer.process_image(img, self.output_folder, text_on_slide, rotation)
                     if new_image_path:  # Only update path if the new image was created successfully
                         self.images[i]['path'] = new_image_path
                     else:
@@ -1073,6 +1103,7 @@ class ImageProcessingPremiereWorker(QThread):
         # Define a progress callback function
         def progress_callback(progress):
             self.progress.emit(progress)  # Emit the progress to the main thread
+
 
         # Call the process_images function with the progress callback
         premiere_export.process_images(self.images, self.output_folder, progress_callback)

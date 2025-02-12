@@ -10,7 +10,12 @@ def process_images(image_paths, output_folder, progress_callback=None):
 
         total_images = len(image_paths)
         for i, image_path in enumerate(image_paths, start=1):
+            rotation = image_path['rotation']
             original_image = Image.open(image_path['path']).convert("RGBA")
+
+            # Rotate the original image if rotation is specified
+            if rotation:
+                original_image = original_image.rotate(rotation, expand=True)
 
             # Resize
             original_aspect = original_image.width / original_image.height

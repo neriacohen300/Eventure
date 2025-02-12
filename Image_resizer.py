@@ -2,9 +2,13 @@ import os
 from bidi.algorithm import get_display  # Handles RTL text
 from PIL import Image, ImageFilter, ImageDraw, ImageFont
 
-def process_image(image_path, output_folder, text):
+def process_image(image_path, output_folder, text, rotation):
     try:
         original_image = Image.open(image_path)
+
+        # Rotate the original image if rotation is specified
+        if rotation:
+            original_image = original_image.rotate(rotation, expand=True)
 
         # Calculate the new size while maintaining aspect ratio
         original_aspect = original_image.width / original_image.height
