@@ -7,11 +7,12 @@ import sys
 import os
 import subprocess
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QInputDialog, QAction,
-                             QListWidget,QProgressBar,QComboBox,QMessageBox,QDialog, QPushButton, QLabel, QFileDialog, QSlider, QStyle, QTableWidgetItem, QSpinBox, QHeaderView, QTableWidget)
+                             QListWidget,QProgressBar,QComboBox,QMessageBox,QDialog, QCheckBox, QPushButton, QLabel, QFileDialog, QSlider, QStyle, QTableWidgetItem, QSpinBox, QHeaderView, QTableWidget)
 from PyQt5.QtCore import Qt, QUrl, QSize, QProcess, QTimer, QThread, pyqtSignal
 from PyQt5.QtGui import QIcon, QFont, QPixmap, QCursor, QTransform
 from PIL import Image, ImageFilter
 from openpyxl import Workbook
+import openpyxl
 import Image_resizer, premiere_export
 from concurrent.futures import ThreadPoolExecutor
 
@@ -84,8 +85,8 @@ class SlideshowCreator(QMainWindow):
 
         # Initialize the image_table attribute
         self.image_table = QTableWidget()
-        self.image_table.setColumnCount(7)
-        self.image_table.setHorizontalHeaderLabels([".", "Image", "Duration (sec)", "Transition", "Length (sec)", "Text", "Rotation (deg)"])
+        self.image_table.setColumnCount(8)  # Increase the column count
+        self.image_table.setHorizontalHeaderLabels([".", "Image", "Duration (sec)", "Transition", "Length (sec)", "Text", "Rotation (deg)", "Second Image"])
         self.image_table.setFont(QFont(self.deafult_font, 10, QFont.Bold))
         self.image_table.setStyleSheet("QTableWidget { background-color: #1E1E1E; color: white; }"
                                         "QHeaderView::section { background-color: #1E1E1E; color: white; }")
@@ -96,6 +97,7 @@ class SlideshowCreator(QMainWindow):
         self.image_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
         self.image_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents)
         self.image_table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeToContents)
+        self.image_table.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeToContents)
 
 
         self.image_table.itemChanged.connect(self.on_edit_on_table)
@@ -171,6 +173,8 @@ class SlideshowCreator(QMainWindow):
         # Initialize audio files list
         self.audio_files = []
 
+        
+
 
 
 
@@ -242,9 +246,12 @@ class SlideshowCreator(QMainWindow):
     def add_images(self):
         files, _ = QFileDialog.getOpenFileNames(self, "Select Images", "", "Images (*.png *.jpg *.jpeg *.bmp *.gif)")
         if files:
-            new_images = [{'path': file, 'duration': 5, 'transition': 'fade', 'transition_duration': self.default_transition_duration, 'text': "", 'rotation': 0} for file in files]
+            new_images = [{'path': file, 'duration': 5, 'transition': 'fade', 'transition_duration': self.default_transition_duration, 'text': "", 'rotation': 0, "is_second_image": False} for file in files]
             self.images.extend(new_images)
             self.update_image_table()  # Single update after all images are added
+
+    def set_second_image(self, row, state):
+        self.images[row]['is_second_image'] = state == Qt.Checked
 
     def update_image_table(self):
         self.image_table.blockSignals(True)  # Disable signals
@@ -266,12 +273,18 @@ class SlideshowCreator(QMainWindow):
             transition_length_item.setFlags(transition_length_item.flags() & ~Qt.ItemIsEditable)
             rotation_item = QTableWidgetItem(str(img.get('rotation', 0)))
 
+            # Add a checkbox for "Second Image"
+            second_image_checkbox = QCheckBox()
+            second_image_checkbox.setChecked(img.get('is_second_image', False))
+            second_image_checkbox.stateChanged.connect(lambda state, row=row: self.set_second_image(row, state))
+
             self.image_table.setItem(row, 1, filename_item)
             self.image_table.setItem(row, 2, duration_item)
             self.image_table.setCellWidget(row, 3, self.transition_item)
             self.image_table.setItem(row, 4, transition_length_item)
             self.image_table.setItem(row, 5, text_item)
             self.image_table.setItem(row, 6, rotation_item)
+            self.image_table.setCellWidget(row, 7, second_image_checkbox)
 
             # Add move up, move down, and delete buttons
             move_up_btn = QPushButton("↑")
@@ -744,7 +757,7 @@ class SlideshowCreator(QMainWindow):
                 for audio in self.audio_files:
                     f.write(f"{audio['path']}\n")  
                 for img in self.images:
-                    f.write(f"{img['path']},{img.get('duration', 5)},{img.get('transition', 'fade')},{img.get('transition_duration', 1)},{img.get('text', '')},{img.get('rotation', '')}\n") 
+                    f.write(f"{img['path']},{img.get('duration', 5)},{img.get('transition', 'fade')},{img.get('transition_duration', 1)},{img.get('text', '')},{img.get('rotation', '')},{img.get('is_second_image', False)}\n") 
 
     def load_project(self):
         options = QFileDialog.Options()
@@ -764,7 +777,7 @@ class SlideshowCreator(QMainWindow):
                 # Load images
                 self.images = []
                 for line in lines[count + 1:]:  # Start after the audio file lines
-                    path, duration, transition, transition_duration, text, rotation = line.strip().split(',')
+                    path, duration, transition, transition_duration, text, rotation, is_second_image = line.strip().split(',')
                     if transition_duration != self.default_transition_duration:
                         transition_duration = self.default_transition_duration
                     self.images.append({
@@ -773,7 +786,8 @@ class SlideshowCreator(QMainWindow):
                         'transition': transition,
                         'transition_duration': int(transition_duration),
                         'text': str(text),
-                        'rotation': int(rotation)
+                        'rotation': int(rotation),
+                        'is_second_image': is_second_image.strip().lower() == 'true'  # Convert to boolea
                     })
 
                 print(self.images)
@@ -965,7 +979,8 @@ class SlideshowCreator(QMainWindow):
         print(f"Premiere project file copied to: {project_destination_path}")
 
 
-        
+
+    
 
 
     """09_Menu Functions"""
@@ -1061,6 +1076,8 @@ class SlideshowCreator(QMainWindow):
         set_random_transition_for_each_image_action = QAction("Set Random Transition For Each Image", self)
         set_random_transition_for_each_image_action.triggered.connect(self.set_random_transition_for_each_image)
         Transitions_menu.addAction(set_random_transition_for_each_image_action)
+
+
 
 
 

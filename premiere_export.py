@@ -58,7 +58,15 @@ def process_single_image(index, img_data, bg_folder, img_folder):
     final_image.paste(original_image_scaled, (x_offset, y_offset), original_image_scaled)
     
     # Save with optimized formats
-    final_background.save(os.path.join(bg_folder, f"background_img{index}.jpg"), quality=85, optimize=True, subsampling=0)  # JPEG for background
-    final_image.save(os.path.join(img_folder, f"img{index}.png"), optimize=True)  # Keep PNG for transparency
+    if img_data.get('is_second_image', False):
+        pass
+    else:
+        final_background.save(os.path.join(bg_folder, f"background_img{index}.jpg"), quality=85, optimize=True, subsampling=0)  # JPEG for background
+    
+    # Handle "Second image" logic
+    if img_data.get('is_second_image', False):
+        final_image.save(os.path.join(img_folder, f"img{index}_2nd_of_img{index - 1}.png"), optimize=True)  # Save as second image
+    else:
+        final_image.save(os.path.join(img_folder, f"img{index}.png"), optimize=True)  # Keep PNG for transparency
     
     return True
