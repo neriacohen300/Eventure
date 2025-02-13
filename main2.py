@@ -7,8 +7,8 @@ import sys
 import os
 import subprocess
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QInputDialog, QAction,
-                             QListWidget,QProgressBar,QComboBox,QMessageBox,QDialog, QCheckBox, QPushButton, QLabel, QFileDialog, QSlider, QStyle, QTableWidgetItem, QSpinBox, QHeaderView, QTableWidget)
-from PyQt5.QtCore import Qt, QUrl, QSize, QProcess, QTimer, QThread, pyqtSignal
+                             QListWidget,QProgressBar,QComboBox,QMessageBox,QDialog, QTextEdit, QCheckBox, QPushButton, QLabel, QFileDialog, QSlider, QStyle, QTableWidgetItem, QSpinBox, QHeaderView, QTableWidget)
+from PyQt5.QtCore import Qt, QUrl, QSize, QProcess, QTimer, QThread, pyqtSignal, QEvent
 from PyQt5.QtGui import QIcon, QFont, QPixmap, QCursor, QTransform
 from PIL import Image, ImageFilter
 from openpyxl import Workbook
@@ -982,6 +982,16 @@ class SlideshowCreator(QMainWindow):
 
     
 
+    def open_easy_text_writing(self):
+        if not self.images:
+            QMessageBox.warning(self, "No Images", "Please add images before using Easy Text Writing.")
+            return
+        self.easy_text_dialog = EasyTextWritingDialog(self.images, self)
+        self.easy_text_dialog.show()
+        self.easy_text_dialog.exec_()
+        self.update_image_table()
+
+
 
     """09_Menu Functions"""
     def create_menu(self):
@@ -1077,6 +1087,16 @@ class SlideshowCreator(QMainWindow):
         set_random_transition_for_each_image_action.triggered.connect(self.set_random_transition_for_each_image)
         Transitions_menu.addAction(set_random_transition_for_each_image_action)
 
+        Text_menu = options_menu.addMenu("Text")
+        Text_menu.setStyleSheet("QMenu { background-color: #1E1E1E; color: white; }"
+                                "QMenu::item { background: #1E1E1E; color: white; }"
+                                "QMenu::item:selected { background: #0078d4; }")
+
+        # Add the new "Easy Text Writing" option
+        easy_text_writing_action = QAction("Easy Text Writing", self)
+        easy_text_writing_action.triggered.connect(self.open_easy_text_writing)
+        Text_menu.addAction(easy_text_writing_action)
+
 
 
 
@@ -1139,6 +1159,60 @@ class ImageProcessingPremiereWorker(QThread):
 
         # Emit finished signal
         self.finished.emit()
+
+
+class EasyTextWritingDialog(QDialog):
+    def __init__(self, images, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Easy Text Writing")
+        self.setGeometry(200, 200, 400, 200)
+        self.images = images
+        self.current_index = 0
+
+        self.layout = QVBoxLayout(self)
+
+        self.image_label = QLabel()
+        self.image_label.setAlignment(Qt.AlignCenter)
+        self.layout.addWidget(self.image_label)
+
+        self.text_input = QTextEdit()
+        self.text_input.setPlaceholderText("Enter text for the image...")
+        self.text_input.installEventFilter(self)  # Install event filter for custom key handling
+        self.layout.addWidget(self.text_input)
+
+        self.next_button = QPushButton("Next")
+        self.next_button.clicked.connect(self.next_image)
+        self.layout.addWidget(self.next_button)
+
+        self.close_button = QPushButton("Close")
+        self.close_button.clicked.connect(self.close)
+        self.layout.addWidget(self.close_button)
+
+        self.update_image()
+
+    def update_image(self):
+        if 0 <= self.current_index < len(self.images):
+            img_data = self.images[self.current_index]
+            pixmap = QPixmap(img_data['path'])
+            self.image_label.setPixmap(pixmap.scaled(300, 200, Qt.KeepAspectRatio))
+            self.text_input.setPlainText(img_data.get('text', ''))
+        else:
+            self.image_label.clear()
+            self.text_input.clear()
+
+    def next_image(self):
+        if 0 <= self.current_index < len(self.images):
+            self.images[self.current_index]['text'] = self.text_input.toPlainText()
+        self.current_index += 1
+        if self.current_index >= len(self.images):
+            self.current_index = 0
+        self.update_image()
+
+    def eventFilter(self, source, event):
+        if source is self.text_input and event.type() == QEvent.KeyPress and event.key() == Qt.Key_Tab:
+            self.next_image()
+            return True
+        return super().eventFilter(source, event)
 
 
 if __name__ == "__main__":
