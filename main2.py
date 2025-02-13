@@ -60,7 +60,7 @@ class SlideshowCreator(QMainWindow):
         self.backup_state = False
         self.premiere_project_folder = ""
 
-        self.executor = ThreadPoolExecutor(max_workers=3)
+        self.executor = ThreadPoolExecutor(max_workers=os.cpu_count() * 2)  # Use more threads
         
 
 
@@ -956,7 +956,8 @@ class SlideshowCreator(QMainWindow):
         premiere_project_source = "E:\------ תכנות ------\Even Monatge Maker 2.0\Premiere_Project\Project.prproj"
         project_destination_folder = os.path.join(self.premiere_project_folder, "04_פרוייקט")
         os.makedirs(project_destination_folder, exist_ok=True)
-        project_destination_path = os.path.join(project_destination_folder, "Project.prproj")
+        project_file_name = os.path.basename(self.premiere_project_folder) + ".prproj"
+        project_destination_path = os.path.join(project_destination_folder, project_file_name)
 
         # Copy the Premiere project file
         shutil.copy(premiere_project_source, project_destination_path)

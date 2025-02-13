@@ -2,7 +2,11 @@ import os
 from bidi.algorithm import get_display  # Handles RTL text
 from PIL import Image, ImageFilter, ImageDraw, ImageFont
 
+# Cache font at module level
+FONT = ImageFont.truetype(r"E:\------ תכנות ------\Even Monatge Maker 2.0\Fonts\Birzia-Black.otf", 85)
+
 def process_image(image_path, output_folder, text, rotation):
+    font = FONT
     try:
         original_image = Image.open(image_path)
 
@@ -50,9 +54,6 @@ def process_image(image_path, output_folder, text, rotation):
         # Add text if it's not empty
         if text:
             draw = ImageDraw.Draw(final_image)
-
-            # Use your custom font (make sure the path is correct)
-            font = ImageFont.truetype(r"E:\------ תכנות ------\Even Monatge Maker 2.0\Fonts\Birzia-Black.otf", 85)
 
             # Convert the text for RTL using `get_display`
             hebrew_text = get_display(text)
