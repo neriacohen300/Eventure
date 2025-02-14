@@ -290,17 +290,20 @@ class SlideshowCreator(QMainWindow):
             move_up_btn = QPushButton("↑")
             move_up_btn.setStyleSheet('QPushButton { background-color: #1E1E1E; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
                                     'QPushButton:hover { background-color: #0078d4; }')
-            move_up_btn.clicked.connect(lambda _, r=row: self.executor.submit(self.move_image_up, r))
+            # Inside update_image_table:
+            move_up_btn.clicked.connect(lambda _, r=row: self.move_image_up(r))
+
 
             move_down_btn = QPushButton("↓")
             move_down_btn.setStyleSheet('QPushButton { background-color: #1E1E1E; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
                                         'QPushButton:hover { background-color: #0078d4; }')
-            move_down_btn.clicked.connect(lambda _, r=row: self.executor.submit(self.move_image_down, r))
+            move_down_btn.clicked.connect(lambda _, r=row: self.move_image_down(r))
+
 
             delete_btn = QPushButton("✖")
             delete_btn.setStyleSheet('QPushButton { background-color: #1E1E1E; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
                                     'QPushButton:hover { background-color: #ff0000; }')
-            delete_btn.clicked.connect(lambda _, r=row: self.executor.submit(self.delete_image, r))
+            delete_btn.clicked.connect(lambda _, r=row: self.delete_image(r))
 
             button_widget = QWidget()
             button_layout = QHBoxLayout(button_widget)
@@ -324,7 +327,7 @@ class SlideshowCreator(QMainWindow):
             # Swap images in the data structure
             self.images[row], self.images[row - 1] = self.images[row - 1], self.images[row]
             
-            # Update only the two affected rows in the UI
+            # Only update the affected rows
             self.update_image_row(row)
             self.update_image_row(row - 1)
             
@@ -334,9 +337,14 @@ class SlideshowCreator(QMainWindow):
 
     def move_image_down(self, row):
         if row < len(self.images) - 1:
+            # Swap images in the data structure
             self.images[row], self.images[row + 1] = self.images[row + 1], self.images[row]
+            
+            # Only update the affected rows
             self.update_image_row(row)
             self.update_image_row(row + 1)
+            
+            # Update selection and preview
             self.image_table.setCurrentCell(row + 1, 1)
             self.update_preview_with_row(row + 1)
 
@@ -355,11 +363,17 @@ class SlideshowCreator(QMainWindow):
             filename_item.setFlags(filename_item.flags() & ~Qt.ItemIsEditable)
             transition_length_item.setFlags(transition_length_item.flags() & ~Qt.ItemIsEditable)
 
+            # Add a checkbox for "Second Image"
+            second_image_checkbox = QCheckBox()
+            second_image_checkbox.setChecked(img.get('is_second_image', False))
+            second_image_checkbox.stateChanged.connect(lambda state, row=row: self.set_second_image(row, state))
+
             self.image_table.setItem(row, 1, filename_item)
             self.image_table.setItem(row, 2, duration_item)
             self.image_table.setItem(row, 4, transition_length_item)
             self.image_table.setItem(row, 5, text_item)
             self.image_table.setItem(row, 6, rotation_item)
+            self.image_table.setCellWidget(row, 7, second_image_checkbox)
 
 
         
@@ -367,22 +381,17 @@ class SlideshowCreator(QMainWindow):
     def delete_image(self, row):
         if 0 <= row < len(self.images):  # Ensure the row is valid
             del self.images[row]  # Delete the image from the list
-
-            # Update the table rows to reflect the deletion
-            for i in range(row, len(self.images)):
-                self.update_image_row(i)  # Update each subsequent row
-            
-            self.image_table.removeRow(len(self.images))  # Remove the last row from the table
+            self.image_table.removeRow(row)  # Remove the row from the table
             
             # Update selection and preview
             if len(self.images) == 0:  # If no images are left, clear the preview
                 self.preview_label.clear()
             else:
                 # If the deleted row was the last one, adjust the row index
-                if row >= len(self.images):
-                    row = len(self.images) - 1
-                self.update_preview_with_row(row)  # Update the preview with the new row
-                self.image_table.setCurrentCell(row, 1)  # Set the current cell in the table
+                pass
+                #new_row = max(row - 1, 0)
+                #self.update_preview_with_row(new_row)
+                #self.image_table.setCurrentCell(new_row, 1)
 
 
     def set_random_images_order(self):
