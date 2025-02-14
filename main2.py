@@ -1265,7 +1265,11 @@ class EasyTextWritingDialog(QDialog):
 
         self.text_input = QTextEdit()
         self.text_input.setPlaceholderText("Enter text for the image...")
-        self.text_input.installEventFilter(self)  # Install event filter for custom key handling
+        self.text_input.setAlignment(Qt.AlignLeft)
+        self.text_input.setLayoutDirection(Qt.RightToLeft)
+        self.text_input.setTextInteractionFlags(Qt.TextEditorInteraction)
+        self.text_input.installEventFilter(self)
+        self.text_input.setPlainText(self.images[self.current_index].get('text', ''))
         self.layout.addWidget(self.text_input)
 
         self.next_button = QPushButton("Next")
