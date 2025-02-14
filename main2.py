@@ -62,6 +62,13 @@ class SlideshowCreator(QMainWindow):
         self.premiere_project_folder = ""
 
         self.executor = ThreadPoolExecutor(max_workers=os.cpu_count() * 2)  # Use more threads
+
+        self.shortcuts = {
+        "save": "Ctrl+S",
+        "load": "Ctrl+L",
+        "easy_text": "Ctrl+T"
+        }
+        self.load_shortcuts()  # Load shortcuts from file
         
 
 
@@ -766,7 +773,10 @@ class SlideshowCreator(QMainWindow):
                 for audio in self.audio_files:
                     f.write(f"{audio['path']}\n")  
                 for img in self.images:
-                    f.write(f"{img['path']},{img.get('duration', 5)},{img.get('transition', 'fade')},{img.get('transition_duration', 1)},{img.get('text', '')},{img.get('rotation', '')},{img.get('is_second_image', False)}\n") 
+                    text = img.get('text', '')
+                    if '\n' in text:
+                        text = text.replace('\n', '\\n')
+                    f.write(f"{img['path']},{img.get('duration', 5)},{img.get('transition', 'fade')},{img.get('transition_duration', 1)},{text},{img.get('rotation', '')},{img.get('is_second_image', False)}\n") 
 
     def load_project(self):
         options = QFileDialog.Options()
@@ -794,7 +804,7 @@ class SlideshowCreator(QMainWindow):
                         'duration': int(duration),
                         'transition': transition,
                         'transition_duration': int(transition_duration),
-                        'text': str(text),
+                        'text': text.replace('\\n', '\n'),
                         'rotation': int(rotation),
                         'is_second_image': is_second_image.strip().lower() == 'true'  # Convert to boolea
                     })
@@ -995,14 +1005,54 @@ class SlideshowCreator(QMainWindow):
         if not self.images:
             QMessageBox.warning(self, "No Images", "Please add images before using Easy Text Writing.")
             return
-        self.easy_text_dialog = EasyTextWritingDialog(self.images, self)
+        
+        selected_row = self.image_table.currentRow()  # Replace 'self.image_table' with the name of your table widget
+        self.easy_text_dialog = EasyTextWritingDialog(self.images, start_index=selected_row, parent=self)
         self.easy_text_dialog.show()
         self.easy_text_dialog.exec_()
         self.update_image_table()
 
 
+    """09_Shortcut Functions"""
 
-    """09_Menu Functions"""
+    def save_shortcuts(self):
+        # Ensure the directory exists
+        os.makedirs("C:\\NeriaLTD\\Event_Montage_Maker_2", exist_ok=True)
+        
+        # Save shortcuts to a file
+        with open("C:\\NeriaLTD\\Event_Montage_Maker_2\\shortcuts.txt", "w") as f:
+            for action, shortcut in self.shortcuts.items():
+                f.write(f"{action}:{shortcut}\n")
+
+    def load_shortcuts(self):
+        # Load shortcuts from file
+        try:
+            with open("C:\\NeriaLTD\\Event_Montage_Maker_2\\shortcuts.txt", "r") as f:
+                for line in f:
+                    action, shortcut = line.strip().split(":")
+                    self.shortcuts[action] = shortcut
+        except FileNotFoundError:
+            # If the file doesn't exist, use the default shortcuts
+            pass
+
+    def update_shortcuts(self):
+        # Update the shortcuts in the application
+        self.save_action.setShortcut(self.shortcuts.get("save", "Ctrl+S"))
+        self.load_action.setShortcut(self.shortcuts.get("load", "Ctrl+L"))
+        self.easy_text_writing_action.setShortcut(self.shortcuts.get("easy_text", "Ctrl+T"))
+
+    def set_shortcut(self, action):
+        # Prompt the user to enter a new shortcut
+        shortcut, ok = QInputDialog.getText(self, f"Set {action.capitalize()} Shortcut", 
+                                        f"Enter the new shortcut for {action}:", 
+                                        text=self.shortcuts.get(action, ""))
+        if ok and shortcut:
+            self.shortcuts[action] = shortcut
+            self.save_shortcuts()  # Save the new shortcut
+            self.update_shortcuts()  # Update the shortcuts in the application
+
+
+    """10_Menu Functions"""
     def create_menu(self):
         # Function to create a menu bar
         menubar = self.menuBar()
@@ -1028,13 +1078,16 @@ class SlideshowCreator(QMainWindow):
         import_audio.triggered.connect(self.add_audio)
         import_menu.addAction(import_audio)
 
-        load_action = QAction("Load Project", self)
-        load_action.triggered.connect(self.load_project)
-        file_menu.addAction(load_action)
+        self.load_action = QAction("Load Project", self)
+        self.load_action.triggered.connect(self.load_project)
+        self.load_action.setShortcut(self.shortcuts.get("load", "Ctrl+L"))
+        file_menu.addAction(self.load_action)
 
-        save_action = QAction("Save Project", self)
-        save_action.triggered.connect(self.save_project)
-        file_menu.addAction(save_action)
+
+        self.save_action = QAction("Save Project", self)
+        self.save_action.triggered.connect(self.save_project)
+        self.save_action.setShortcut(self.shortcuts.get("save", "Ctrl+S"))
+        file_menu.addAction(self.save_action)
 
         clear_action = QAction("Clear Project", self)
         clear_action.triggered.connect(self.clear_project)
@@ -1102,9 +1155,35 @@ class SlideshowCreator(QMainWindow):
                                 "QMenu::item:selected { background: #0078d4; }")
 
         # Add the new "Easy Text Writing" option
-        easy_text_writing_action = QAction("Easy Text Writing", self)
-        easy_text_writing_action.triggered.connect(self.open_easy_text_writing)
-        Text_menu.addAction(easy_text_writing_action)
+        self.easy_text_writing_action = QAction("Easy Text Writing", self)
+        self.easy_text_writing_action.triggered.connect(self.open_easy_text_writing)
+        self.easy_text_writing_action.setShortcut(self.shortcuts.get("easy_text", "Ctrl+T"))
+        Text_menu.addAction(self.easy_text_writing_action)
+
+        # Add the Settings menu
+        settings_menu = menubar.addMenu("Settings")
+        settings_menu.setStyleSheet("QMenu { background-color: #1E1E1E; color: white; }"
+                                    "QMenu::item { background: #1E1E1E; color: white; }"
+                                    "QMenu::item:selected { background: #0078d4; }")
+
+        # Add a submenu for keyboard shortcuts
+        shortcuts_menu = settings_menu.addMenu("Keyboard Shortcuts")
+        shortcuts_menu.setStyleSheet("QMenu { background-color: #1E1E1E; color: white; }"
+                                    "QMenu::item { background: #1E1E1E; color: white; }"
+                                    "QMenu::item:selected { background: #0078d4; }")
+
+        # Add actions for setting shortcuts
+        set_save_shortcut_action = QAction("Set Save Shortcut", self)
+        set_save_shortcut_action.triggered.connect(lambda: self.set_shortcut("save"))
+        shortcuts_menu.addAction(set_save_shortcut_action)
+
+        set_load_shortcut_action = QAction("Set Load Shortcut", self)
+        set_load_shortcut_action.triggered.connect(lambda: self.set_shortcut("load"))
+        shortcuts_menu.addAction(set_load_shortcut_action)
+
+        set_easy_text_shortcut_action = QAction("Set Easy Text Writing Shortcut", self)
+        set_easy_text_shortcut_action.triggered.connect(lambda: self.set_shortcut("easy_text"))
+        shortcuts_menu.addAction(set_easy_text_shortcut_action)
 
 
 
@@ -1171,12 +1250,12 @@ class ImageProcessingPremiereWorker(QThread):
 
 
 class EasyTextWritingDialog(QDialog):
-    def __init__(self, images, parent=None):
+    def __init__(self, images, start_index=0, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Easy Text Writing")
         self.setGeometry(200, 200, 400, 200)
         self.images = images
-        self.current_index = 0
+        self.current_index = start_index
 
         self.layout = QVBoxLayout(self)
 
