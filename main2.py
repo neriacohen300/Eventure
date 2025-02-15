@@ -65,10 +65,13 @@ class SlideshowCreator(QMainWindow):
 
         self.shortcuts = {
         "save": "Ctrl+S",
+        "save_as": "Ctrl+Shift+S",
         "load": "Ctrl+L",
         "easy_text": "Ctrl+T"
         }
         self.load_shortcuts()  # Load shortcuts from file
+
+        self.loaded_project = ""
         
 
 
@@ -259,6 +262,7 @@ class SlideshowCreator(QMainWindow):
 
     def set_second_image(self, row, state):
         self.images[row]['is_second_image'] = state == Qt.Checked
+        self.update_image_row(row)
 
     def update_image_table(self):
         self.image_table.blockSignals(True)  # Disable signals
@@ -761,7 +765,43 @@ class SlideshowCreator(QMainWindow):
         self.audio_table.setRowCount(0)  # Clear audio table
         self.preview_label.clear()
 
+        self.loaded_project = ""
+
     def save_project(self):
+        if self.loaded_project != "":
+            with open(self.loaded_project, 'w', encoding='utf-8') as f:
+                count = 0
+                for audio in self.audio_files:
+                    count += 1
+                f.write(str(count) + "\n")
+                for audio in self.audio_files:
+                    f.write(f"{audio['path']}\n")  
+                for img in self.images:
+                    text = img.get('text', '')
+                    if '\n' in text:
+                        text = text.replace('\n', '\\n')
+                    f.write(f"{img['path']},{img.get('duration', 5)},{img.get('transition', 'fade')},{img.get('transition_duration', 1)},{text},{img.get('rotation', '')},{img.get('is_second_image', False)}\n") 
+        
+        else:
+            options = QFileDialog.Options()
+            file_name, _ = QFileDialog.getSaveFileName(self, "Save Project", "", "Project Files (*.slideshow);;All Files (*)", options=options)
+            if file_name:
+                with open(file_name, 'w', encoding='utf-8') as f:
+                    count = 0
+                    for audio in self.audio_files:
+                        count += 1
+                    f.write(str(count) + "\n")
+                    for audio in self.audio_files:
+                        f.write(f"{audio['path']}\n")  
+                    for img in self.images:
+                        text = img.get('text', '')
+                        if '\n' in text:
+                            text = text.replace('\n', '\\n')
+                        f.write(f"{img['path']},{img.get('duration', 5)},{img.get('transition', 'fade')},{img.get('transition_duration', 1)},{text},{img.get('rotation', '')},{img.get('is_second_image', False)}\n") 
+                    self.loaded_project = file_name
+
+
+    def save_project_as(self):
         options = QFileDialog.Options()
         file_name, _ = QFileDialog.getSaveFileName(self, "Save Project", "", "Project Files (*.slideshow);;All Files (*)", options=options)
         if file_name:
@@ -777,6 +817,7 @@ class SlideshowCreator(QMainWindow):
                     if '\n' in text:
                         text = text.replace('\n', '\\n')
                     f.write(f"{img['path']},{img.get('duration', 5)},{img.get('transition', 'fade')},{img.get('transition_duration', 1)},{text},{img.get('rotation', '')},{img.get('is_second_image', False)}\n") 
+                self.loaded_project = file_name
 
     def load_project(self):
         options = QFileDialog.Options()
@@ -814,6 +855,8 @@ class SlideshowCreator(QMainWindow):
                 # Update the UI tables
                 self.update_image_table()
                 self.update_audio_table()
+
+                self.loaded_project = file_name
 
 
 
@@ -1038,6 +1081,7 @@ class SlideshowCreator(QMainWindow):
     def update_shortcuts(self):
         # Update the shortcuts in the application
         self.save_action.setShortcut(self.shortcuts.get("save", "Ctrl+S"))
+        self.save_as_action.setShortcut(self.shortcuts.get("save_as", "Ctrl+Shif+S"))
         self.load_action.setShortcut(self.shortcuts.get("load", "Ctrl+L"))
         self.easy_text_writing_action.setShortcut(self.shortcuts.get("easy_text", "Ctrl+T"))
 
@@ -1088,6 +1132,11 @@ class SlideshowCreator(QMainWindow):
         self.save_action.triggered.connect(self.save_project)
         self.save_action.setShortcut(self.shortcuts.get("save", "Ctrl+S"))
         file_menu.addAction(self.save_action)
+
+        self.save_as_action = QAction("Save Project As", self)
+        self.save_as_action.triggered.connect(self.save_project_as)
+        self.save_as_action.setShortcut(self.shortcuts.get("save_as", "Ctrl+Shift+S"))
+        file_menu.addAction(self.save_as_action)
 
         clear_action = QAction("Clear Project", self)
         clear_action.triggered.connect(self.clear_project)
@@ -1176,6 +1225,10 @@ class SlideshowCreator(QMainWindow):
         set_save_shortcut_action = QAction("Set Save Shortcut", self)
         set_save_shortcut_action.triggered.connect(lambda: self.set_shortcut("save"))
         shortcuts_menu.addAction(set_save_shortcut_action)
+
+        set_save_as_shortcut_action = QAction("Set Save As Shortcut", self)
+        set_save_as_shortcut_action.triggered.connect(lambda: self.set_shortcut("save_as"))
+        shortcuts_menu.addAction(set_save_as_shortcut_action)
 
         set_load_shortcut_action = QAction("Set Load Shortcut", self)
         set_load_shortcut_action.triggered.connect(lambda: self.set_shortcut("load"))
