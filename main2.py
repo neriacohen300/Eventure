@@ -1,5 +1,6 @@
 """imports"""
 
+import configparser
 import copy
 import random
 import shutil
@@ -9,7 +10,7 @@ import subprocess
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QInputDialog, QAction,
                              QListWidget,QProgressBar,QComboBox,QMessageBox,QDialog, QTextEdit, QCheckBox, QPushButton, QLabel, QFileDialog, QSlider, QStyle, QTableWidgetItem, QSpinBox, QHeaderView, QTableWidget)
 from PyQt5.QtCore import Qt, QUrl, QSize, QProcess, QTimer, QThread, pyqtSignal, QEvent
-from PyQt5.QtGui import QIcon, QFont, QPixmap, QCursor, QTransform, QColor
+from PyQt5.QtGui import QIcon, QFont, QPixmap,QTextCursor, QCursor, QTransform, QColor
 from PIL import Image, ImageFilter
 from openpyxl import Workbook
 import openpyxl
@@ -351,30 +352,24 @@ class SlideshowCreator(QMainWindow):
         self.image_table.blockSignals(False)  # Re-enable signals
 
     def move_image_up(self, row):
+        self.image_table.setSortingEnabled(False)  # Disable sorting
         if row > 0:
-            # Swap images in the data structure
             self.images[row], self.images[row - 1] = self.images[row - 1], self.images[row]
-            
-            # Only update the affected rows
             self.update_image_row(row)
             self.update_image_row(row - 1)
-            
-            # Update selection and preview
             self.image_table.setCurrentCell(row - 1, 1)
             self.update_preview_with_row(row - 1)
+        self.image_table.setSortingEnabled(True)  # Re-enable sorting
 
     def move_image_down(self, row):
+        self.image_table.setSortingEnabled(False)  # Disable sorting
         if row < len(self.images) - 1:
-            # Swap images in the data structure
             self.images[row], self.images[row + 1] = self.images[row + 1], self.images[row]
-            
-            # Only update the affected rows
             self.update_image_row(row)
             self.update_image_row(row + 1)
-            
-            # Update selection and preview
             self.image_table.setCurrentCell(row + 1, 1)
             self.update_preview_with_row(row + 1)
+        self.image_table.setSortingEnabled(True)  # Re-enable sorting
 
     def update_image_row(self, row):
         """Update a single row in the image table."""
@@ -415,19 +410,24 @@ class SlideshowCreator(QMainWindow):
         
 
     def delete_image(self, row):
-        if 0 <= row < len(self.images):  # Ensure the row is valid
-            del self.images[row]  # Delete the image from the list
+        # Temporarily disable sorting to ensure correct row indices
+        self.image_table.setSortingEnabled(False)
+        
+        if 0 <= row < len(self.images):  # Ensure the row is within bounds
+            del self.images[row]  # Remove the image from the list
             self.image_table.removeRow(row)  # Remove the row from the table
             
-            # Update selection and preview
-            if len(self.images) == 0:  # If no images are left, clear the preview
-                self.preview_label.clear()
+            # Update the preview and selection
+            if len(self.images) == 0:
+                self.preview_label.clear()  # Clear the preview if no images are left
             else:
-                # If the deleted row was the last one, adjust the row index
-                pass
-                #new_row = max(row - 1, 0)
-                #self.update_preview_with_row(new_row)
-                #self.image_table.setCurrentCell(new_row, 1)
+                # Set the new row to focus on (either the previous row or the next row)
+                new_row = max(0, row - 1) if row > 0 else 0
+                self.image_table.setCurrentCell(new_row, 1)  # Set focus on the new row
+                self.update_preview_with_row(new_row)  # Update the preview
+                
+        # Re-enable sorting after the operation
+        self.image_table.setSortingEnabled(True)
 
 
     def set_random_images_order(self):
@@ -452,6 +452,11 @@ class SlideshowCreator(QMainWindow):
                 self.images.insert(new_position, image)  # Insert it at the new position
                 self.update_image_table()  # Refresh the table
                 self.image_table.setCurrentCell(new_position, 1)  # Set focus on the moved image
+
+
+    def update_selection_after_operation(self, new_row):
+        self.image_table.setCurrentCell(new_row, 1)  # Set focus on the new row
+        self.update_preview_with_row(new_row)  # Update the preview
 
 
 
@@ -1004,25 +1009,36 @@ class SlideshowCreator(QMainWindow):
         # Create the "Texts" folder if it doesn't exist
         premiere_text_folder = os.path.join(self.premiere_project_folder, "03_טקסט")
         os.makedirs(premiere_text_folder, exist_ok=True)
+        style_file_path = "E:\------ תכנות ------\Even Monatge Maker 2.0\Premiere_Project\טקסט למצגת - עברית.prtextstyle"
+        # Copy the original text file to the new location
+        original_text_file_path = os.path.join(premiere_text_folder, "טקסט למצגת - בעברית.prtextstyle")
+        shutil.copy(style_file_path, original_text_file_path)
+        print(f"Copied {style_file_path} to {original_text_file_path}")
+        
 
         # Define the output file path
         srt_file_path = os.path.join(premiere_text_folder, "exported_texts.srt")
 
         # Initialize time tracking
         current_time = 0
+        subtitle_index = 1  # Manually track subtitle index
 
         # Write the SRT file
         with open(srt_file_path, "w", encoding="utf-8") as srt_file:
-            for idx, image in enumerate(self.images, start=1):
+            for image in self.images:
+                if image['is_second_image']:
+                    continue  # Skip second images
+
                 start_time = self.format_time(current_time)
                 end_time = self.format_time(current_time + image['duration'])
 
                 # Write the subtitle entry
-                srt_file.write(f"{idx}\n")
+                srt_file.write(f"{subtitle_index}\n")
                 srt_file.write(f"{start_time} --> {end_time}\n")
                 srt_file.write(f"{image['text']}\n\n")
 
-                # Update current_time
+                # Update index and time
+                subtitle_index += 1
                 current_time += image['duration']
 
         print(f"SRT file created at: {srt_file_path}")
@@ -1369,12 +1385,15 @@ class EasyTextWritingDialog(QDialog):
 
         self.text_input = QTextEdit()
         self.text_input.setPlaceholderText("Enter text for the image...")
-        self.text_input.setAlignment(Qt.AlignLeft)
-        self.text_input.setLayoutDirection(Qt.RightToLeft)
+        self.text_input.setAlignment(Qt.AlignRight)  # Align text to the right
+        self.text_input.setLayoutDirection(Qt.RightToLeft)  # Set layout direction to RTL
         self.text_input.setTextInteractionFlags(Qt.TextEditorInteraction)
         self.text_input.installEventFilter(self)
         self.text_input.setPlainText(self.images[self.current_index].get('text', ''))
         self.layout.addWidget(self.text_input)
+
+        # Move the cursor to the start of the document (left side for RTL)
+        self.text_input.moveCursor(QTextCursor.Start)  # Use QTextCursor.Start
 
         self.next_button = QPushButton("Next")
         self.next_button.clicked.connect(self.next_image)
