@@ -9,7 +9,7 @@ import subprocess
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QInputDialog, QAction,
                              QListWidget,QProgressBar,QComboBox,QMessageBox,QDialog, QTextEdit, QCheckBox, QPushButton, QLabel, QFileDialog, QSlider, QStyle, QTableWidgetItem, QSpinBox, QHeaderView, QTableWidget)
 from PyQt5.QtCore import Qt, QUrl, QSize, QProcess, QTimer, QThread, pyqtSignal, QEvent
-from PyQt5.QtGui import QIcon, QFont, QPixmap, QCursor, QTransform
+from PyQt5.QtGui import QIcon, QFont, QPixmap, QCursor, QTransform, QColor
 from PIL import Image, ImageFilter
 from openpyxl import Workbook
 import openpyxl
@@ -297,6 +297,15 @@ class SlideshowCreator(QMainWindow):
             second_image_checkbox.setChecked(img.get('is_second_image', False))
             second_image_checkbox.stateChanged.connect(lambda state, row=row: self.set_second_image(row, state))
 
+            # Set background color if it is a second image
+            if img.get('is_second_image', False):
+                color = QColor(100, 100, 150)  # Darker blue background
+                filename_item.setBackground(color)
+                duration_item.setBackground(color)
+                transition_length_item.setBackground(color)
+                text_item.setBackground(color)
+                rotation_item.setBackground(color)
+
             self.image_table.setItem(row, 1, filename_item)
             self.image_table.setItem(row, 2, duration_item)
             self.image_table.setCellWidget(row, 3, self.transition_item)
@@ -386,6 +395,14 @@ class SlideshowCreator(QMainWindow):
             second_image_checkbox = QCheckBox()
             second_image_checkbox.setChecked(img.get('is_second_image', False))
             second_image_checkbox.stateChanged.connect(lambda state, row=row: self.set_second_image(row, state))
+
+            if img.get('is_second_image', False):
+                color = QColor(100, 100, 150)  # Darker blue background
+                filename_item.setBackground(color)
+                duration_item.setBackground(color)
+                transition_length_item.setBackground(color)
+                text_item.setBackground(color)
+                rotation_item.setBackground(color)
 
             self.image_table.setItem(row, 1, filename_item)
             self.image_table.setItem(row, 2, duration_item)
