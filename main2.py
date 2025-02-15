@@ -261,8 +261,13 @@ class SlideshowCreator(QMainWindow):
             self.update_image_table()  # Single update after all images are added
 
     def set_second_image(self, row, state):
-        self.images[row]['is_second_image'] = state == Qt.Checked
-        self.update_image_row(row)
+        if row == 0:
+            QMessageBox.critical(self, "Error", "Cannot set second image for the first row", QMessageBox.Ok)
+            self.update_image_row(row)
+            return
+        else:
+            self.images[row]['is_second_image'] = state == Qt.Checked
+            self.update_image_row(row)
 
     def update_image_table(self):
         self.image_table.blockSignals(True)  # Disable signals
@@ -283,6 +288,8 @@ class SlideshowCreator(QMainWindow):
             filename_item.setFlags(filename_item.flags() & ~Qt.ItemIsEditable)
             transition_length_item.setFlags(transition_length_item.flags() & ~Qt.ItemIsEditable)
             rotation_item = QTableWidgetItem(str(img.get('rotation', 0)))
+
+
 
             # Add a checkbox for "Second Image"
             second_image_checkbox = QCheckBox()
