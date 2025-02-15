@@ -67,7 +67,8 @@ class SlideshowCreator(QMainWindow):
         "save": "Ctrl+S",
         "save_as": "Ctrl+Shift+S",
         "load": "Ctrl+L",
-        "easy_text": "Ctrl+T"
+        "easy_text": "Ctrl+T",
+        "info": "Alt+I"
         }
         self.load_shortcuts()  # Load shortcuts from file
 
@@ -1091,6 +1092,7 @@ class SlideshowCreator(QMainWindow):
         self.save_as_action.setShortcut(self.shortcuts.get("save_as", "Ctrl+Shif+S"))
         self.load_action.setShortcut(self.shortcuts.get("load", "Ctrl+L"))
         self.easy_text_writing_action.setShortcut(self.shortcuts.get("easy_text", "Ctrl+T"))
+        self.show_info_action.setShortcut(self.shortcuts.get("info", "Alt+I"))
 
     def set_shortcut(self, action):
         # Prompt the user to enter a new shortcut
@@ -1101,6 +1103,16 @@ class SlideshowCreator(QMainWindow):
             self.shortcuts[action] = shortcut
             self.save_shortcuts()  # Save the new shortcut
             self.update_shortcuts()  # Update the shortcuts in the application
+
+
+
+
+    def show_info(self):
+        info_dialog = InfoDialog(self.images, self.audio_files, self)
+        info_dialog.exec_()
+
+
+
 
 
     """10_Menu Functions"""
@@ -1245,6 +1257,21 @@ class SlideshowCreator(QMainWindow):
         set_easy_text_shortcut_action.triggered.connect(lambda: self.set_shortcut("easy_text"))
         shortcuts_menu.addAction(set_easy_text_shortcut_action)
 
+        set_show_info_shortcut_action = QAction("Set Show Info Shortcut", self)
+        set_show_info_shortcut_action.triggered.connect(lambda: self.set_shortcut("info"))
+        shortcuts_menu.addAction(set_show_info_shortcut_action)
+
+        # Add the Info menu
+        info_menu = menubar.addMenu("Info")
+        info_menu.setStyleSheet("QMenu { background-color: #1E1E1E; color: white; }"
+                                "QMenu::item { background: #1E1E1E; color: white; }"
+                                "QMenu::item:selected { background: #0078d4; }")
+
+        self.show_info_action = QAction("Show Info", self)
+        self.show_info_action.triggered.connect(self.show_info)
+        self.show_info_action.setShortcut(self.shortcuts.get("info", "Alt+I"))
+        info_menu.addAction(self.show_info_action)
+
 
 
 
@@ -1365,6 +1392,60 @@ class EasyTextWritingDialog(QDialog):
             self.next_image()
             return True
         return super().eventFilter(source, event)
+
+
+
+class InfoDialog(QDialog):
+    def __init__(self, images, audio_files, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Info")
+        self.setGeometry(300, 300, 300, 150)
+
+        self.layout = QVBoxLayout(self)
+
+        # Calculate total durations
+        total_images_duration_with_second = sum(img['duration'] for img in images)
+        total_images_duration_without_second = sum(img['duration'] for img in images if not img.get('is_second_image', False))
+        total_audio_duration = self.calculate_total_audio_duration(audio_files)
+
+        # Format durations as hh:mm:ss
+        total_images_duration_with_second_str = self.format_duration(total_images_duration_with_second)
+        total_images_duration_without_second_str = self.format_duration(total_images_duration_without_second)
+        total_audio_duration_str = self.format_duration(total_audio_duration)
+
+        # Create labels to display the information
+        self.layout.addWidget(QLabel(f"Total Images Duration (with second images): {total_images_duration_with_second_str}"))
+        self.layout.addWidget(QLabel(f"Total Images Duration (without second images): {total_images_duration_without_second_str}"))
+        self.layout.addWidget(QLabel(f"Total Audio Duration: {total_audio_duration_str}"))
+
+        # Add a close button
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(self.close)
+        self.layout.addWidget(close_button)
+
+    def calculate_total_audio_duration(self, audio_files):
+        total_duration = 0.0
+        for audio in audio_files:
+            audio_path = audio['path']
+            try:
+                cmd = [
+                    "ffprobe",
+                    "-v", "error",
+                    "-show_entries", "format=duration",
+                    "-of", "default=noprint_wrappers=1:nokey=1",
+                    f'"{audio_path}"'
+                ]
+                output = subprocess.check_output(" ".join(cmd), shell=True, universal_newlines=True).strip()
+                total_duration += float(output)
+            except Exception as e:
+                print(f"Error processing file {audio_path}: {e}")
+        return total_duration
+
+    def format_duration(self, seconds):
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        secs = int(seconds % 60)
+        return f"{hours:02}:{minutes:02}:{secs:02}"
 
 
 if __name__ == "__main__":
