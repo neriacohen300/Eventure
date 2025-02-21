@@ -1094,10 +1094,14 @@ class SlideshowCreator(QMainWindow):
             return
         
         selected_row = self.image_table.currentRow()  # Replace 'self.image_table' with the name of your table widget
-        self.easy_text_dialog = EasyTextWritingDialog(self.images, start_index=selected_row, parent=self)
+        affected_rows = []
+        self.easy_text_dialog = EasyTextWritingDialog(self.images, affected_rows, start_index=selected_row, parent=self)
         self.easy_text_dialog.show()
-        self.easy_text_dialog.exec_()
-        self.update_image_table()
+        if self.easy_text_dialog.exec_():
+            affected_rows[:] = self.easy_text_dialog.affected_rows
+        
+        for row in affected_rows:
+            self.update_image_row(row)
 
 
     """09_Shortcut Functions"""
@@ -1373,11 +1377,12 @@ class ImageProcessingPremiereWorker(QThread):
 
 
 class EasyTextWritingDialog(QDialog):
-    def __init__(self, images, start_index=0, parent=None):
+    def __init__(self, images, affected_rows, start_index=0, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Easy Text Writing")
         self.setGeometry(200, 200, 400, 200)
         self.images = images
+        self.affected_rows = affected_rows
         self.current_index = start_index
 
         self.layout = QVBoxLayout(self)
@@ -1425,7 +1430,11 @@ class EasyTextWritingDialog(QDialog):
 
     def next_image(self):
         if 0 <= self.current_index < len(self.images):
-            self.images[self.current_index]['text'] = self.text_input.toPlainText()
+            new_text = self.text_input.toPlainText()
+            if self.images[self.current_index]['text'] != new_text:
+                self.images[self.current_index]['text'] = new_text
+                if self.current_index not in self.affected_rows:
+                    self.affected_rows.append(self.current_index)
         self.current_index += 1
         if self.current_index >= len(self.images):
             self.current_index = 0
