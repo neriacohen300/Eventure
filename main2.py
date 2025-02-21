@@ -2,6 +2,7 @@
 
 import configparser
 import copy
+import json
 import random
 import shutil
 import sys
@@ -77,9 +78,13 @@ class SlideshowCreator(QMainWindow):
         self.load_shortcuts()  # Load shortcuts from file
 
         self.loaded_project = ""
+
+        self.stylesheet = self.load_stylesheet()
     
         
         self.create_ui()  # Create the user interface
+
+
     
     """User Interface"""
     def create_ui(self):
@@ -239,18 +244,24 @@ class SlideshowCreator(QMainWindow):
             
     def set_all_images_duration(self):
         selected_items = self.image_table.selectedItems()
-        if selected_items:
-            row = self.image_table.row(selected_items[0])
-            new_duration, ok = QInputDialog.getInt(self, "Set Duration", "Enter duration in seconds:", self.images[row]['duration'], 2, 600)
-            if ok:
-                for i in range(len(self.images)):
-                    self.images[i]['duration'] = new_duration
-                self.update_image_table()
-        else:
-            new_duration, ok = QInputDialog.getInt(self, "Set Duration", "Enter duration in seconds:", 2, 2, 600)
-            if ok:
-                for i in range(len(self.images)):
-                    self.images[i]['duration'] = new_duration
+        row = self.image_table.row(selected_items[0]) if selected_items else None
+        current_duration = self.images[row]['duration'] if row is not None else 2
+
+        # Create an input dialog instance
+        dialog = QInputDialog(self)
+        dialog.setWindowTitle("Set Duration")
+        dialog.setLabelText("Enter duration in seconds:")
+        dialog.setIntValue(current_duration)  # Set default duration
+        dialog.setIntRange(2, 600)  # Set valid range
+
+        # Apply dark mode stylesheet
+        dialog.setStyleSheet(self.stylesheet)
+
+        # Execute the dialog
+        if dialog.exec_() == QDialog.Accepted:
+            new_duration = dialog.intValue()
+            for i in range(len(self.images)):
+                self.images[i]['duration'] = new_duration
             self.update_image_table()
 
     """01_02_Images Implementation Functions"""
@@ -448,13 +459,26 @@ class SlideshowCreator(QMainWindow):
         selected_items = self.image_table.selectedItems()
         if selected_items:
             current_row = self.image_table.row(selected_items[0])
-            new_position, ok = QInputDialog.getInt(self, "Set Image Location", "Enter new position (1-based index):", current_row + 1, 1, len(self.images))
-            if ok:
-                new_position -= 1  # Convert to 0-based index
+
+            # Create the QInputDialog manually
+            dialog = QInputDialog(self)
+            dialog.setStyleSheet(self.stylesheet)  # Apply the custom stylesheet
+
+            # Configure dialog properties
+            dialog.setWindowTitle("Set Image Location")
+            dialog.setLabelText("Enter new position (1-based index):")
+            dialog.setInputMode(QInputDialog.IntInput)
+            dialog.setIntRange(1, len(self.images))  # Set valid range
+            dialog.setIntValue(current_row + 1)  # Default value
+
+            # Show dialog and get user input
+            if dialog.exec_() == QDialog.Accepted:
+                new_position = dialog.intValue() - 1  # Convert to 0-based index
                 image = self.images.pop(current_row)  # Remove the image from the current position
                 self.images.insert(new_position, image)  # Insert it at the new position
                 self.update_image_table()  # Refresh the table
                 self.image_table.setCurrentCell(new_position, 1)  # Set focus on the moved image
+
 
 
     def update_selection_after_operation(self, new_row):
@@ -899,11 +923,24 @@ class SlideshowCreator(QMainWindow):
         #print(f"Transition updated for {self.images[row]['path']} ---- {transition}")  # Debugging output
     
     def set_all_images_transition(self):
-        transition, ok = QInputDialog.getItem(self, "Set Transition", "Select transition:", self.transitions_types, 0, False)
-        for i in range(len(self.images)):
-            self.images[i]['transition'] = transition
-            self.transition_item.setCurrentText(transition)  # Set current transition
-        self.update_image_table()
+        # Create an input dialog instance
+        dialog = QInputDialog(self)
+        dialog.setWindowTitle("Set Transition")
+        dialog.setLabelText("Select transition:")
+        dialog.setComboBoxItems(self.transitions_types)  # Set transition options
+        #dialog.setCurrentIndex(0)  # Default to the first transition
+
+        # Apply dark mode stylesheet
+        dialog.setStyleSheet(self.stylesheet)
+
+        # Execute the dialog
+        if dialog.exec_() == QDialog.Accepted:
+            transition = dialog.textValue()
+            for i in range(len(self.images)):
+                self.images[i]['transition'] = transition
+                self.transition_item.setCurrentText(transition)  # Set current transition
+            self.update_image_table()
+
 
     def set_random_transition_for_each_image(self):
         
@@ -1095,7 +1132,11 @@ class SlideshowCreator(QMainWindow):
         
         selected_row = self.image_table.currentRow()  # Replace 'self.image_table' with the name of your table widget
         affected_rows = []
+        
         self.easy_text_dialog = EasyTextWritingDialog(self.images, affected_rows, start_index=selected_row, parent=self)
+        
+        self.easy_text_dialog.setStyleSheet(self.stylesheet)
+
         self.easy_text_dialog.show()
         if self.easy_text_dialog.exec_():
             affected_rows[:] = self.easy_text_dialog.affected_rows
@@ -1135,23 +1176,47 @@ class SlideshowCreator(QMainWindow):
         self.show_info_action.setShortcut(self.shortcuts.get("info", "Alt+I"))
 
     def set_shortcut(self, action):
-        # Prompt the user to enter a new shortcut
-        shortcut, ok = QInputDialog.getText(self, f"Set {action.capitalize()} Shortcut", 
-                                        f"Enter the new shortcut for {action}:", 
-                                        text=self.shortcuts.get(action, ""))
-        if ok and shortcut:
-            self.shortcuts[action] = shortcut
-            self.save_shortcuts()  # Save the new shortcut
-            self.update_shortcuts()  # Update the shortcuts in the application
+        # Create an input dialog instance
+        dialog = QInputDialog(self)
+        dialog.setWindowTitle(f"Set {action.capitalize()} Shortcut")
+        dialog.setLabelText(f"Enter the new shortcut for {action}:")
+        dialog.setTextValue(self.shortcuts.get(action, ""))
+
+        dialog.setStyleSheet(self.stylesheet)
+
+        # Execute the dialog
+        if dialog.exec_() == QDialog.Accepted:
+            shortcut = dialog.textValue()
+            if shortcut:
+                self.shortcuts[action] = shortcut
+                self.save_shortcuts()  # Save the new shortcut
+                self.update_shortcuts()  # Update the shortcuts in the application
+
 
 
 
 
     def show_info(self):
+        
         info_dialog = InfoDialog(self.images, self.audio_files, self)
+        info_dialog.setStyleSheet(self.stylesheet)
         info_dialog.exec_()
 
 
+
+
+    def load_stylesheet(self):
+        stylesheet_path = os.path.join("C:\\NeriaLTD\\Event_Montage_Maker_2", "styles.json")
+        try:
+            with open(stylesheet_path, 'r') as f:
+                styles = json.load(f)
+                return styles.get("stylesheet", "")
+        except FileNotFoundError:
+            print("Stylesheet file not found. Using default styles.")
+            return ""
+        except json.JSONDecodeError:
+            print("Invalid JSON in stylesheet file. Using default styles.")
+            return ""
 
 
 
@@ -1159,19 +1224,13 @@ class SlideshowCreator(QMainWindow):
     def create_menu(self):
         # Function to create a menu bar
         menubar = self.menuBar()
-        menubar.setStyleSheet("QMenuBar { background-color: #1E1E1E; color: white; }"
-                            "QMenuBar::item { background: #1E1E1E; color: white; }"
-                            "QMenuBar::item:selected { background: #0078d4; }")
+        menubar.setStyleSheet(self.stylesheet)
 
         file_menu = menubar.addMenu("File")
-        file_menu.setStyleSheet("QMenu { background-color: #1E1E1E; color: white; }"
-                                "QMenu::item { background: #1E1E1E; color: white; }"
-                                "QMenu::item:selected { background: #0078d4; }")
+        file_menu.setStyleSheet(self.stylesheet)
 
         import_menu = file_menu.addMenu("Import")
-        import_menu.setStyleSheet("QMenu { background-color: #1E1E1E; color: white; }"
-                                "QMenu::item { background: #1E1E1E; color: white; }"
-                                "QMenu::item:selected { background: #0078d4; }")
+        import_menu.setStyleSheet(self.stylesheet)
         
         import_images = QAction("Images", self)
         import_images.triggered.connect(self.add_images)
@@ -1202,9 +1261,7 @@ class SlideshowCreator(QMainWindow):
         file_menu.addAction(clear_action)
 
         export_menu = file_menu.addMenu("Export")
-        export_menu.setStyleSheet("QMenu { background-color: #1E1E1E; color: white; }"
-                                "QMenu::item { background: #1E1E1E; color: white; }"
-                                "QMenu::item:selected { background: #0078d4; }")
+        export_menu.setStyleSheet(self.stylesheet)
 
         export_slideshow_action = QAction("Export Slideshow", self)
         export_slideshow_action.triggered.connect(self.export_slideshow)
@@ -1215,14 +1272,10 @@ class SlideshowCreator(QMainWindow):
         export_menu.addAction(export_premiere_action)
 
         options_menu = menubar.addMenu("Options")
-        options_menu.setStyleSheet("QMenu { background-color: #1E1E1E; color: white; }"
-                                "QMenu::item { background: #1E1E1E; color: white; }"
-                                "QMenu::item:selected { background: #0078d4; }")
+        options_menu.setStyleSheet(self.stylesheet)
         
         Img_menu = options_menu.addMenu("Images")
-        Img_menu.setStyleSheet("QMenu { background-color: #1E1E1E; color: white; }"
-                                "QMenu::item { background: #1E1E1E; color: white; }"
-                                "QMenu::item:selected { background: #0078d4; }")
+        Img_menu.setStyleSheet(self.stylesheet)
         
         set_all_images_duration_action = QAction("Set All Images Duration", self)
         set_all_images_duration_action.triggered.connect(self.set_all_images_duration)
@@ -1243,9 +1296,7 @@ class SlideshowCreator(QMainWindow):
         
 
         Transitions_menu = options_menu.addMenu("Transitions")
-        Transitions_menu.setStyleSheet("QMenu { background-color: #1E1E1E; color: white; }"
-                                "QMenu::item { background: #1E1E1E; color: white; }"
-                                "QMenu::item:selected { background: #0078d4; }")
+        Transitions_menu.setStyleSheet(self.stylesheet)
         
 
 
@@ -1258,9 +1309,7 @@ class SlideshowCreator(QMainWindow):
         Transitions_menu.addAction(set_random_transition_for_each_image_action)
 
         Text_menu = options_menu.addMenu("Text")
-        Text_menu.setStyleSheet("QMenu { background-color: #1E1E1E; color: white; }"
-                                "QMenu::item { background: #1E1E1E; color: white; }"
-                                "QMenu::item:selected { background: #0078d4; }")
+        Text_menu.setStyleSheet(self.stylesheet)
 
         # Add the new "Easy Text Writing" option
         self.easy_text_writing_action = QAction("Easy Text Writing", self)
@@ -1270,15 +1319,11 @@ class SlideshowCreator(QMainWindow):
 
         # Add the Settings menu
         settings_menu = menubar.addMenu("Settings")
-        settings_menu.setStyleSheet("QMenu { background-color: #1E1E1E; color: white; }"
-                                    "QMenu::item { background: #1E1E1E; color: white; }"
-                                    "QMenu::item:selected { background: #0078d4; }")
+        settings_menu.setStyleSheet(self.stylesheet)
 
         # Add a submenu for keyboard shortcuts
         shortcuts_menu = settings_menu.addMenu("Keyboard Shortcuts")
-        shortcuts_menu.setStyleSheet("QMenu { background-color: #1E1E1E; color: white; }"
-                                    "QMenu::item { background: #1E1E1E; color: white; }"
-                                    "QMenu::item:selected { background: #0078d4; }")
+        shortcuts_menu.setStyleSheet(self.stylesheet)
 
         # Add actions for setting shortcuts
         set_save_shortcut_action = QAction("Set Save Shortcut", self)
@@ -1303,14 +1348,16 @@ class SlideshowCreator(QMainWindow):
 
         # Add the Info menu
         info_menu = menubar.addMenu("Info")
-        info_menu.setStyleSheet("QMenu { background-color: #1E1E1E; color: white; }"
-                                "QMenu::item { background: #1E1E1E; color: white; }"
-                                "QMenu::item:selected { background: #0078d4; }")
+        info_menu.setStyleSheet(self.stylesheet)
 
         self.show_info_action = QAction("Show Info", self)
         self.show_info_action.triggered.connect(self.show_info)
         self.show_info_action.setShortcut(self.shortcuts.get("info", "Alt+I"))
         info_menu.addAction(self.show_info_action)
+
+
+
+
 
 
 
@@ -1384,6 +1431,7 @@ class EasyTextWritingDialog(QDialog):
         self.images = images
         self.affected_rows = affected_rows
         self.current_index = start_index
+
 
         self.layout = QVBoxLayout(self)
 
