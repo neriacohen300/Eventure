@@ -320,19 +320,19 @@ class SlideshowCreator(QMainWindow):
             move_up_btn.setStyleSheet('QPushButton { background-color: #1E1E1E; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
                                     'QPushButton:hover { background-color: #0078d4; }')
             # Inside update_image_table:
-            move_up_btn.clicked.connect(lambda _, r=row: self.move_image_up(r))
+            move_up_btn.clicked.connect(self.move_image_up)
 
 
             move_down_btn = QPushButton("↓")
             move_down_btn.setStyleSheet('QPushButton { background-color: #1E1E1E; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
                                         'QPushButton:hover { background-color: #0078d4; }')
-            move_down_btn.clicked.connect(lambda _, r=row: self.move_image_down(r))
+            move_down_btn.clicked.connect(self.move_image_down)
 
 
             delete_btn = QPushButton("✖")
             delete_btn.setStyleSheet('QPushButton { background-color: #1E1E1E; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
                                     'QPushButton:hover { background-color: #ff0000; }')
-            delete_btn.clicked.connect(lambda _, r=row: self.delete_image(r))
+            delete_btn.clicked.connect(self.delete_image)
 
             button_widget = QWidget()
             button_layout = QHBoxLayout(button_widget)
@@ -351,8 +351,9 @@ class SlideshowCreator(QMainWindow):
         self.image_table.setUpdatesEnabled(True)
         self.image_table.blockSignals(False)  # Re-enable signals
 
-    def move_image_up(self, row):
+    def move_image_up(self):
         self.image_table.setSortingEnabled(False)  # Disable sorting
+        row = self.image_table.currentRow()
         if row > 0:
             self.images[row], self.images[row - 1] = self.images[row - 1], self.images[row]
             self.update_image_row(row)
@@ -361,8 +362,9 @@ class SlideshowCreator(QMainWindow):
             self.update_preview_with_row(row - 1)
         self.image_table.setSortingEnabled(True)  # Re-enable sorting
 
-    def move_image_down(self, row):
+    def move_image_down(self):
         self.image_table.setSortingEnabled(False)  # Disable sorting
+        row = self.image_table.currentRow()
         if row < len(self.images) - 1:
             self.images[row], self.images[row + 1] = self.images[row + 1], self.images[row]
             self.update_image_row(row)
@@ -409,9 +411,11 @@ class SlideshowCreator(QMainWindow):
 
         
 
-    def delete_image(self, row):
+    def delete_image(self):
         # Temporarily disable sorting to ensure correct row indices
         self.image_table.setSortingEnabled(False)
+
+        row = self.image_table.currentRow()
         
         if 0 <= row < len(self.images):  # Ensure the row is within bounds
             del self.images[row]  # Remove the image from the list
