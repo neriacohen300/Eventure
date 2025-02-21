@@ -21,6 +21,9 @@ from concurrent.futures import ThreadPoolExecutor
 
 
 
+
+
+
 """main class"""
 class SlideshowCreator(QMainWindow):
     """window creation"""
@@ -74,11 +77,7 @@ class SlideshowCreator(QMainWindow):
         self.load_shortcuts()  # Load shortcuts from file
 
         self.loaded_project = ""
-        
-
-
-        #self.transition_type = "fade" # default fade
-        #self.transition_duration = 1 #default 1
+    
         
         self.create_ui()  # Create the user interface
     
@@ -1413,6 +1412,11 @@ class EasyTextWritingDialog(QDialog):
         if 0 <= self.current_index < len(self.images):
             img_data = self.images[self.current_index]
             pixmap = QPixmap(img_data['path'])
+            rotation = img_data.get('rotation', 0)
+            if rotation != 0:
+                transform = QTransform()
+                transform.rotate(rotation)
+                pixmap = pixmap.transformed(transform, Qt.SmoothTransformation)
             self.image_label.setPixmap(pixmap.scaled(300, 200, Qt.KeepAspectRatio))
             self.text_input.setPlainText(img_data.get('text', ''))
         else:
