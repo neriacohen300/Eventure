@@ -18,6 +18,13 @@ import openpyxl
 import Image_resizer, premiere_export
 from concurrent.futures import ThreadPoolExecutor
 
+from EMM_THEMES.theme import set_theme
+
+
+
+
+
+
 
 
 
@@ -77,10 +84,7 @@ class SlideshowCreator(QMainWindow):
         }
         self.load_shortcuts()  # Load shortcuts from file
 
-        self.loaded_project = ""
-
-        self.stylesheet = self.load_stylesheet()
-    
+        self.loaded_project = ""    
         
         self.create_ui()  # Create the user interface
 
@@ -93,7 +97,6 @@ class SlideshowCreator(QMainWindow):
         main_layout = QHBoxLayout(main_widget)
 
         # Set dark background for the main widget
-        main_widget.setStyleSheet("background-color: #121212; color: white;")
 
         """Left Panel - Image List with Durations"""
         left_panel = QVBoxLayout()
@@ -104,8 +107,6 @@ class SlideshowCreator(QMainWindow):
         self.image_table.setColumnCount(8)  # Increase the column count
         self.image_table.setHorizontalHeaderLabels([".", "Image", "Duration (sec)", "Transition", "Length (sec)", "Text", "Rotation (deg)", "Second Image"])
         self.image_table.setFont(QFont(self.deafult_font, 10, QFont.Bold))
-        self.image_table.setStyleSheet("QTableWidget { background-color: #1E1E1E; color: white; }"
-                                        "QHeaderView::section { background-color: #1E1E1E; color: white; }")
         self.image_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.image_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.image_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
@@ -129,7 +130,6 @@ class SlideshowCreator(QMainWindow):
         self.preview_label = QLabel("Preview")
         self.preview_label.setFont(QFont(self.text_font, 16, QFont.Bold))
         self.preview_label.setAlignment(Qt.AlignCenter)
-        self.preview_label.setStyleSheet("border: 1px solid #444; background: #222; color: white;")
         self.preview_label.setFixedHeight(300)
 
 
@@ -165,8 +165,6 @@ class SlideshowCreator(QMainWindow):
         self.audio_table.setColumnCount(2)
         self.audio_table.setHorizontalHeaderLabels(["Actions", "Audio File"])
         self.audio_table.setFont(QFont(self.deafult_font, 10, QFont.Bold))
-        self.audio_table.setStyleSheet("QTableWidget { background-color: #1E1E1E; color: white; }"
-                                        "QHeaderView::section { background-color: #1E1E1E; color: white; }")
         self.audio_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.audio_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
 
@@ -254,8 +252,6 @@ class SlideshowCreator(QMainWindow):
         dialog.setIntValue(current_duration)  # Set default duration
         dialog.setIntRange(2, 600)  # Set valid range
 
-        # Apply dark mode stylesheet
-        dialog.setStyleSheet(self.stylesheet)
 
         # Execute the dialog
         if dialog.exec_() == QDialog.Accepted:
@@ -327,21 +323,15 @@ class SlideshowCreator(QMainWindow):
 
             # Add move up, move down, and delete buttons
             move_up_btn = QPushButton("↑")
-            move_up_btn.setStyleSheet('QPushButton { background-color: #1E1E1E; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
-                                    'QPushButton:hover { background-color: #0078d4; }')
             # Inside update_image_table:
             move_up_btn.clicked.connect(self.move_image_up)
 
 
             move_down_btn = QPushButton("↓")
-            move_down_btn.setStyleSheet('QPushButton { background-color: #1E1E1E; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
-                                        'QPushButton:hover { background-color: #0078d4; }')
             move_down_btn.clicked.connect(self.move_image_down)
 
 
             delete_btn = QPushButton("✖")
-            delete_btn.setStyleSheet('QPushButton { background-color: #1E1E1E; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
-                                    'QPushButton:hover { background-color: #ff0000; }')
             delete_btn.clicked.connect(self.delete_image)
 
             button_widget = QWidget()
@@ -462,7 +452,6 @@ class SlideshowCreator(QMainWindow):
 
             # Create the QInputDialog manually
             dialog = QInputDialog(self)
-            dialog.setStyleSheet(self.stylesheet)  # Apply the custom stylesheet
 
             # Configure dialog properties
             dialog.setWindowTitle("Set Image Location")
@@ -508,18 +497,12 @@ class SlideshowCreator(QMainWindow):
 
             # Add move up, move down, and delete buttons
             move_up_btn = QPushButton("↑")
-            move_up_btn.setStyleSheet('QPushButton { background-color: #1E1E1E; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
-                                    'QPushButton:hover { background-color: #0078d4; }')
             move_up_btn.clicked.connect(lambda _, r=row: self.move_audio_up(r))
 
             move_down_btn = QPushButton("↓")
-            move_down_btn.setStyleSheet('QPushButton { background-color: #1E1E1E; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
-                                        'QPushButton:hover { background-color: #0078d4; }')
             move_down_btn.clicked.connect(lambda _, r=row: self.move_audio_down(r))
 
             delete_btn = QPushButton("✖")
-            delete_btn.setStyleSheet('QPushButton { background-color: #1E1E1E; color: white; border: none; padding: 8px 16px; border-radius: 4px; }'
-                                    'QPushButton:hover { background-color: #ff0000; }')
             delete_btn.clicked.connect(lambda _, r=row: self.delete_audio(r))
 
             # Create a widget to hold the buttons
@@ -930,8 +913,6 @@ class SlideshowCreator(QMainWindow):
         dialog.setComboBoxItems(self.transitions_types)  # Set transition options
         #dialog.setCurrentIndex(0)  # Default to the first transition
 
-        # Apply dark mode stylesheet
-        dialog.setStyleSheet(self.stylesheet)
 
         # Execute the dialog
         if dialog.exec_() == QDialog.Accepted:
@@ -1135,7 +1116,6 @@ class SlideshowCreator(QMainWindow):
         
         self.easy_text_dialog = EasyTextWritingDialog(self.images, affected_rows, start_index=selected_row, parent=self)
         
-        self.easy_text_dialog.setStyleSheet(self.stylesheet)
 
         self.easy_text_dialog.show()
         if self.easy_text_dialog.exec_():
@@ -1182,7 +1162,6 @@ class SlideshowCreator(QMainWindow):
         dialog.setLabelText(f"Enter the new shortcut for {action}:")
         dialog.setTextValue(self.shortcuts.get(action, ""))
 
-        dialog.setStyleSheet(self.stylesheet)
 
         # Execute the dialog
         if dialog.exec_() == QDialog.Accepted:
@@ -1199,24 +1178,12 @@ class SlideshowCreator(QMainWindow):
     def show_info(self):
         
         info_dialog = InfoDialog(self.images, self.audio_files, self)
-        info_dialog.setStyleSheet(self.stylesheet)
         info_dialog.exec_()
 
 
 
 
-    def load_stylesheet(self):
-        stylesheet_path = os.path.join("C:\\NeriaLTD\\Event_Montage_Maker_2", "styles.json")
-        try:
-            with open(stylesheet_path, 'r') as f:
-                styles = json.load(f)
-                return styles.get("stylesheet", "")
-        except FileNotFoundError:
-            print("Stylesheet file not found. Using default styles.")
-            return ""
-        except json.JSONDecodeError:
-            print("Invalid JSON in stylesheet file. Using default styles.")
-            return ""
+
 
 
 
@@ -1224,13 +1191,10 @@ class SlideshowCreator(QMainWindow):
     def create_menu(self):
         # Function to create a menu bar
         menubar = self.menuBar()
-        menubar.setStyleSheet(self.stylesheet)
 
         file_menu = menubar.addMenu("File")
-        file_menu.setStyleSheet(self.stylesheet)
 
         import_menu = file_menu.addMenu("Import")
-        import_menu.setStyleSheet(self.stylesheet)
         
         import_images = QAction("Images", self)
         import_images.triggered.connect(self.add_images)
@@ -1261,7 +1225,6 @@ class SlideshowCreator(QMainWindow):
         file_menu.addAction(clear_action)
 
         export_menu = file_menu.addMenu("Export")
-        export_menu.setStyleSheet(self.stylesheet)
 
         export_slideshow_action = QAction("Export Slideshow", self)
         export_slideshow_action.triggered.connect(self.export_slideshow)
@@ -1272,10 +1235,8 @@ class SlideshowCreator(QMainWindow):
         export_menu.addAction(export_premiere_action)
 
         options_menu = menubar.addMenu("Options")
-        options_menu.setStyleSheet(self.stylesheet)
         
         Img_menu = options_menu.addMenu("Images")
-        Img_menu.setStyleSheet(self.stylesheet)
         
         set_all_images_duration_action = QAction("Set All Images Duration", self)
         set_all_images_duration_action.triggered.connect(self.set_all_images_duration)
@@ -1296,7 +1257,6 @@ class SlideshowCreator(QMainWindow):
         
 
         Transitions_menu = options_menu.addMenu("Transitions")
-        Transitions_menu.setStyleSheet(self.stylesheet)
         
 
 
@@ -1309,7 +1269,6 @@ class SlideshowCreator(QMainWindow):
         Transitions_menu.addAction(set_random_transition_for_each_image_action)
 
         Text_menu = options_menu.addMenu("Text")
-        Text_menu.setStyleSheet(self.stylesheet)
 
         # Add the new "Easy Text Writing" option
         self.easy_text_writing_action = QAction("Easy Text Writing", self)
@@ -1319,11 +1278,9 @@ class SlideshowCreator(QMainWindow):
 
         # Add the Settings menu
         settings_menu = menubar.addMenu("Settings")
-        settings_menu.setStyleSheet(self.stylesheet)
 
         # Add a submenu for keyboard shortcuts
         shortcuts_menu = settings_menu.addMenu("Keyboard Shortcuts")
-        shortcuts_menu.setStyleSheet(self.stylesheet)
 
         # Add actions for setting shortcuts
         set_save_shortcut_action = QAction("Set Save Shortcut", self)
@@ -1348,7 +1305,6 @@ class SlideshowCreator(QMainWindow):
 
         # Add the Info menu
         info_menu = menubar.addMenu("Info")
-        info_menu.setStyleSheet(self.stylesheet)
 
         self.show_info_action = QAction("Show Info", self)
         self.show_info_action.triggered.connect(self.show_info)
@@ -1551,6 +1507,7 @@ class InfoDialog(QDialog):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    set_theme(app, theme='dark')
     window = SlideshowCreator()
     window.create_menu()
     window.setup_connections()
