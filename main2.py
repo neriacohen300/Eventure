@@ -11,7 +11,7 @@ import subprocess
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QInputDialog, QAction,
                              QListWidget,QProgressBar,QComboBox,QMessageBox,QDialog, QTextEdit, QCheckBox, QPushButton, QLabel, QFileDialog, QSlider, QStyle, QTableWidgetItem, QSpinBox, QHeaderView, QTableWidget)
 from PyQt5.QtCore import Qt, QUrl, QSize, QProcess, QTimer, QThread, pyqtSignal, QEvent
-from PyQt5.QtGui import QIcon, QFont, QPixmap,QTextCursor, QCursor, QTransform, QColor
+from PyQt5.QtGui import QIcon, QFont, QPixmap,QTextCursor, QCursor, QTransform, QColor, QBrush
 from PIL import Image, ImageFilter
 from openpyxl import Workbook
 import openpyxl
@@ -19,16 +19,6 @@ import Image_resizer, premiere_export
 from concurrent.futures import ThreadPoolExecutor
 
 from EMM_THEMES.theme import set_theme
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -80,7 +70,10 @@ class SlideshowCreator(QMainWindow):
         "save_as": "Ctrl+Shift+S",
         "load": "Ctrl+L",
         "easy_text": "Ctrl+T",
-        "info": "Alt+I"
+        "info": "Alt+I",
+        "import_images": "Ctrl+Shift+I",
+        "import_audio": "Ctrl+Shift+A",
+        "set_image_location": "Ctrl+Q"
         }
         self.load_shortcuts()  # Load shortcuts from file
 
@@ -187,13 +180,6 @@ class SlideshowCreator(QMainWindow):
         # Initialize audio files list
         self.audio_files = []
 
-        
-
-
-
-
-
-
 
     """01_Images Functions"""
     
@@ -213,9 +199,7 @@ class SlideshowCreator(QMainWindow):
                     self.update_image_table()
             except ValueError:
                 # Revert to the previous value if the input is invalid
-                item.setText(str(self.images[row]['duration']))
-            #print(f"Duration updated for {self.images[row]['path']}    ----   {self.images[row]['duration']} \n")  # Debugging output
-        
+                item.setText(str(self.images[row]['duration']))        
         elif column == 5:  # Handle edits for the 'Text' column
             try:
                 new_text = str(item.text())
@@ -224,7 +208,6 @@ class SlideshowCreator(QMainWindow):
             except ValueError:
                 # Revert to the previous value if the input is invalid
                 item.setText(str(self.images[row]['text']))
-            #print(f"Text updated for {self.images[row]['path']}    ----   {self.images[row]['text']} \n")  # Debugging output
 
         elif column == 6:  # Handle edits for the 'Text' column
             try:
@@ -237,7 +220,6 @@ class SlideshowCreator(QMainWindow):
             except ValueError:
                 # Revert to the previous value if the input is invalid
                 item.setText(str(self.images[row]['rotation']))
-            #print(f"Duration updated for {self.images[row]['path']}    ----   {self.images[row]['duration']} \n")  # Debugging output
 
             
     def set_all_images_duration(self):
@@ -303,15 +285,6 @@ class SlideshowCreator(QMainWindow):
             second_image_checkbox = QCheckBox()
             second_image_checkbox.setChecked(img.get('is_second_image', False))
             second_image_checkbox.stateChanged.connect(lambda state, row=row: self.set_second_image(row, state))
-
-            # Set background color if it is a second image
-            if img.get('is_second_image', False):
-                color = QColor(100, 100, 150)  # Darker blue background
-                filename_item.setBackground(color)
-                duration_item.setBackground(color)
-                transition_length_item.setBackground(color)
-                text_item.setBackground(color)
-                rotation_item.setBackground(color)
 
             self.image_table.setItem(row, 1, filename_item)
             self.image_table.setItem(row, 2, duration_item)
@@ -616,7 +589,7 @@ class SlideshowCreator(QMainWindow):
         print("Images:", self.images)  # Debugging output
         print("Audio Files:", self.audio_files)  # Debugging output
         if not self.images or not self.audio_files:
-            print("Please add images and audio before exporting.")
+            QMessageBox.critical(self, "Error", "Please add images and audio before exporting.", QMessageBox.Ok)
             return
         
         options = QFileDialog.Options()
@@ -624,7 +597,7 @@ class SlideshowCreator(QMainWindow):
         if file_path:
             self.output_file = file_path
         else:
-            print("Please select a location for the exported video.")
+            QMessageBox.critical(self, "Error", "Please select a location for the exported video.", QMessageBox.Ok)
             return
         
         # Start image processing in a separate thread
@@ -903,7 +876,6 @@ class SlideshowCreator(QMainWindow):
     """07_Transition Functions"""
     def update_transition(self, row, transition):
         self.images[row]['transition'] = transition
-        #print(f"Transition updated for {self.images[row]['path']} ---- {transition}")  # Debugging output
     
     def set_all_images_transition(self):
         # Create an input dialog instance
@@ -911,7 +883,6 @@ class SlideshowCreator(QMainWindow):
         dialog.setWindowTitle("Set Transition")
         dialog.setLabelText("Select transition:")
         dialog.setComboBoxItems(self.transitions_types)  # Set transition options
-        #dialog.setCurrentIndex(0)  # Default to the first transition
 
 
         # Execute the dialog
@@ -978,7 +949,7 @@ class SlideshowCreator(QMainWindow):
         if file_path:
             self.premiere_project_folder = file_path
         else:
-            print("Please select a location for the exported Premiere project.")
+            QMessageBox.critical(self, "Error", "Please select a location for the exported Premiere project.", QMessageBox.Ok)
             return
 
         self.image_premiere_progress_bar.setVisible(True)
@@ -1154,6 +1125,9 @@ class SlideshowCreator(QMainWindow):
         self.load_action.setShortcut(self.shortcuts.get("load", "Ctrl+L"))
         self.easy_text_writing_action.setShortcut(self.shortcuts.get("easy_text", "Ctrl+T"))
         self.show_info_action.setShortcut(self.shortcuts.get("info", "Alt+I"))
+        self.import_images.setShortcut(self.shortcuts.get("import_images", "Ctrl+Shift+I"))
+        self.import_audio.setShortcut(self.shortcuts.get("import_audio", "Ctrl+Shift+A"))
+        self.set_image_location_action.setShortcut(self.shortcuts.get("set_image_location", "Ctrl+Q"))
 
     def set_shortcut(self, action):
         # Create an input dialog instance
@@ -1196,13 +1170,15 @@ class SlideshowCreator(QMainWindow):
 
         import_menu = file_menu.addMenu("Import")
         
-        import_images = QAction("Images", self)
-        import_images.triggered.connect(self.add_images)
-        import_menu.addAction(import_images)
+        self.import_images = QAction("Images", self)
+        self.import_images.triggered.connect(self.add_images)
+        self.import_images.setShortcut(self.shortcuts.get("import_images", "Ctrl+Shift+I"))
+        import_menu.addAction(self.import_images)
 
-        import_audio = QAction("Audio", self)
-        import_audio.triggered.connect(self.add_audio)
-        import_menu.addAction(import_audio)
+        self.import_audio = QAction("Audio", self)
+        self.import_audio.triggered.connect(self.add_audio)
+        self.import_audio.setShortcut(self.shortcuts.get("import_audio", "Ctrl+Shift+A"))
+        import_menu.addAction(self.import_audio)
 
         self.load_action = QAction("Load Project", self)
         self.load_action.triggered.connect(self.load_project)
@@ -1250,9 +1226,10 @@ class SlideshowCreator(QMainWindow):
         auto_set_images_action.triggered.connect(self.auto_calc_image_duration)
         Img_menu.addAction(auto_set_images_action)
 
-        set_image_location_action = QAction("Set Image Location", self)
-        set_image_location_action.triggered.connect(self.set_image_location)
-        Img_menu.addAction(set_image_location_action)
+        self.set_image_location_action = QAction("Set Image Location", self)
+        self.set_image_location_action.triggered.connect(self.set_image_location)
+        self.set_image_location_action.setShortcut(self.shortcuts.get("set_image_location", "Ctrl+Q"))
+        Img_menu.addAction(self.set_image_location_action)
 
         
 
