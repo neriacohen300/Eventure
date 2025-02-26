@@ -9,7 +9,7 @@ import sys
 import os
 import subprocess
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QInputDialog, QAction,
-                             QListWidget,QProgressBar,QComboBox,QMessageBox,QDialog, QTextEdit, QCheckBox, QPushButton, QLabel, QFileDialog, QSlider, QStyle, QTableWidgetItem, QSpinBox, QHeaderView, QTableWidget)
+                             QListWidget,QProgressBar,QComboBox,QMessageBox,QDialog, QTextEdit, QCheckBox, QStyledItemDelegate,QPushButton, QLabel, QFileDialog, QSlider, QStyle, QTableWidgetItem, QSpinBox, QHeaderView, QTableWidget)
 from PyQt5.QtCore import Qt, QUrl, QSize, QProcess, QTimer, QThread, pyqtSignal, QEvent
 from PyQt5.QtGui import QIcon, QFont, QPixmap,QTextCursor, QCursor, QTransform, QColor, QBrush
 from PIL import Image, ImageFilter
@@ -97,6 +97,7 @@ class SlideshowCreator(QMainWindow):
 
         # Initialize the image_table attribute
         self.image_table = QTableWidget()
+        self.image_table.setItemDelegate(CustomDelegate())  # Add this line
         self.image_table.setColumnCount(8)  # Increase the column count
         self.image_table.setHorizontalHeaderLabels([".", "Image", "Duration (sec)", "Transition", "Length (sec)", "Text", "Rotation (deg)", "Second Image"])
         self.image_table.setFont(QFont(self.deafult_font, 10, QFont.Bold))
@@ -257,6 +258,9 @@ class SlideshowCreator(QMainWindow):
             return
         else:
             self.images[row]['is_second_image'] = state == Qt.Checked
+            filename_item = self.image_table.item(row, 1)
+            if filename_item:
+                filename_item.setData(Qt.UserRole, state == Qt.Checked)  # Update the UserRole data
             self.update_image_row(row)
 
     def update_image_table(self):
@@ -268,6 +272,7 @@ class SlideshowCreator(QMainWindow):
         for row, img in enumerate(self.images):
             path_img = os.path.basename(img['path'])
             filename_item = QTableWidgetItem(path_img)
+            filename_item.setData(Qt.UserRole, img.get('is_second_image', False))  # Set the UserRole data
             duration_item = QTableWidgetItem(str(img.get('duration', 5)))
             self.transition_item = QComboBox()
             self.transition_item.addItems(self.transitions_types)
@@ -358,6 +363,7 @@ class SlideshowCreator(QMainWindow):
             rotation_item = QTableWidgetItem(str(img.get('rotation', 0)))
 
             filename_item = QTableWidgetItem(path_img)
+            filename_item.setData(Qt.UserRole, img.get('is_second_image', False))  # Add this line
             filename_item.setFlags(filename_item.flags() & ~Qt.ItemIsEditable)
             transition_length_item.setFlags(transition_length_item.flags() & ~Qt.ItemIsEditable)
 
@@ -366,13 +372,13 @@ class SlideshowCreator(QMainWindow):
             second_image_checkbox.setChecked(img.get('is_second_image', False))
             second_image_checkbox.stateChanged.connect(lambda state, row=row: self.set_second_image(row, state))
 
-            if img.get('is_second_image', False):
+            """if img.get('is_second_image', False):
                 color = QColor(100, 100, 150)  # Darker blue background
                 filename_item.setBackground(color)
                 duration_item.setBackground(color)
                 transition_length_item.setBackground(color)
                 text_item.setBackground(color)
-                rotation_item.setBackground(color)
+                rotation_item.setBackground(color)"""
 
             self.image_table.setItem(row, 1, filename_item)
             self.image_table.setItem(row, 2, duration_item)
@@ -866,6 +872,7 @@ class SlideshowCreator(QMainWindow):
                 print(self.images)
                 
                 # Update the UI tables
+
                 self.update_image_table()
                 self.update_audio_table()
 
@@ -1480,6 +1487,24 @@ class InfoDialog(QDialog):
         minutes = int((seconds % 3600) // 60)
         secs = int(seconds % 60)
         return f"{hours:02}:{minutes:02}:{secs:02}"
+
+
+
+
+class CustomDelegate(QStyledItemDelegate):
+    def paint(self, painter, option, index):
+        # Get the model and check if the row is a secondary image
+        model = index.model()
+        row = index.row()
+        col1_index = model.index(row, 1)  # Column 1 holds the filename and our data
+        is_secondary = col1_index.data(Qt.UserRole)
+        if is_secondary:
+            painter.save()
+            painter.fillRect(option.rect, QColor(100, 100, 150))  # Dark blue background
+            painter.restore()
+        super().paint(painter, option, index)
+
+
 
 
 if __name__ == "__main__":
