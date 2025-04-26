@@ -20,6 +20,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 from EMM_THEMES.theme import set_theme
 
+os.environ["QT_PLUGIN_PATH"] = os.path.join(os.path.dirname(sys.executable), "Lib", "site-packages", "PyQt5", "Qt", "plugins")
+
 
 
 """main class"""
@@ -73,7 +75,8 @@ class SlideshowCreator(QMainWindow):
         "info": "Alt+I",
         "import_images": "Ctrl+Shift+I",
         "import_audio": "Ctrl+Shift+A",
-        "set_image_location": "Ctrl+Q"
+        "set_image_location": "Ctrl+Q",
+        "delete_row": "Delete"
         }
         self.load_shortcuts()  # Load shortcuts from file
 
@@ -1008,7 +1011,7 @@ class SlideshowCreator(QMainWindow):
         # Create the "Texts" folder if it doesn't exist
         premiere_text_folder = os.path.join(self.premiere_project_folder, "03_טקסט")
         os.makedirs(premiere_text_folder, exist_ok=True)
-        style_file_path = "E:\------ תכנות ------\Even Monatge Maker 2.0\Premiere_Project\טקסט למצגת - עברית.prtextstyle"
+        style_file_path = r"E:\------ תכנות ------\Even Monatge Maker 2.0\Premiere_Project\טקסט למצגת - עברית.prtextstyle"
         # Copy the original text file to the new location
         original_text_file_path = os.path.join(premiere_text_folder, "טקסט למצגת - בעברית.prtextstyle")
         shutil.copy(style_file_path, original_text_file_path)
@@ -1069,7 +1072,7 @@ class SlideshowCreator(QMainWindow):
 
     def copy_premiere_project_file(self):
         # Define the source and destination paths for the Premiere project file
-        premiere_project_source = "E:\------ תכנות ------\Even Monatge Maker 2.0\Premiere_Project\Project.prproj"
+        premiere_project_source = r"E:\------ תכנות ------\Even Monatge Maker 2.0\Premiere_Project\Project.prproj"
         project_destination_folder = os.path.join(self.premiere_project_folder, "04_פרוייקט")
         os.makedirs(project_destination_folder, exist_ok=True)
         project_file_name = os.path.basename(self.premiere_project_folder) + ".prproj"
@@ -1134,6 +1137,7 @@ class SlideshowCreator(QMainWindow):
         self.show_info_action.setShortcut(self.shortcuts.get("info", "Alt+I"))
         self.import_images.setShortcut(self.shortcuts.get("import_images", "Ctrl+Shift+I"))
         self.import_audio.setShortcut(self.shortcuts.get("import_audio", "Ctrl+Shift+A"))
+        self.set_image_location_action.setShortcut(self.shortcuts.get("set_image_location", "Ctrl+Q"))
         self.set_image_location_action.setShortcut(self.shortcuts.get("set_image_location", "Ctrl+Q"))
 
     def set_shortcut(self, action):
@@ -1203,6 +1207,16 @@ class SlideshowCreator(QMainWindow):
         self.save_as_action.setShortcut(self.shortcuts.get("save_as", "Ctrl+Shift+S"))
         file_menu.addAction(self.save_as_action)
 
+        options_menu = menubar.addMenu("Options")
+        
+        Img_menu = options_menu.addMenu("Images")
+
+
+        self.delete_row_action = QAction("Delete Image Row", self)
+        self.delete_row_action.triggered.connect(self.delete_image)
+        self.delete_row_action.setShortcut(self.shortcuts.get("delete_row", "Delete"))
+        Img_menu.addAction(self.delete_row_action) #to change
+
         clear_action = QAction("Clear Project", self)
         clear_action.triggered.connect(self.clear_project)
         file_menu.addAction(clear_action)
@@ -1217,9 +1231,7 @@ class SlideshowCreator(QMainWindow):
         export_premiere_action.triggered.connect(self.export_premiere_slideshow)
         export_menu.addAction(export_premiere_action)
 
-        options_menu = menubar.addMenu("Options")
         
-        Img_menu = options_menu.addMenu("Images")
         
         set_all_images_duration_action = QAction("Set All Images Duration", self)
         set_all_images_duration_action.triggered.connect(self.set_all_images_duration)
@@ -1286,6 +1298,15 @@ class SlideshowCreator(QMainWindow):
         set_show_info_shortcut_action = QAction("Set Show Info Shortcut", self)
         set_show_info_shortcut_action.triggered.connect(lambda: self.set_shortcut("info"))
         shortcuts_menu.addAction(set_show_info_shortcut_action)
+
+
+        set_delete_row_action = QAction("Set Delete Shortcut", self)
+        set_delete_row_action.triggered.connect(lambda: self.set_shortcut("delete_row"))
+        shortcuts_menu.addAction(set_delete_row_action)
+
+        set_set_image_location_action = QAction("Set Set Image Location Shortcut", self)
+        set_set_image_location_action.triggered.connect(lambda: self.set_shortcut("set_image_location"))
+        shortcuts_menu.addAction(set_set_image_location_action)
 
         # Add the Info menu
         info_menu = menubar.addMenu("Info")
