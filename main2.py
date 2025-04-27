@@ -1170,21 +1170,24 @@ class SlideshowCreator(QMainWindow):
         info_dialog.exec_()
 
 
-
-
-
-
-
-
     """10_Menu Functions"""
     def create_menu(self):
-        # Function to create a menu bar
-        menubar = self.menuBar()
-
-        file_menu = menubar.addMenu("File")
-
-        import_menu = file_menu.addMenu("Import")
+        # Creates the Bar on to of the screen 
+        menubar = self.menuBar() # Create the menu bar
+        file_menu = menubar.addMenu("File") # Add a menu to the menu bar
+        import_menu = file_menu.addMenu("Import") # Add a submenu to the file menu
+        options_menu = menubar.addMenu("Options") # Add a menu to the menu bar
+        Img_menu = options_menu.addMenu("Images") # Add a submenu to the options menu
+        export_menu = file_menu.addMenu("Export") # Add a submenu to the file menu
+        Transitions_menu = options_menu.addMenu("Transitions") # Add a submenu to the options menu
+        Text_menu = options_menu.addMenu("Text") # Add a submenu to the options menu
+        settings_menu = menubar.addMenu("Settings") # Add a menu to the menu bar
+        shortcuts_menu = settings_menu.addMenu("Keyboard Shortcuts") # Add a submenu to the settings menu
+        info_menu = menubar.addMenu("Info") # Add a menu to the menu bar
         
+
+
+        #----Start Of File Menu----
         self.import_images = QAction("Images", self)
         self.import_images.triggered.connect(self.add_images)
         self.import_images.setShortcut(self.shortcuts.get("import_images", "Ctrl+Shift+I"))
@@ -1211,11 +1214,24 @@ class SlideshowCreator(QMainWindow):
         self.save_as_action.setShortcut(self.shortcuts.get("save_as", "Ctrl+Shift+S"))
         file_menu.addAction(self.save_as_action)
 
-        options_menu = menubar.addMenu("Options")
-        
-        Img_menu = options_menu.addMenu("Images")
+        clear_action = QAction("Clear Project", self)
+        clear_action.triggered.connect(self.clear_project)
+        file_menu.addAction(clear_action)
+
+        export_slideshow_action = QAction("Export Slideshow", self)
+        export_slideshow_action.triggered.connect(self.export_slideshow)
+        export_menu.addAction(export_slideshow_action)
+
+        export_premiere_action = QAction("Export To Premiere", self)
+        export_premiere_action.triggered.connect(self.export_premiere_slideshow)
+        export_menu.addAction(export_premiere_action)
 
 
+
+        #----Start Of Options Menu----
+
+
+        #----Start Of Images Menu----
         self.delete_row_action = QAction("Delete Image Row", self)
         self.delete_row_action.triggered.connect(self.delete_image)
         self.delete_row_action.setShortcut(self.shortcuts.get("delete_row", "Delete"))
@@ -1231,23 +1247,6 @@ class SlideshowCreator(QMainWindow):
         self.move_image_down_action.setShortcut(self.shortcuts.get("move_image_down", "Ctrl+Down"))
         Img_menu.addAction(self.move_image_down_action)
 
-
-        clear_action = QAction("Clear Project", self)
-        clear_action.triggered.connect(self.clear_project)
-        file_menu.addAction(clear_action)
-
-        export_menu = file_menu.addMenu("Export")
-
-        export_slideshow_action = QAction("Export Slideshow", self)
-        export_slideshow_action.triggered.connect(self.export_slideshow)
-        export_menu.addAction(export_slideshow_action)
-
-        export_premiere_action = QAction("Export To Premiere", self)
-        export_premiere_action.triggered.connect(self.export_premiere_slideshow)
-        export_menu.addAction(export_premiere_action)
-
-        
-        
         set_all_images_duration_action = QAction("Set All Images Duration", self)
         set_all_images_duration_action.triggered.connect(self.set_all_images_duration)
         Img_menu.addAction(set_all_images_duration_action)
@@ -1265,11 +1264,7 @@ class SlideshowCreator(QMainWindow):
         self.set_image_location_action.setShortcut(self.shortcuts.get("set_image_location", "Ctrl+Q"))
         Img_menu.addAction(self.set_image_location_action)
 
-        
-
-        Transitions_menu = options_menu.addMenu("Transitions")
-        
-
+        # ----Start Of Transitions Menu----
 
         set_all_images_transition_type_action = QAction("Set All Images Transition Type", self)
         set_all_images_transition_type_action.triggered.connect(self.set_all_images_transition)
@@ -1279,21 +1274,16 @@ class SlideshowCreator(QMainWindow):
         set_random_transition_for_each_image_action.triggered.connect(self.set_random_transition_for_each_image)
         Transitions_menu.addAction(set_random_transition_for_each_image_action)
 
-        Text_menu = options_menu.addMenu("Text")
+        # ----Start Of Text Menu----
 
-        # Add the new "Easy Text Writing" option
         self.easy_text_writing_action = QAction("Easy Text Writing", self)
         self.easy_text_writing_action.triggered.connect(self.open_easy_text_writing)
         self.easy_text_writing_action.setShortcut(self.shortcuts.get("easy_text", "Ctrl+T"))
         Text_menu.addAction(self.easy_text_writing_action)
 
-        # Add the Settings menu
-        settings_menu = menubar.addMenu("Settings")
-
-        # Add a submenu for keyboard shortcuts
-        shortcuts_menu = settings_menu.addMenu("Keyboard Shortcuts")
-
-        # Add actions for setting shortcuts
+        
+        # ----Start Of Settings Menu----
+        
         set_save_shortcut_action = QAction("Set Save Shortcut", self)
         set_save_shortcut_action.triggered.connect(lambda: self.set_shortcut("save"))
         shortcuts_menu.addAction(set_save_shortcut_action)
@@ -1314,7 +1304,6 @@ class SlideshowCreator(QMainWindow):
         set_show_info_shortcut_action.triggered.connect(lambda: self.set_shortcut("info"))
         shortcuts_menu.addAction(set_show_info_shortcut_action)
 
-
         set_delete_row_action = QAction("Set Delete Shortcut", self)
         set_delete_row_action.triggered.connect(lambda: self.set_shortcut("delete_row"))
         shortcuts_menu.addAction(set_delete_row_action)
@@ -1330,11 +1319,6 @@ class SlideshowCreator(QMainWindow):
         set_move_image_down_action = QAction("Set Move Image Down Shortcut", self)
         set_move_image_down_action.triggered.connect(lambda: self.set_shortcut("move_image_down"))
         shortcuts_menu.addAction(set_move_image_down_action)
-
-
-
-        # Add the Info menu
-        info_menu = menubar.addMenu("Info")
 
         self.show_info_action = QAction("Show Info", self)
         self.show_info_action.triggered.connect(self.show_info)
