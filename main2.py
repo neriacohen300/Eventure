@@ -76,7 +76,9 @@ class SlideshowCreator(QMainWindow):
         "import_images": "Ctrl+Shift+I",
         "import_audio": "Ctrl+Shift+A",
         "set_image_location": "Ctrl+Q",
-        "delete_row": "Delete"
+        "delete_row": "Delete",
+        "move_image_up": "Ctrl+Up",
+        "move_image_down": "Ctrl+Down"
         }
         self.load_shortcuts()  # Load shortcuts from file
 
@@ -1138,7 +1140,9 @@ class SlideshowCreator(QMainWindow):
         self.import_images.setShortcut(self.shortcuts.get("import_images", "Ctrl+Shift+I"))
         self.import_audio.setShortcut(self.shortcuts.get("import_audio", "Ctrl+Shift+A"))
         self.set_image_location_action.setShortcut(self.shortcuts.get("set_image_location", "Ctrl+Q"))
-        self.set_image_location_action.setShortcut(self.shortcuts.get("set_image_location", "Ctrl+Q"))
+        self.delete_row_action.setShortcut(self.shortcuts.get("delete_row", "Delete"))
+        self.move_image_up_action.setShortcut(self.shortcuts.get("move_image_up", "Ctrl+Up"))
+        self.move_image_down_action.setShortcut(self.shortcuts.get("move_image_down", "Ctrl+Down"))
 
     def set_shortcut(self, action):
         # Create an input dialog instance
@@ -1215,7 +1219,18 @@ class SlideshowCreator(QMainWindow):
         self.delete_row_action = QAction("Delete Image Row", self)
         self.delete_row_action.triggered.connect(self.delete_image)
         self.delete_row_action.setShortcut(self.shortcuts.get("delete_row", "Delete"))
-        Img_menu.addAction(self.delete_row_action) #to change
+        Img_menu.addAction(self.delete_row_action) 
+
+        self.move_image_up_action = QAction("Move Image Up", self)
+        self.move_image_up_action.triggered.connect(self.move_image_up)
+        self.move_image_up_action.setShortcut(self.shortcuts.get("move_image_up", "Ctrl+Up"))
+        Img_menu.addAction(self.move_image_up_action) 
+
+        self.move_image_down_action = QAction("Move Image Down", self)
+        self.move_image_down_action.triggered.connect(self.move_image_down)
+        self.move_image_down_action.setShortcut(self.shortcuts.get("move_image_down", "Ctrl+Down"))
+        Img_menu.addAction(self.move_image_down_action)
+
 
         clear_action = QAction("Clear Project", self)
         clear_action.triggered.connect(self.clear_project)
@@ -1307,6 +1322,16 @@ class SlideshowCreator(QMainWindow):
         set_set_image_location_action = QAction("Set Set Image Location Shortcut", self)
         set_set_image_location_action.triggered.connect(lambda: self.set_shortcut("set_image_location"))
         shortcuts_menu.addAction(set_set_image_location_action)
+
+        set_move_image_up_action = QAction("Set Move Image Up Shortcut", self)
+        set_move_image_up_action.triggered.connect(lambda: self.set_shortcut("move_image_up"))
+        shortcuts_menu.addAction(set_move_image_up_action)
+
+        set_move_image_down_action = QAction("Set Move Image Down Shortcut", self)
+        set_move_image_down_action.triggered.connect(lambda: self.set_shortcut("move_image_down"))
+        shortcuts_menu.addAction(set_move_image_down_action)
+
+
 
         # Add the Info menu
         info_menu = menubar.addMenu("Info")
