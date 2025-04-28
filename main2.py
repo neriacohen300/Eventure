@@ -2,6 +2,7 @@
 
 import configparser
 import copy
+from datetime import datetime
 import json
 import random
 import shutil
@@ -103,8 +104,8 @@ class SlideshowCreator(QMainWindow):
         # Initialize the image_table attribute
         self.image_table = QTableWidget()
         self.image_table.setItemDelegate(CustomDelegate())  # Add this line
-        self.image_table.setColumnCount(8)  # Increase the column count
-        self.image_table.setHorizontalHeaderLabels([".", "Image", "Duration (sec)", "Transition", "Length (sec)", "Text", "Rotation (deg)", "Second Image"])
+        self.image_table.setColumnCount(9)  # Increase the column count
+        self.image_table.setHorizontalHeaderLabels([".", "Image", "Duration (sec)", "Transition", "Length (sec)", "Text", "Rotation (deg)", "Second Image", "Date"])
         self.image_table.setFont(QFont(self.deafult_font, 10, QFont.Bold))
         self.image_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.image_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
@@ -114,6 +115,7 @@ class SlideshowCreator(QMainWindow):
         self.image_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents)
         self.image_table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeToContents)
         self.image_table.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeToContents)
+        self.image_table.horizontalHeader().setSectionResizeMode(8, QHeaderView.ResizeToContents)
 
 
         self.image_table.itemChanged.connect(self.on_edit_on_table)
@@ -252,9 +254,17 @@ class SlideshowCreator(QMainWindow):
     def add_images(self):
         files, _ = QFileDialog.getOpenFileNames(self, "Select Images", "", "Images (*.png *.jpg *.jpeg *.bmp *.gif)")
         if files:
-            new_images = [{'path': file, 'duration': 5, 'transition': 'fade', 'transition_duration': self.default_transition_duration, 'text': "", 'rotation': 0, "is_second_image": False} for file in files]
+            new_images = [{'path': file, 'duration': 5, 'transition': 'fade', 'transition_duration': self.default_transition_duration, 'text': "", 'rotation': 0, "is_second_image": False, "date": datetime.fromtimestamp(os.path.getmtime(file)).strftime('%Y-%m-%d %H:%M:%S')} for file in files]
             self.images.extend(new_images)
             self.update_image_table()  # Single update after all images are added
+
+
+
+    def auto_sort_images_by_date(self, reverseState=False):
+        self.images.sort(key=lambda x: x['date'], reverse=reverseState)
+        self.update_image_table()
+
+
 
     def set_second_image(self, row, state):
         if row == 0:
@@ -289,12 +299,13 @@ class SlideshowCreator(QMainWindow):
             transition_length_item.setFlags(transition_length_item.flags() & ~Qt.ItemIsEditable)
             rotation_item = QTableWidgetItem(str(img.get('rotation', 0)))
 
-
-
             # Add a checkbox for "Second Image"
             second_image_checkbox = QCheckBox()
             second_image_checkbox.setChecked(img.get('is_second_image', False))
             second_image_checkbox.stateChanged.connect(lambda state, row=row: self.set_second_image(row, state))
+
+            date_item = QTableWidgetItem(str(img.get('date', "")))
+            date_item.setFlags(date_item.flags() & ~Qt.ItemIsEditable)
 
             self.image_table.setItem(row, 1, filename_item)
             self.image_table.setItem(row, 2, duration_item)
@@ -303,6 +314,8 @@ class SlideshowCreator(QMainWindow):
             self.image_table.setItem(row, 5, text_item)
             self.image_table.setItem(row, 6, rotation_item)
             self.image_table.setCellWidget(row, 7, second_image_checkbox)
+            self.image_table.setItem(row, 8, date_item)
+            
 
             # Add move up, move down, and delete buttons
             move_up_btn = QPushButton("↑")
@@ -377,6 +390,9 @@ class SlideshowCreator(QMainWindow):
             second_image_checkbox.setChecked(img.get('is_second_image', False))
             second_image_checkbox.stateChanged.connect(lambda state, row=row: self.set_second_image(row, state))
 
+            date_item = QTableWidgetItem(str(img.get('date', "")))
+            date_item.setFlags(date_item.flags() & ~Qt.ItemIsEditable)
+
             """if img.get('is_second_image', False):
                 color = QColor(100, 100, 150)  # Darker blue background
                 filename_item.setBackground(color)
@@ -391,6 +407,7 @@ class SlideshowCreator(QMainWindow):
             self.image_table.setItem(row, 5, text_item)
             self.image_table.setItem(row, 6, rotation_item)
             self.image_table.setCellWidget(row, 7, second_image_checkbox)
+            self.image_table.setItem(row, 8, date_item)
 
 
         
@@ -840,7 +857,7 @@ class SlideshowCreator(QMainWindow):
                     text = img.get('text', '')
                     if '\n' in text:
                         text = text.replace('\n', '\\n')
-                    f.write(f"{img['path']},{img.get('duration', 5)},{img.get('transition', 'fade')},{img.get('transition_duration', 1)},{text},{img.get('rotation', '')},{img.get('is_second_image', False)}\n") 
+                    f.write(f"{img['path']},{img.get('duration', 5)},{img.get('transition', 'fade')},{img.get('transition_duration', 1)},{text},{img.get('rotation', '')},{img.get('is_second_image', False)},{img.get('date', "")}\n") 
                 self.loaded_project = file_name
 
     def load_project(self):
@@ -861,7 +878,7 @@ class SlideshowCreator(QMainWindow):
                 # Load images
                 self.images = []
                 for line in lines[count + 1:]:  # Start after the audio file lines
-                    path, duration, transition, transition_duration, text, rotation, is_second_image = line.strip().split(',')
+                    path, duration, transition, transition_duration, text, rotation, is_second_image, date = line.strip().split(',')
                     if transition_duration != self.default_transition_duration:
                         transition_duration = self.default_transition_duration
                     self.images.append({
@@ -871,7 +888,8 @@ class SlideshowCreator(QMainWindow):
                         'transition_duration': int(transition_duration),
                         'text': text.replace('\\n', '\n'),
                         'rotation': int(rotation),
-                        'is_second_image': is_second_image.strip().lower() == 'true'  # Convert to boolea
+                        'is_second_image': is_second_image.strip().lower() == 'true',  # Convert to boolea
+                        'date': date
                     })
 
                 print(self.images)
@@ -1178,6 +1196,7 @@ class SlideshowCreator(QMainWindow):
         import_menu = file_menu.addMenu("Import") # Add a submenu to the file menu
         options_menu = menubar.addMenu("Options") # Add a menu to the menu bar
         Img_menu = options_menu.addMenu("Images") # Add a submenu to the options menu
+        Auto_sort_menu = Img_menu.addMenu("Auto Sort Images By date") # Add a submenu to the options menu
         export_menu = file_menu.addMenu("Export") # Add a submenu to the file menu
         Transitions_menu = options_menu.addMenu("Transitions") # Add a submenu to the options menu
         Text_menu = options_menu.addMenu("Text") # Add a submenu to the options menu
@@ -1263,6 +1282,14 @@ class SlideshowCreator(QMainWindow):
         self.set_image_location_action.triggered.connect(self.set_image_location)
         self.set_image_location_action.setShortcut(self.shortcuts.get("set_image_location", "Ctrl+Q"))
         Img_menu.addAction(self.set_image_location_action)
+
+        auto_sort_images_by_date_Newest_action = QAction("Newest First ", self)
+        auto_sort_images_by_date_Newest_action.triggered.connect(lambda: self.auto_sort_images_by_date(True))
+        Auto_sort_menu.addAction(auto_sort_images_by_date_Newest_action)
+
+        auto_sort_images_by_date_Oldest_action = QAction("Oldest First ", self)
+        auto_sort_images_by_date_Oldest_action.triggered.connect(lambda: self.auto_sort_images_by_date(False))
+        Auto_sort_menu.addAction(auto_sort_images_by_date_Oldest_action)
 
         # ----Start Of Transitions Menu----
 
