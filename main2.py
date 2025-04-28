@@ -1577,6 +1577,7 @@ class InfoDialog(QDialog):
         total_audio_duration_str = self.format_duration(total_audio_duration)
 
         # Create labels to display the information
+        self.layout.addWidget(QLabel(f"Total Images: {len(images)}"))
         self.layout.addWidget(QLabel(f"Total Images Duration (with second images): {total_images_duration_with_second_str}"))
         self.layout.addWidget(QLabel(f"Total Images Duration (without second images): {total_images_duration_without_second_str}"))
         self.layout.addWidget(QLabel(f"Total Audio Duration: {total_audio_duration_str}"))
