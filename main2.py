@@ -4,13 +4,14 @@ import configparser
 import copy
 from datetime import datetime
 import json
+from pathlib import Path
 import random
 import shutil
 import sys
 import os
 import subprocess
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QInputDialog, QAction,
-                             QListWidget,QProgressBar,QComboBox,QMessageBox,QDialog, QTextEdit, QCheckBox, QStyledItemDelegate,QPushButton, QLabel, QFileDialog, QSlider, QStyle, QTableWidgetItem, QSpinBox, QHeaderView, QTableWidget)
+                             QListWidget,QProgressBar,QComboBox,QMessageBox,QDialog, QTextEdit, QListWidgetItem, QCheckBox, QStyledItemDelegate,QPushButton, QLabel, QFileDialog, QSlider, QStyle, QTableWidgetItem, QSpinBox, QHeaderView, QTableWidget)
 from PyQt5.QtCore import Qt, QUrl, QSize, QProcess, QTimer, QThread, pyqtSignal, QEvent
 from PyQt5.QtGui import QIcon, QFont, QPixmap,QTextCursor, QCursor, QTransform, QColor, QBrush
 from PIL import Image, ImageFilter
@@ -1187,6 +1188,10 @@ class SlideshowCreator(QMainWindow):
         info_dialog = InfoDialog(self.images, self.audio_files, self)
         info_dialog.exec_()
 
+    def open_help_dialog(self):
+        dialog = HelpDialog(self)
+        dialog.exec_()
+
 
     """10_Menu Functions"""
     def create_menu(self):
@@ -1203,6 +1208,7 @@ class SlideshowCreator(QMainWindow):
         settings_menu = menubar.addMenu("Settings") # Add a menu to the menu bar
         shortcuts_menu = settings_menu.addMenu("Keyboard Shortcuts") # Add a submenu to the settings menu
         info_menu = menubar.addMenu("Info") # Add a menu to the menu bar
+        help_menu = menubar.addMenu("Help") # Add a menu to the menu bar
         
 
 
@@ -1353,7 +1359,62 @@ class SlideshowCreator(QMainWindow):
         info_menu.addAction(self.show_info_action)
 
 
+        # ----Start Of Help Menu----
 
+        open_help_dialog_action = QAction("Browse Help Topics", self)
+        open_help_dialog_action.triggered.connect(self.open_help_dialog)
+        help_menu.addAction(open_help_dialog_action)
+    
+
+
+
+
+
+
+
+class HelpDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Help Topics")
+        self.resize(600, 400)
+
+        self.layout = QVBoxLayout(self)
+
+        self.topic_list = QListWidget()
+        self.info_display = QTextEdit()
+        self.info_display.setReadOnly(True)
+
+        self.layout.addWidget(self.topic_list)
+        self.layout.addWidget(self.info_display)
+
+        self.help_data = self.load_help_info()
+
+        for topic in self.help_data:
+            item = QListWidgetItem(topic)
+            self.topic_list.addItem(item)
+
+        self.topic_list.itemClicked.connect(self.display_info)
+
+    def load_help_info(self):
+        help_data = {}
+        try:
+            with open('Help/Help_Info.txt', 'r', encoding='utf-8') as f:
+                content = f.read()
+                blocks = content.split('topic:')
+                for block in blocks:
+                    if block.strip():
+                        lines = block.strip().split('Info:')
+                        topic = lines[0].strip()
+                        info = lines[1].strip() if len(lines) > 1 else "No additional information."
+                        help_data[topic] = info
+        except Exception as e:
+            help_data = {"Error loading help file": str(e)}
+        return help_data
+
+    def display_info(self, item):
+        topic = item.text()
+        info = self.help_data.get(topic, "No information available.")
+        self.info_display.setText(f"{topic}\n\n{info}")
 
 
 
@@ -1394,6 +1455,10 @@ class ImageProcessingWorker(QThread):
 
         # Emit finished signal
         self.finished.emit()
+
+
+
+
 
 
 class ImageProcessingPremiereWorker(QThread):
