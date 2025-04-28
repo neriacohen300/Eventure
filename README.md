@@ -16,3 +16,6 @@
 
 ## What do you need to know?? 
 * to check for second image is just for premiere export not regular one
+
+# If I don't know how to use the app?
+* You don't have anything to worry about! There is a helpful `Help` tab in the app menu bar and it has a explanation of every thing you'll need to know!
