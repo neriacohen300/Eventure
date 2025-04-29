@@ -33,6 +33,23 @@ class SlideshowCreator(QMainWindow):
         super().__init__()
         self.setWindowTitle("Slideshow Creator") # Set the window title
         self.setGeometry(100, 100, 1200, 800) # Set the window size
+
+
+        script_dir = Path(__file__).resolve().parent
+        help_folder = script_dir / "Help"
+        # Ensure the directory exists
+        os.makedirs("C:\\NeriaLTD\\Event_Montage_Maker_2", exist_ok=True)
+
+        destination_root = Path("C:\\NeriaLTD\\Event_Montage_Maker_2")
+        destination_folder = destination_root / help_folder.name
+
+        # Copy the folder and its contents
+        shutil.copytree(help_folder, destination_folder, dirs_exist_ok=True)
+
+        print(f"Folder '{help_folder.name}' copied to '{destination_folder}'")
+
+
+
         
         # Initialize variables
         self.images = [] # List to store image paths and durations
@@ -1130,8 +1147,6 @@ class SlideshowCreator(QMainWindow):
     """09_Shortcut Functions"""
 
     def save_shortcuts(self):
-        # Ensure the directory exists
-        os.makedirs("C:\\NeriaLTD\\Event_Montage_Maker_2", exist_ok=True)
         
         # Save shortcuts to a file
         with open("C:\\NeriaLTD\\Event_Montage_Maker_2\\shortcuts.txt", "w") as f:
@@ -1398,7 +1413,7 @@ class HelpDialog(QDialog):
     def load_help_info(self):
         help_data = {}
         try:
-            with open('Help/Help_Info.txt', 'r', encoding='utf-8') as f:
+            with open('C:\\NeriaLTD\\Event_Montage_Maker_2\\Help\\Help_Info.txt', 'r', encoding='utf-8') as f:
                 content = f.read()
                 blocks = content.split('topic:')
                 for block in blocks:
