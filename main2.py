@@ -31,8 +31,6 @@ class SlideshowCreator(QMainWindow):
     """window creation"""
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Slideshow Creator") # Set the window title
-        self.setGeometry(100, 100, 1200, 800) # Set the window size
 
 
         script_dir = Path(__file__).resolve().parent
@@ -48,13 +46,30 @@ class SlideshowCreator(QMainWindow):
 
         print(f"Folder '{help_folder.name}' copied to '{destination_folder}'")
 
+        language_folder = script_dir / "Languages"
+
+        destination_root = Path("C:\\NeriaLTD\\Event_Montage_Maker_2")
+        destination_folder = destination_root / language_folder.name
+
+        # Copy the folder and its contents
+        shutil.copytree(language_folder, destination_folder, dirs_exist_ok=True)
+
+        print(f"Folder '{language_folder.name}' copied to '{destination_folder}'")
+
+        self.language = "en"  # Default language
+        self.translations = {}
+        self.load_translations()
+
+
+        self.setWindowTitle(self.tr("window_title"))
+        self.setGeometry(100, 100, 1200, 800) # Set the window size
 
 
         
         # Initialize variables
         self.images = [] # List to store image paths and durations
         self.audio_file = "" # Path to the audio file
-        self.output_file = "output.mp4" # Default output file name
+        self.output_file = self.tr("output_file_name") # Default output file name
         self.button_font = "Segoe UI"
         self.deafult_font = "Segoe UI"
         self.text_font = "Segoe UI"
@@ -123,7 +138,7 @@ class SlideshowCreator(QMainWindow):
         self.image_table = QTableWidget()
         self.image_table.setItemDelegate(CustomDelegate())  # Add this line
         self.image_table.setColumnCount(9)  # Increase the column count
-        self.image_table.setHorizontalHeaderLabels([".", "Image", "Duration (sec)", "Transition", "Length (sec)", "Text", "Rotation (deg)", "Second Image", "Date"])
+        self.image_table.setHorizontalHeaderLabels([self.tr("table_header_actions"), self.tr("table_header_image"), self.tr("table_header_duration"), self.tr("table_header_transition"), self.tr("table_header_transition_length"), self.tr("table_header_text"), self.tr("table_header_rotation"), self.tr("table_header_second_image"), self.tr("table_header_date")])
         self.image_table.setFont(QFont(self.deafult_font, 10, QFont.Bold))
         self.image_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.image_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
@@ -138,15 +153,15 @@ class SlideshowCreator(QMainWindow):
 
         self.image_table.itemChanged.connect(self.on_edit_on_table)
 
-        slides_label = QLabel("Slides")
-        slides_label.setFont(QFont(self.text_font, self.text_font_size, QFont.Bold))
-        left_panel.addWidget(slides_label)
+        self.slides_label = QLabel("Slides")
+        self.slides_label.setFont(QFont(self.text_font, self.text_font_size, QFont.Bold))
+        left_panel.addWidget(self.slides_label)
         left_panel.addWidget(self.image_table)
 
 
         
         """Right Panel - Audio Files + Preview"""
-        self.preview_label = QLabel("Preview")
+        self.preview_label = QLabel(self.tr("label_preview"))
         self.preview_label.setFont(QFont(self.text_font, 16, QFont.Bold))
         self.preview_label.setAlignment(Qt.AlignCenter)
         self.preview_label.setFixedHeight(300)
@@ -182,15 +197,15 @@ class SlideshowCreator(QMainWindow):
 
         self.audio_table = QTableWidget()
         self.audio_table.setColumnCount(2)
-        self.audio_table.setHorizontalHeaderLabels(["Actions", "Audio File"])
+        self.audio_table.setHorizontalHeaderLabels([self.tr("table_header_actions"), self.tr("table_header_audio_file")])
         self.audio_table.setFont(QFont(self.deafult_font, 10, QFont.Bold))
         self.audio_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.audio_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
 
 
-        audio_files_label = QLabel("Audio Files:")
-        audio_files_label.setFont(QFont(self.text_font, self.text_font_size, QFont.Bold))
-        right_panel.addWidget(audio_files_label)
+        self.audio_files_label = QLabel(self.tr("label_audio_files"))
+        self.audio_files_label.setFont(QFont(self.text_font, self.text_font_size, QFont.Bold))
+        right_panel.addWidget(self.audio_files_label)
         right_panel.addWidget(self.audio_table)
         right_panel.addWidget(self.progress_bar)
         right_panel.addWidget(self.image_progress_bar)
@@ -218,7 +233,7 @@ class SlideshowCreator(QMainWindow):
             try:
                 new_duration = int(item.text())
                 if new_duration < 2 or new_duration > 600:
-                    raise ValueError("Duration out of range (2-600).")
+                    raise ValueError(self.tr("duration_out_of_range_error"))
                 self.images[row]['duration'] = new_duration  # Update the image data
                 if self.images[row]['transition_duration'] > self.images[row]['duration'] -1:
                     self.images[row]['transition_duration'] = self.images[row]['duration'] -1
@@ -239,7 +254,7 @@ class SlideshowCreator(QMainWindow):
             try:
                 new_rotation = int(item.text())
                 if new_rotation < 0 or new_rotation > 359:
-                    raise ValueError("Duration out of range (0-359).")
+                    raise ValueError(self.tr("rotation_out_of_range_error"))
                 self.images[row]['rotation'] = new_rotation  # Update the image data
                 self.update_preview_with_row(row)
                 #self.update_image_table()
@@ -255,8 +270,8 @@ class SlideshowCreator(QMainWindow):
 
         # Create an input dialog instance
         dialog = QInputDialog(self)
-        dialog.setWindowTitle("Set Duration")
-        dialog.setLabelText("Enter duration in seconds:")
+        dialog.setWindowTitle(self.tr("dialog_set_duration"))
+        dialog.setLabelText(self.tr("dialog_enter_duration"))
         dialog.setIntValue(current_duration)  # Set default duration
         dialog.setIntRange(2, 600)  # Set valid range
 
@@ -286,7 +301,7 @@ class SlideshowCreator(QMainWindow):
 
     def set_second_image(self, row, state):
         if row == 0:
-            QMessageBox.critical(self, "Error", "Cannot set second image for the first row", QMessageBox.Ok)
+            QMessageBox.critical(self, self.tr("error"), self.tr("second_image_error"), QMessageBox.Ok)
             self.update_image_row(row)
             return
         else:
@@ -473,8 +488,8 @@ class SlideshowCreator(QMainWindow):
             dialog = QInputDialog(self)
 
             # Configure dialog properties
-            dialog.setWindowTitle("Set Image Location")
-            dialog.setLabelText("Enter new position (1-based index):")
+            dialog.setWindowTitle(self.tr("dialog_set_image_location"))
+            dialog.setLabelText(self.tr("dialog_enter_position"))
             dialog.setInputMode(QInputDialog.IntInput)
             dialog.setIntRange(1, len(self.images))  # Set valid range
             dialog.setIntValue(current_row + 1)  # Default value
@@ -592,8 +607,8 @@ class SlideshowCreator(QMainWindow):
         if total_image_duration > total_audio_duration:
             msg = QMessageBox()
             msg.setIcon(QMessageBox.Information)
-            msg.setWindowTitle("Audio and Video doesn't match")
-            msg.setText("The total image duration is bigger than the audio duration. Would you like to change the audio duration to match the image duration?")
+            msg.setWindowTitle(self.tr("audio_and_video_error"))
+            msg.setText(self.tr("prompt_audio_mismatch"))
             msg.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
             reply = msg.exec_()
             if reply == QMessageBox.Cancel:
@@ -605,8 +620,8 @@ class SlideshowCreator(QMainWindow):
                 if new_duration_to_each_image < 2 or new_duration_to_each_image > 600:
                     msg = QMessageBox()
                     msg.setIcon(QMessageBox.Information)
-                    msg.setWindowTitle("Audio and Video doesn't match")
-                    msg.setText("Sorry! \n Couldn't match the audio duration to the image duration because of min and max issues. Please add another song or choose a longer one!")
+                    msg.setWindowTitle(self.tr("audio_and_video_error"))
+                    msg.setText(self.tr("prompt_cant_match"))
                     msg.setStandardButtons(QMessageBox.Ok)
                     msg.exec_()
                     return
@@ -635,7 +650,7 @@ class SlideshowCreator(QMainWindow):
         print("Images:", self.images)  # Debugging output
         print("Audio Files:", self.audio_files)  # Debugging output
         if not self.images or not self.audio_files:
-            QMessageBox.critical(self, "Error", "Please add images and audio before exporting.", QMessageBox.Ok)
+            QMessageBox.critical(self, self.tr("error"), self.tr("error_no_images_audio"), QMessageBox.Ok)
             return
         
         options = QFileDialog.Options()
@@ -643,7 +658,7 @@ class SlideshowCreator(QMainWindow):
         if file_path:
             self.output_file = file_path
         else:
-            QMessageBox.critical(self, "Error", "Please select a location for the exported video.", QMessageBox.Ok)
+            QMessageBox.critical(self, self.tr("error"), self.tr("error_select_location"), QMessageBox.Ok)
             return
         
         # Start image processing in a separate thread
@@ -666,8 +681,8 @@ class SlideshowCreator(QMainWindow):
         self.progress_bar.setValue(100)  # Mark as complete
         msg = QMessageBox()
         msg.setIcon(QMessageBox.Information)
-        msg.setWindowTitle("Export Complete")
-        msg.setText("Export finished successfully!")
+        msg.setWindowTitle(self.tr("success_export_complete_window"))
+        msg.setText(self.tr("success_export_complete"))
         msg.setStandardButtons(QMessageBox.Ok)
         msg.exec_()
 
@@ -997,7 +1012,7 @@ class SlideshowCreator(QMainWindow):
         if file_path:
             self.premiere_project_folder = file_path
         else:
-            QMessageBox.critical(self, "Error", "Please select a location for the exported Premiere project.", QMessageBox.Ok)
+            QMessageBox.critical(self, self.tr("error"), self.tr("error_select_location_premiere"), QMessageBox.Ok)
             return
 
         self.image_premiere_progress_bar.setVisible(True)
@@ -1127,7 +1142,7 @@ class SlideshowCreator(QMainWindow):
 
     def open_easy_text_writing(self):
         if not self.images:
-            QMessageBox.warning(self, "No Images", "Please add images before using Easy Text Writing.")
+            QMessageBox.warning(self, self.tr("error_no_images_title"), self.tr("error_no_images"))
             return
         
         selected_row = self.image_table.currentRow()  # Replace 'self.image_table' with the name of your table widget
@@ -1181,8 +1196,8 @@ class SlideshowCreator(QMainWindow):
     def set_shortcut(self, action):
         # Create an input dialog instance
         dialog = QInputDialog(self)
-        dialog.setWindowTitle(f"Set {action.capitalize()} Shortcut")
-        dialog.setLabelText(f"Enter the new shortcut for {action}:")
+        dialog.setWindowTitle(self.tr("shortcut_set") + " " + {action.capitalize()} + " " + self.tr("shortcut_shortcut"))
+        dialog.setLabelText(f"{self.tr('dialog_enter_shortcut')} {action}:")
         dialog.setTextValue(self.shortcuts.get(action, ""))
 
 
@@ -1207,64 +1222,186 @@ class SlideshowCreator(QMainWindow):
         dialog = HelpDialog(self)
         dialog.exec_()
 
+    
 
-    """10_Menu Functions"""
+
+    "10_Translations Functions"
+    def load_translations(self):
+        try:
+            lang_file = f"C:\\NeriaLTD\\Event_Montage_Maker_2\\Languages\\lang_{self.language}.json"
+            with open(lang_file, 'r', encoding='utf-8') as f:
+                self.translations = json.load(f)
+        except FileNotFoundError:
+            # Fallback to English if language file not found
+            self.translations = {
+                "window_title": "Slideshow Creator",
+                # Add other default translations here...
+            }
+    
+    def tr(self, key, **kwargs):
+        """Translate a key with optional formatting"""
+        text = self.translations.get(key, key)
+        if kwargs:
+            try:
+                text = text.format(**kwargs)
+            except KeyError:
+                pass
+        return text
+    
+    def set_language(self, language_code):
+        """Change the application language"""
+        self.language = language_code
+        self.load_translations()
+        
+        # Set layout direction for RTL languages
+        if language_code == "he":
+            QApplication.setLayoutDirection(Qt.RightToLeft)
+        else:
+            QApplication.setLayoutDirection(Qt.LeftToRight)
+        
+        self.retranslate_ui()
+    
+    def retranslate_ui(self):
+        """Update all UI elements with new translations"""
+        self.setWindowTitle(self.tr("window_title"))
+        
+        # Update menu bar
+        self.file_menu.setTitle(self.tr("menu_file"))
+        self.import_menu.setTitle(self.tr("menu_import"))
+        self.options_menu.setTitle(self.tr("menu_options"))
+        self.Img_menu.setTitle(self.tr("menu_images"))
+        self.Auto_sort_menu.setTitle(self.tr("menu_auto_sort"))
+        self.export_menu.setTitle(self.tr("menu_export"))
+        self.Transitions_menu.setTitle(self.tr("menu_transitions"))
+        self.Text_menu.setTitle(self.tr("menu_text"))
+        self.settings_menu.setTitle(self.tr("menu_settings"))
+        self.shortcuts_menu.setTitle(self.tr("menu_shortcuts"))
+        self.language_menu.setTitle(self.tr("menu_language"))
+        self.info_menu.setTitle(self.tr("menu_info"))
+        self.help_menu.setTitle(self.tr("menu_help"))
+        
+        # Update actions
+        self.import_images.setText(self.tr("action_import_images"))
+        self.import_audio.setText(self.tr("action_import_audio"))
+        self.load_action.setText(self.tr("action_load_project"))
+        self.save_action.setText(self.tr("action_save_project"))
+        self.save_as_action.setText(self.tr("action_save_project_as"))
+        self.clear_action.setText(self.tr("action_clear_project"))
+        self.export_slideshow_action.setText(self.tr("action_export_slideshow"))
+        self.export_premiere_action.setText(self.tr("action_export_premiere"))
+        self.delete_row_action.setText(self.tr("action_delete_row"))
+        self.move_image_up_action.setText(self.tr("action_move_image_up"))
+        self.move_image_down_action.setText(self.tr("action_move_image_down"))
+        self.set_all_images_duration_action.setText(self.tr("action_set_all_image_duration"))
+        self.set_random_image_order_action.setText(self.tr("action_set_random_images_order"))
+        self.auto_set_images_action.setText(self.tr("action_auto_calc_image_duration"))
+        self.set_image_location_action.setText(self.tr("dialog_set_image_location"))
+        self.auto_sort_images_by_date_Newest_action.setText(self.tr("action_auto_sort_newest_first"))
+        self.auto_sort_images_by_date_Oldest_action.setText(self.tr("action_auto_sort_oldest_first"))
+        self.set_all_images_transition_type_action.setText(self.tr("action_set_all_transition_type"))
+        self.set_random_transition_for_each_image_action.setText(self.tr("action_set_random_transition_per_image"))
+        self.easy_text_writing_action.setText(self.tr("action_easy_text_writing"))
+        self.set_save_shortcut_action.setText(self.tr("action_set_save_shortcut"))
+        self.set_save_as_shortcut_action.setText(self.tr("action_set_save_as_shortcut"))
+        self.set_load_shortcut_action.setText(self.tr("action_set_load_shortcut"))
+        self.set_easy_text_shortcut_action.setText(self.tr("action_set_easy_text_shortcut"))
+        self.set_show_info_shortcut_action.setText(self.tr("action_set_show_info_shortcut"))
+        self.set_delete_row_action.setText(self.tr("action_set_delete_shortcut"))
+        self.set_set_image_location_action.setText(self.tr("action_set_image_location_shortcut"))
+        self.set_move_image_up_action.setText(self.tr("action_set_move_image_up_shortcut"))
+        self.set_move_image_down_action.setText(self.tr("action_set_move_image_down_shortcut"))
+        self.show_info_action.setText(self.tr("action_show_info"))
+        self.set_language_english_action.setText(self.tr("action_set_language_english"))
+        self.set_language_hebrew_action.setText(self.tr("action_set_language_hebrew"))
+        self.open_help_dialog_action.setText(self.tr("action_browse_help_topics"))
+
+        
+        # Update labels
+        self.slides_label.setText(self.tr("label_slides"))
+        self.audio_files_label.setText(self.tr("label_audio_files"))
+        self.preview_label.setText(self.tr("label_preview"))
+        
+        # Update table headers
+        headers = [
+            self.tr("table_header_actions"),
+            self.tr("table_header_image"),
+            self.tr("table_header_duration"),
+            self.tr("table_header_transition"),
+            self.tr("table_header_transition_length"),
+            self.tr("table_header_text"),
+            self.tr("table_header_rotation"),
+            self.tr("table_header_second_image"),
+            self.tr("table_header_date")
+        ]
+        self.image_table.setHorizontalHeaderLabels(headers)
+        
+        audio_headers = [
+            self.tr("table_header_actions"),
+            self.tr("table_header_audio_file")
+        ]
+        self.audio_table.setHorizontalHeaderLabels(audio_headers)
+
+
+
+
+    """11_Menu Functions"""
     def create_menu(self):
         # Creates the Bar on to of the screen 
-        menubar = self.menuBar() # Create the menu bar
-        file_menu = menubar.addMenu("File") # Add a menu to the menu bar
-        import_menu = file_menu.addMenu("Import") # Add a submenu to the file menu
-        options_menu = menubar.addMenu("Options") # Add a menu to the menu bar
-        Img_menu = options_menu.addMenu("Images") # Add a submenu to the options menu
-        Auto_sort_menu = Img_menu.addMenu("Auto Sort Images By date") # Add a submenu to the options menu
-        export_menu = file_menu.addMenu("Export") # Add a submenu to the file menu
-        Transitions_menu = options_menu.addMenu("Transitions") # Add a submenu to the options menu
-        Text_menu = options_menu.addMenu("Text") # Add a submenu to the options menu
-        settings_menu = menubar.addMenu("Settings") # Add a menu to the menu bar
-        shortcuts_menu = settings_menu.addMenu("Keyboard Shortcuts") # Add a submenu to the settings menu
-        info_menu = menubar.addMenu("Info") # Add a menu to the menu bar
-        help_menu = menubar.addMenu("Help") # Add a menu to the menu bar
+        self.menubar = self.menuBar() # Create the menu bar
+        self.file_menu = self.menubar.addMenu(self.tr("menu_file")) # Add a menu to the menu bar
+        self.import_menu = self.file_menu.addMenu(self.tr("menu_import")) # Add a submenu to the file menu
+        self.options_menu = self.menubar.addMenu(self.tr("menu_options")) # Add a menu to the menu bar
+        self.Img_menu = self.options_menu.addMenu(self.tr("menu_images")) # Add a submenu to the options menu
+        self.Auto_sort_menu = self.Img_menu.addMenu(self.tr("menu_auto_sort")) # Add a submenu to the options menu
+        self.export_menu = self.file_menu.addMenu(self.tr("menu_export")) # Add a submenu to the file menu
+        self.Transitions_menu = self.options_menu.addMenu(self.tr("menu_transitions")) # Add a submenu to the options menu
+        self.Text_menu = self.options_menu.addMenu(self.tr("menu_text")) # Add a submenu to the options menu
+        self.settings_menu = self.menubar.addMenu(self.tr("menu_settings")) # Add a menu to the menu bar
+        self.shortcuts_menu = self.settings_menu.addMenu(self.tr("menu_shortcuts")) # Add a submenu to the settings menu
+        self.language_menu = self.settings_menu.addMenu(self.tr("menu_language")) # Add a submenu to the settings menu
+        self.info_menu = self.menubar.addMenu(self.tr("menu_info")) # Add a menu to the menu bar
+        self.help_menu = self.menubar.addMenu(self.tr("menu_help")) # Add a menu to the menu bar
         
 
 
         #----Start Of File Menu----
-        self.import_images = QAction("Images", self)
+        self.import_images = QAction(self.tr("action_import_images"), self)
         self.import_images.triggered.connect(self.add_images)
         self.import_images.setShortcut(self.shortcuts.get("import_images", "Ctrl+Shift+I"))
-        import_menu.addAction(self.import_images)
+        self.import_menu.addAction(self.import_images)
 
-        self.import_audio = QAction("Audio", self)
+        self.import_audio = QAction(self.tr("action_import_audio"), self)
         self.import_audio.triggered.connect(self.add_audio)
         self.import_audio.setShortcut(self.shortcuts.get("import_audio", "Ctrl+Shift+A"))
-        import_menu.addAction(self.import_audio)
+        self.import_menu.addAction(self.import_audio)
 
-        self.load_action = QAction("Load Project", self)
+        self.load_action = QAction(self.tr("action_load_project"), self)
         self.load_action.triggered.connect(self.load_project)
         self.load_action.setShortcut(self.shortcuts.get("load", "Ctrl+L"))
-        file_menu.addAction(self.load_action)
+        self.file_menu.addAction(self.load_action)
 
 
-        self.save_action = QAction("Save Project", self)
+        self.save_action = QAction(self.tr("action_save_project"), self)
         self.save_action.triggered.connect(self.save_project)
         self.save_action.setShortcut(self.shortcuts.get("save", "Ctrl+S"))
-        file_menu.addAction(self.save_action)
+        self.file_menu.addAction(self.save_action)
 
-        self.save_as_action = QAction("Save Project As", self)
+        self.save_as_action = QAction(self.tr("action_save_project_as"), self)
         self.save_as_action.triggered.connect(self.save_project_as)
         self.save_as_action.setShortcut(self.shortcuts.get("save_as", "Ctrl+Shift+S"))
-        file_menu.addAction(self.save_as_action)
+        self.file_menu.addAction(self.save_as_action)
 
-        clear_action = QAction("Clear Project", self)
-        clear_action.triggered.connect(self.clear_project)
-        file_menu.addAction(clear_action)
+        self.clear_action = QAction(self.tr("action_clear_project"), self)
+        self.clear_action.triggered.connect(self.clear_project)
+        self.file_menu.addAction(self.clear_action)
 
-        export_slideshow_action = QAction("Export Slideshow", self)
-        export_slideshow_action.triggered.connect(self.export_slideshow)
-        export_menu.addAction(export_slideshow_action)
+        self.export_slideshow_action = QAction(self.tr("action_export_slideshow"), self)
+        self.export_slideshow_action.triggered.connect(self.export_slideshow)
+        self.export_menu.addAction(self.export_slideshow_action)
 
-        export_premiere_action = QAction("Export To Premiere", self)
-        export_premiere_action.triggered.connect(self.export_premiere_slideshow)
-        export_menu.addAction(export_premiere_action)
+        self.export_premiere_action = QAction(self.tr("action_export_premiere"), self)
+        self.export_premiere_action.triggered.connect(self.export_premiere_slideshow)
+        self.export_menu.addAction(self.export_premiere_action)
 
 
 
@@ -1272,113 +1409,133 @@ class SlideshowCreator(QMainWindow):
 
 
         #----Start Of Images Menu----
-        self.delete_row_action = QAction("Delete Image Row", self)
+        self.delete_row_action = QAction(self.tr("action_delete_row"), self)
         self.delete_row_action.triggered.connect(self.delete_image)
         self.delete_row_action.setShortcut(self.shortcuts.get("delete_row", "Delete"))
-        Img_menu.addAction(self.delete_row_action) 
+        self.Img_menu.addAction(self.delete_row_action) 
 
-        self.move_image_up_action = QAction("Move Image Up", self)
+        self.move_image_up_action = QAction(self.tr("action_move_image_up"), self)
         self.move_image_up_action.triggered.connect(self.move_image_up)
         self.move_image_up_action.setShortcut(self.shortcuts.get("move_image_up", "Ctrl+Up"))
-        Img_menu.addAction(self.move_image_up_action) 
+        self.Img_menu.addAction(self.move_image_up_action) 
 
-        self.move_image_down_action = QAction("Move Image Down", self)
+        self.move_image_down_action = QAction(self.tr("action_move_image_down"), self)
         self.move_image_down_action.triggered.connect(self.move_image_down)
         self.move_image_down_action.setShortcut(self.shortcuts.get("move_image_down", "Ctrl+Down"))
-        Img_menu.addAction(self.move_image_down_action)
+        self.Img_menu.addAction(self.move_image_down_action)
 
-        set_all_images_duration_action = QAction("Set All Images Duration", self)
-        set_all_images_duration_action.triggered.connect(self.set_all_images_duration)
-        Img_menu.addAction(set_all_images_duration_action)
+        self.set_all_images_duration_action = QAction(self.tr("action_set_all_image_duration"), self)
+        self.set_all_images_duration_action.triggered.connect(self.set_all_images_duration)
+        self.Img_menu.addAction(self.set_all_images_duration_action)
 
-        set_random_image_order_action = QAction("Set Random Images Order", self)
-        set_random_image_order_action.triggered.connect(self.set_random_images_order)
-        Img_menu.addAction(set_random_image_order_action)
+        self.set_random_image_order_action = QAction(self.tr("action_set_random_images_order"), self)
+        self.set_random_image_order_action.triggered.connect(self.set_random_images_order)
+        self.Img_menu.addAction(self.set_random_image_order_action)
 
-        auto_set_images_action = QAction("Auto Calculate Images Duration", self)
-        auto_set_images_action.triggered.connect(self.auto_calc_image_duration)
-        Img_menu.addAction(auto_set_images_action)
+        self.auto_set_images_action = QAction(self.tr("action_auto_calc_image_duration"), self)
+        self.auto_set_images_action.triggered.connect(self.auto_calc_image_duration)
+        self.Img_menu.addAction(self.auto_set_images_action)
 
-        self.set_image_location_action = QAction("Set Image Location", self)
+        self.set_image_location_action = QAction(self.tr("dialog_set_image_location"), self)
         self.set_image_location_action.triggered.connect(self.set_image_location)
         self.set_image_location_action.setShortcut(self.shortcuts.get("set_image_location", "Ctrl+Q"))
-        Img_menu.addAction(self.set_image_location_action)
+        self.Img_menu.addAction(self.set_image_location_action)
 
-        auto_sort_images_by_date_Newest_action = QAction("Newest First ", self)
-        auto_sort_images_by_date_Newest_action.triggered.connect(lambda: self.auto_sort_images_by_date(True))
-        Auto_sort_menu.addAction(auto_sort_images_by_date_Newest_action)
+        self.auto_sort_images_by_date_Newest_action = QAction(self.tr("action_auto_sort_newest_first"), self)
+        self.auto_sort_images_by_date_Newest_action.triggered.connect(lambda: self.auto_sort_images_by_date(True))
+        self.Auto_sort_menu.addAction(self.auto_sort_images_by_date_Newest_action)
 
-        auto_sort_images_by_date_Oldest_action = QAction("Oldest First ", self)
-        auto_sort_images_by_date_Oldest_action.triggered.connect(lambda: self.auto_sort_images_by_date(False))
-        Auto_sort_menu.addAction(auto_sort_images_by_date_Oldest_action)
+        self.auto_sort_images_by_date_Oldest_action = QAction(self.tr("action_auto_sort_oldest_first"), self)
+        self.auto_sort_images_by_date_Oldest_action.triggered.connect(lambda: self.auto_sort_images_by_date(False))
+        self.Auto_sort_menu.addAction(self.auto_sort_images_by_date_Oldest_action)
 
         # ----Start Of Transitions Menu----
 
-        set_all_images_transition_type_action = QAction("Set All Images Transition Type", self)
-        set_all_images_transition_type_action.triggered.connect(self.set_all_images_transition)
-        Transitions_menu.addAction(set_all_images_transition_type_action)
+        self.set_all_images_transition_type_action = QAction(self.tr("action_set_all_transition_type"), self)
+        self.set_all_images_transition_type_action.triggered.connect(self.set_all_images_transition)
+        self.Transitions_menu.addAction(self.set_all_images_transition_type_action)
         
-        set_random_transition_for_each_image_action = QAction("Set Random Transition For Each Image", self)
-        set_random_transition_for_each_image_action.triggered.connect(self.set_random_transition_for_each_image)
-        Transitions_menu.addAction(set_random_transition_for_each_image_action)
+        self.set_random_transition_for_each_image_action = QAction(self.tr("action_set_random_transition_per_image"), self)
+        self.set_random_transition_for_each_image_action.triggered.connect(self.set_random_transition_for_each_image)
+        self.Transitions_menu.addAction(self.set_random_transition_for_each_image_action)
 
         # ----Start Of Text Menu----
 
-        self.easy_text_writing_action = QAction("Easy Text Writing", self)
+        self.easy_text_writing_action = QAction(self.tr("action_easy_text_writing"), self)
         self.easy_text_writing_action.triggered.connect(self.open_easy_text_writing)
         self.easy_text_writing_action.setShortcut(self.shortcuts.get("easy_text", "Ctrl+T"))
-        Text_menu.addAction(self.easy_text_writing_action)
+        self.Text_menu.addAction(self.easy_text_writing_action)
 
         
         # ----Start Of Settings Menu----
         
-        set_save_shortcut_action = QAction("Set Save Shortcut", self)
-        set_save_shortcut_action.triggered.connect(lambda: self.set_shortcut("save"))
-        shortcuts_menu.addAction(set_save_shortcut_action)
+        self.set_save_shortcut_action = QAction(self.tr("action_set_save_shortcut"), self)
+        self.set_save_shortcut_action.triggered.connect(lambda: self.set_shortcut("save"))
+        self.shortcuts_menu.addAction(self.set_save_shortcut_action)
 
-        set_save_as_shortcut_action = QAction("Set Save As Shortcut", self)
-        set_save_as_shortcut_action.triggered.connect(lambda: self.set_shortcut("save_as"))
-        shortcuts_menu.addAction(set_save_as_shortcut_action)
+        self.set_save_as_shortcut_action = QAction(self.tr("action_set_save_as_shortcut"), self)
+        self.set_save_as_shortcut_action.triggered.connect(lambda: self.set_shortcut("save_as"))
+        self.shortcuts_menu.addAction(self.set_save_as_shortcut_action)
 
-        set_load_shortcut_action = QAction("Set Load Shortcut", self)
-        set_load_shortcut_action.triggered.connect(lambda: self.set_shortcut("load"))
-        shortcuts_menu.addAction(set_load_shortcut_action)
+        self.set_load_shortcut_action = QAction(self.tr("action_set_load_shortcut"), self)
+        self.set_load_shortcut_action.triggered.connect(lambda: self.set_shortcut("load"))
+        self.shortcuts_menu.addAction(self.set_load_shortcut_action)
 
-        set_easy_text_shortcut_action = QAction("Set Easy Text Writing Shortcut", self)
-        set_easy_text_shortcut_action.triggered.connect(lambda: self.set_shortcut("easy_text"))
-        shortcuts_menu.addAction(set_easy_text_shortcut_action)
+        self.set_easy_text_shortcut_action = QAction(self.tr("action_set_easy_text_shortcut"), self)
+        self.set_easy_text_shortcut_action.triggered.connect(lambda: self.set_shortcut("easy_text"))
+        self.shortcuts_menu.addAction(self.set_easy_text_shortcut_action)
 
-        set_show_info_shortcut_action = QAction("Set Show Info Shortcut", self)
-        set_show_info_shortcut_action.triggered.connect(lambda: self.set_shortcut("info"))
-        shortcuts_menu.addAction(set_show_info_shortcut_action)
+        self.set_show_info_shortcut_action = QAction(self.tr("action_set_show_info_shortcut"), self)
+        self.set_show_info_shortcut_action.triggered.connect(lambda: self.set_shortcut("info"))
+        self.shortcuts_menu.addAction(self.set_show_info_shortcut_action)
 
-        set_delete_row_action = QAction("Set Delete Shortcut", self)
-        set_delete_row_action.triggered.connect(lambda: self.set_shortcut("delete_row"))
-        shortcuts_menu.addAction(set_delete_row_action)
+        self.set_delete_row_action = QAction(self.tr("action_set_delete_shortcut"), self)
+        self.set_delete_row_action.triggered.connect(lambda: self.set_shortcut("delete_row"))
+        self.shortcuts_menu.addAction(self.set_delete_row_action)
 
-        set_set_image_location_action = QAction("Set Set Image Location Shortcut", self)
-        set_set_image_location_action.triggered.connect(lambda: self.set_shortcut("set_image_location"))
-        shortcuts_menu.addAction(set_set_image_location_action)
+        self.set_set_image_location_action = QAction(self.tr("action_set_image_location_shortcut"), self)
+        self.set_set_image_location_action.triggered.connect(lambda: self.set_shortcut("set_image_location"))
+        self.shortcuts_menu.addAction(self.set_set_image_location_action)
 
-        set_move_image_up_action = QAction("Set Move Image Up Shortcut", self)
-        set_move_image_up_action.triggered.connect(lambda: self.set_shortcut("move_image_up"))
-        shortcuts_menu.addAction(set_move_image_up_action)
+        self.set_move_image_up_action = QAction(self.tr("action_set_move_image_up_shortcut"), self)
+        self.set_move_image_up_action.triggered.connect(lambda: self.set_shortcut("move_image_up"))
+        self.shortcuts_menu.addAction(self.set_move_image_up_action)
 
-        set_move_image_down_action = QAction("Set Move Image Down Shortcut", self)
-        set_move_image_down_action.triggered.connect(lambda: self.set_shortcut("move_image_down"))
-        shortcuts_menu.addAction(set_move_image_down_action)
+        self.set_move_image_down_action = QAction(self.tr("action_set_move_image_down_shortcut"), self)
+        self.set_move_image_down_action.triggered.connect(lambda: self.set_shortcut("move_image_down"))
+        self.shortcuts_menu.addAction(self.set_move_image_down_action)
 
-        self.show_info_action = QAction("Show Info", self)
+
+
+
+
+        self.show_info_action = QAction(self.tr("action_show_info"), self)
         self.show_info_action.triggered.connect(self.show_info)
         self.show_info_action.setShortcut(self.shortcuts.get("info", "Alt+I"))
-        info_menu.addAction(self.show_info_action)
+        self.info_menu.addAction(self.show_info_action)
+
+
+
+
+        self.set_language_english_action = QAction(self.tr("action_set_language_english"), self)
+        self.set_language_english_action.triggered.connect(lambda: self.set_language("en"))
+        self.language_menu.addAction(self.set_language_english_action)
+
+        self.set_language_hebrew_action = QAction(self.tr("action_set_language_hebrew"), self)
+        self.set_language_hebrew_action.triggered.connect(lambda: self.set_language("he"))
+        self.language_menu.addAction(self.set_language_hebrew_action)
+
+
+
+
+
 
 
         # ----Start Of Help Menu----
 
-        open_help_dialog_action = QAction("Browse Help Topics", self)
-        open_help_dialog_action.triggered.connect(self.open_help_dialog)
-        help_menu.addAction(open_help_dialog_action)
+        self.open_help_dialog_action = QAction(self.tr("action_browse_help_topics"), self)
+        self.open_help_dialog_action.triggered.connect(self.open_help_dialog)
+        self.help_menu.addAction(self.open_help_dialog_action)
     
 
 
@@ -1390,7 +1547,7 @@ class SlideshowCreator(QMainWindow):
 class HelpDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Help Topics")
+        self.setWindowTitle(self.tr("help_topics_title"))
         self.resize(600, 400)
 
         self.layout = QVBoxLayout(self)
@@ -1503,7 +1660,7 @@ class ImageProcessingPremiereWorker(QThread):
 class EasyTextWritingDialog(QDialog):
     def __init__(self, images, affected_rows, start_index=0, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Easy Text Writing")
+        self.setWindowTitle(self.tr("action_easy_text_writing"))
         self.setGeometry(200, 200, 400, 200)
         self.images = images
         self.affected_rows = affected_rows
@@ -1517,7 +1674,7 @@ class EasyTextWritingDialog(QDialog):
         self.layout.addWidget(self.image_label)
 
         self.text_input = QTextEdit()
-        self.text_input.setPlaceholderText("Enter text for the image...")
+        self.text_input.setPlaceholderText(self.tr("enter_text_for_image"))
         self.text_input.setAlignment(Qt.AlignRight)  # Align text to the right
         self.text_input.setLayoutDirection(Qt.RightToLeft)  # Set layout direction to RTL
         self.text_input.setTextInteractionFlags(Qt.TextEditorInteraction)
@@ -1528,11 +1685,11 @@ class EasyTextWritingDialog(QDialog):
         # Move the cursor to the start of the document (left side for RTL)
         self.text_input.moveCursor(QTextCursor.Start)  # Use QTextCursor.Start
 
-        self.next_button = QPushButton("Next")
+        self.next_button = QPushButton(self.tr("next"))
         self.next_button.clicked.connect(self.next_image)
         self.layout.addWidget(self.next_button)
 
-        self.close_button = QPushButton("Close")
+        self.close_button = QPushButton(self.tr("close"))
         self.close_button.clicked.connect(self.close)
         self.layout.addWidget(self.close_button)
 
@@ -1592,10 +1749,10 @@ class InfoDialog(QDialog):
         total_audio_duration_str = self.format_duration(total_audio_duration)
 
         # Create labels to display the information
-        self.layout.addWidget(QLabel(f"Total Images: {len(images)}"))
-        self.layout.addWidget(QLabel(f"Total Images Duration (with second images): {total_images_duration_with_second_str}"))
-        self.layout.addWidget(QLabel(f"Total Images Duration (without second images): {total_images_duration_without_second_str}"))
-        self.layout.addWidget(QLabel(f"Total Audio Duration: {total_audio_duration_str}"))
+        self.layout.addWidget(QLabel(f"{self.tr("info_total_images")} {len(images)}"))
+        self.layout.addWidget(QLabel(f"{self.tr("info_duration_with_second")} {total_images_duration_with_second_str}"))
+        self.layout.addWidget(QLabel(f"{self.tr("info_duration_without_second")} {total_images_duration_without_second_str}"))
+        self.layout.addWidget(QLabel(f"{self.tr("info_audio_duration")} {total_audio_duration_str}"))
 
         # Add a close button
         close_button = QPushButton("Close")
