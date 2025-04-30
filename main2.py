@@ -20,7 +20,7 @@ import openpyxl
 import Image_resizer, premiere_export
 from concurrent.futures import ThreadPoolExecutor
 
-from EMM_THEMES.theme import set_theme
+from EVENTURE_THEMES.theme import set_theme
 
 os.environ["QT_PLUGIN_PATH"] = os.path.join(os.path.dirname(sys.executable), "Lib", "site-packages", "PyQt5", "Qt", "plugins")
 
@@ -36,9 +36,9 @@ class SlideshowCreator(QMainWindow):
         script_dir = Path(__file__).resolve().parent
         help_folder = script_dir / "Help"
         # Ensure the directory exists
-        os.makedirs("C:\\NeriaLTD\\Event_Montage_Maker_2", exist_ok=True)
+        os.makedirs("C:\\NeriaLTD\\Eventure", exist_ok=True)
 
-        destination_root = Path("C:\\NeriaLTD\\Event_Montage_Maker_2")
+        destination_root = Path("C:\\NeriaLTD\\Eventure")
         destination_folder = destination_root / help_folder.name
 
         # Copy the folder and its contents
@@ -48,7 +48,7 @@ class SlideshowCreator(QMainWindow):
 
         language_folder = script_dir / "Languages"
 
-        destination_root = Path("C:\\NeriaLTD\\Event_Montage_Maker_2")
+        destination_root = Path("C:\\NeriaLTD\\Eventure")
         destination_folder = destination_root / language_folder.name
 
         # Copy the folder and its contents
@@ -1164,14 +1164,14 @@ class SlideshowCreator(QMainWindow):
     def save_shortcuts(self):
         
         # Save shortcuts to a file
-        with open("C:\\NeriaLTD\\Event_Montage_Maker_2\\shortcuts.txt", "w") as f:
+        with open("C:\\NeriaLTD\\Eventure\\shortcuts.txt", "w") as f:
             for action, shortcut in self.shortcuts.items():
                 f.write(f"{action}:{shortcut}\n")
 
     def load_shortcuts(self):
         # Load shortcuts from file
         try:
-            with open("C:\\NeriaLTD\\Event_Montage_Maker_2\\shortcuts.txt", "r") as f:
+            with open("C:\\NeriaLTD\\Eventure\\shortcuts.txt", "r") as f:
                 for line in f:
                     action, shortcut = line.strip().split(":")
                     self.shortcuts[action] = shortcut
@@ -1228,7 +1228,7 @@ class SlideshowCreator(QMainWindow):
     "10_Translations Functions"
     def load_translations(self):
         try:
-            lang_file = f"C:\\NeriaLTD\\Event_Montage_Maker_2\\Languages\\lang_{self.language}.json"
+            lang_file = f"C:\\NeriaLTD\\Eventure\\Languages\\lang_{self.language}.json"
             with open(lang_file, 'r', encoding='utf-8') as f:
                 self.translations = json.load(f)
         except FileNotFoundError:
@@ -1572,7 +1572,7 @@ class HelpDialog(QDialog):
     def load_help_info(self):
         help_data = {}
         try:
-            with open(f'C:\\NeriaLTD\\Event_Montage_Maker_2\\Help\\Help_Info_{self.language}.txt', 'r', encoding='utf-8') as f:
+            with open(f'C:\\NeriaLTD\\Eventure\\Help\\Help_Info_{self.language}.txt', 'r', encoding='utf-8') as f:
                 content = f.read()
                 blocks = content.split('topic:')
                 for block in blocks:
