@@ -3,7 +3,7 @@ from bidi.algorithm import get_display  # Handles RTL text
 from PIL import Image, ImageFilter, ImageDraw, ImageFont
 
 # Cache font at module level
-FONT = ImageFont.truetype(r"E:\------ תכנות ------\Even Monatge Maker 2.0\Fonts\Birzia-Black.otf", 85)
+FONT = ImageFont.truetype(r"E:\------ תכנות ------\Eventure\Fonts\Birzia-Black.otf", 85)
 
 def process_image(image_path, output_folder, text, rotation):
     font = FONT

@@ -1064,7 +1064,7 @@ class SlideshowCreator(QMainWindow):
         # Create the "Texts" folder if it doesn't exist
         premiere_text_folder = os.path.join(self.premiere_project_folder, "03_טקסט")
         os.makedirs(premiere_text_folder, exist_ok=True)
-        style_file_path = r"E:\------ תכנות ------\Even Monatge Maker 2.0\Premiere_Project\טקסט למצגת - עברית.prtextstyle"
+        style_file_path = r"E:\------ תכנות ------\Eventure\Premiere_Project\טקסט למצגת - עברית.prtextstyle"
         # Copy the original text file to the new location
         original_text_file_path = os.path.join(premiere_text_folder, "טקסט למצגת - בעברית.prtextstyle")
         shutil.copy(style_file_path, original_text_file_path)
@@ -1125,7 +1125,7 @@ class SlideshowCreator(QMainWindow):
 
     def copy_premiere_project_file(self):
         # Define the source and destination paths for the Premiere project file
-        premiere_project_source = r"E:\------ תכנות ------\Even Monatge Maker 2.0\Premiere_Project\Project.prproj"
+        premiere_project_source = r"E:\------ תכנות ------\Eventure\Premiere_Project\Project.prproj"
         project_destination_folder = os.path.join(self.premiere_project_folder, "04_פרוייקט")
         os.makedirs(project_destination_folder, exist_ok=True)
         project_file_name = os.path.basename(self.premiere_project_folder) + ".prproj"
