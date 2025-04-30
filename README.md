@@ -7,7 +7,7 @@
 * first run this command
   `pip install PyQt5 pillow openpyxl python-pptx bidi`
 
-* Then download from releases the `EMM.zip`
+* Then download from releases the `Eventure.zip`
 * Export it wherever you want to
 
 ## What do you need to change?
