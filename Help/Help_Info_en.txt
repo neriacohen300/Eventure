@@ -1,0 +1,82 @@
+topic: ----File Tab----
+Info: 
+
+
+topic: How to Import Images
+Info: To import images, go to File > Import > Images and select your files.
+
+topic: How to Import Audio Files
+Info: To import audio Files, go to File > Import > Audio and select your files.
+
+topic: How to Export Slideshow
+Info: Export your project through File > Export > Export Slideshow to create a video file.
+
+topic: How to Export Slideshow to Premiere
+Info: Export your project to Premiere through File > Export > Export To Premiere to create a folder with your premiere project file and etc'.
+
+topic: How to Load a Project
+Info: To load a project, go to File > Load Project, and choose you project file (.slideshow).
+
+topic: How to save a Project
+Info: To save a project, go to File > Save Project (as), and choose your desired destination.
+
+topic: How to clear a Project
+Info: To clear a project, go to File > Clear Project.
+
+
+topic: ----Options Tab----
+Info: 
+
+
+topic: How to auto sort images by date
+Info: To auto sort images by date, go to Options > Images > Auto Sort Images By date > Oldest / Newest.
+
+topic: How to Delete a image row
+Info: To delete a image row, go to Options > Images > Delete Image Row.
+
+topic: How to Move Image Up
+Info: To move image up, go to Options > Images > Move Image Up.
+
+topic: How to Move Image Down
+Info: To move image down, go to Options > Images > Move Image Down.
+
+topic: How to Set All Images Duration 
+Info: To set all images duration, go to Options > Images > Set All Images Duration.
+
+topic: How to Set Random Images Order
+Info: To set random images order, go to Options > Images > Set Random Images Order.
+
+topic: How to Auto Calculate Images Duration
+Info: To auto calculate images duration, go to Options > Images > Auto Calculate Images Duration.
+
+topic: How to Set Image Location
+Info: To set image location, go to Options > Images > Set Image Location.
+
+topic: How to Set Set All Images Transition Type
+Info: To set all images transition type, go to Options > Transition > Set All Images Transition Type.
+
+topic: How to Set Ransom Transition For Each Image
+Info: To set random transition for each image, go to Options > Transition > Set Random Transition For Each Image.
+
+topic: How to Use Easy Text Writing
+Info: To use easy text writing, go to Options > Text > Easy Text Writing. Then you can edit each image's text and when press "Tab" to go to the next one, and when you finished, you can press "Escape" and it would all be saved!
+
+
+topic: ---Settings Tab----
+Info:   
+
+
+
+topic: Shortcuts
+Info: Customize keyboard shortcuts in Settings > Keyboard Shortcuts.
+
+topic: Language
+Info: Change your application Language in Settings > Language > and choose your preferred language.
+
+
+topic: ---Info Tab----
+Info:   
+
+
+topic: Info
+Info: check you project info in Info > Show Info.

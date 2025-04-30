@@ -1148,7 +1148,7 @@ class SlideshowCreator(QMainWindow):
         selected_row = self.image_table.currentRow()  # Replace 'self.image_table' with the name of your table widget
         affected_rows = []
         
-        self.easy_text_dialog = EasyTextWritingDialog(self.images, affected_rows, start_index=selected_row, parent=self)
+        self.easy_text_dialog = EasyTextWritingDialog(self.images, affected_rows, start_index=selected_row, tr_function=self.tr, parent=self)
         
 
         self.easy_text_dialog.show()
@@ -1215,11 +1215,11 @@ class SlideshowCreator(QMainWindow):
 
     def show_info(self):
         
-        info_dialog = InfoDialog(self.images, self.audio_files, self)
+        info_dialog = InfoDialog(self.images, self.audio_files, self.tr, self)
         info_dialog.exec_()
 
     def open_help_dialog(self):
-        dialog = HelpDialog(self)
+        dialog = HelpDialog(self, self.language)
         dialog.exec_()
 
     
@@ -1545,12 +1545,14 @@ class SlideshowCreator(QMainWindow):
 
 
 class HelpDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, language="en"):
         super().__init__(parent)
         self.setWindowTitle(self.tr("help_topics_title"))
         self.resize(600, 400)
 
         self.layout = QVBoxLayout(self)
+
+        self.language = language
 
         self.topic_list = QListWidget()
         self.info_display = QTextEdit()
@@ -1570,7 +1572,7 @@ class HelpDialog(QDialog):
     def load_help_info(self):
         help_data = {}
         try:
-            with open('C:\\NeriaLTD\\Event_Montage_Maker_2\\Help\\Help_Info.txt', 'r', encoding='utf-8') as f:
+            with open(f'C:\\NeriaLTD\\Event_Montage_Maker_2\\Help\\Help_Info_{self.language}.txt', 'r', encoding='utf-8') as f:
                 content = f.read()
                 blocks = content.split('topic:')
                 for block in blocks:
@@ -1658,13 +1660,14 @@ class ImageProcessingPremiereWorker(QThread):
 
 
 class EasyTextWritingDialog(QDialog):
-    def __init__(self, images, affected_rows, start_index=0, parent=None):
+    def __init__(self, images, affected_rows, start_index=0, tr_function=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle(self.tr("action_easy_text_writing"))
         self.setGeometry(200, 200, 400, 200)
         self.images = images
         self.affected_rows = affected_rows
         self.current_index = start_index
+        self.tr = tr_function
 
 
         self.layout = QVBoxLayout(self)
@@ -1731,12 +1734,14 @@ class EasyTextWritingDialog(QDialog):
 
 
 class InfoDialog(QDialog):
-    def __init__(self, images, audio_files, parent=None):
+    def __init__(self, images, audio_files, tr_function, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Info")
         self.setGeometry(300, 300, 300, 150)
 
         self.layout = QVBoxLayout(self)
+
+        self.tr = tr_function
 
         # Calculate total durations
         total_images_duration_with_second = sum(img['duration'] for img in images)
@@ -1749,13 +1754,14 @@ class InfoDialog(QDialog):
         total_audio_duration_str = self.format_duration(total_audio_duration)
 
         # Create labels to display the information
-        self.layout.addWidget(QLabel(f"{self.tr("info_total_images")} {len(images)}"))
-        self.layout.addWidget(QLabel(f"{self.tr("info_duration_with_second")} {total_images_duration_with_second_str}"))
-        self.layout.addWidget(QLabel(f"{self.tr("info_duration_without_second")} {total_images_duration_without_second_str}"))
-        self.layout.addWidget(QLabel(f"{self.tr("info_audio_duration")} {total_audio_duration_str}"))
+        self.layout.addWidget(QLabel(self.tr("info_total_images") + f" {len(images)}"))
+        self.layout.addWidget(QLabel(self.tr("info_duration_with_second") + f" {total_images_duration_with_second_str}"))
+        self.layout.addWidget(QLabel(self.tr("info_duration_without_second") + f" {total_images_duration_without_second_str}"))
+        self.layout.addWidget(QLabel(self.tr("info_audio_duration") + f" {total_audio_duration_str}"))
+
 
         # Add a close button
-        close_button = QPushButton("Close")
+        close_button = QPushButton(self.tr("close"))
         close_button.clicked.connect(self.close)
         self.layout.addWidget(close_button)
 
