@@ -1810,6 +1810,7 @@ class CustomDelegate(QStyledItemDelegate):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    app.setWindowIcon(QIcon("logo.ico"))
     set_theme(app, theme='dark')
     window = SlideshowCreator()
     window.create_menu()
