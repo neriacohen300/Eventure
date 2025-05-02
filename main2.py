@@ -854,7 +854,7 @@ class SlideshowCreator(QMainWindow):
                     text = img.get('text', '')
                     if '\n' in text:
                         text = text.replace('\n', '\\n')
-                    f.write(f"{img['path']},{img.get('duration', 5)},{img.get('transition', 'fade')},{img.get('transition_duration', 1)},{text},{img.get('rotation', '')},{img.get('is_second_image', False)}\n") 
+                    f.write(f"{img['path']},{img.get('duration', 5)},{img.get('transition', 'fade')},{img.get('transition_duration', 1)},{text},{img.get('rotation', '')},{img.get('is_second_image', False)},{img.get('date', '')}\n") 
         
         else:
             options = QFileDialog.Options()
@@ -871,7 +871,7 @@ class SlideshowCreator(QMainWindow):
                         text = img.get('text', '')
                         if '\n' in text:
                             text = text.replace('\n', '\\n')
-                        f.write(f"{img['path']},{img.get('duration', 5)},{img.get('transition', 'fade')},{img.get('transition_duration', 1)},{text},{img.get('rotation', '')},{img.get('is_second_image', False)}\n") 
+                        f.write(f"{img['path']},{img.get('duration', 5)},{img.get('transition', 'fade')},{img.get('transition_duration', 1)},{text},{img.get('rotation', '')},{img.get('is_second_image', False)},{img.get('date', '')}\n") 
                     self.loaded_project = file_name
 
 
