@@ -19,7 +19,7 @@ from openpyxl import Workbook
 import openpyxl
 import Image_resizer, premiere_export
 from concurrent.futures import ThreadPoolExecutor
-
+                                                  
 from EVENTURE_THEMES.theme import set_theme
 
 os.environ["QT_PLUGIN_PATH"] = os.path.join(os.path.dirname(sys.executable), "Lib", "site-packages", "PyQt5", "Qt", "plugins")
