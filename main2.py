@@ -11,7 +11,7 @@ import sys
 import os
 import subprocess
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QInputDialog, QAction,
-                             QListWidget,QProgressBar,QComboBox,QMessageBox,QDialog, QTextEdit, QListWidgetItem, QCheckBox, QStyledItemDelegate,QPushButton, QLabel, QFileDialog, QSlider, QStyle, QTableWidgetItem, QSpinBox, QHeaderView, QTableWidget)
+                             QListWidget,QProgressBar,QComboBox,QMessageBox,QDialog, QTextEdit, QListWidgetItem, QCheckBox, QStyledItemDelegate,QPushButton, QLabel, QFileDialog, QSlider, QStyle, QTableWidgetItem, QSpinBox, QHeaderView, QTableWidget, QLineEdit)
 from PyQt5.QtCore import Qt, QUrl, QSize, QProcess, QTimer, QThread, pyqtSignal, QEvent
 from PyQt5.QtGui import QIcon, QFont, QPixmap,QTextCursor, QCursor, QTransform, QColor, QBrush
 from PIL import Image, ImageFilter
@@ -55,6 +55,16 @@ class SlideshowCreator(QMainWindow):
         shutil.copytree(language_folder, destination_folder, dirs_exist_ok=True)
 
         print(f"Folder '{language_folder.name}' copied to '{destination_folder}'")
+
+        songs_folder = script_dir / "Songs"
+
+        destination_root = Path("C:\\NeriaLTD\\Eventure")
+        destination_folder = destination_root / songs_folder.name
+
+        # Copy the folder and its contents
+        shutil.copytree(songs_folder, destination_folder, dirs_exist_ok=True)
+
+        print(f"Folder '{songs_folder.name}' copied to '{destination_folder}'")
 
         self.language = "en"  # Default language
         self.translations = {}
@@ -205,8 +215,13 @@ class SlideshowCreator(QMainWindow):
 
         self.audio_files_label = QLabel(self.tr("label_audio_files"))
         self.audio_files_label.setFont(QFont(self.text_font, self.text_font_size, QFont.Bold))
+
+        self.audio_library_button = QPushButton(self.tr("Audio Library"))
+        self.audio_library_button.setFont(QFont(self.button_font, self.button_font_size, QFont.Bold))
+        self.audio_library_button.clicked.connect(self.open_audio_library)
         right_panel.addWidget(self.audio_files_label)
         right_panel.addWidget(self.audio_table)
+        right_panel.addWidget(self.audio_library_button)
         right_panel.addWidget(self.progress_bar)
         right_panel.addWidget(self.image_progress_bar)
         right_panel.addWidget(self.image_premiere_progress_bar)
@@ -570,6 +585,12 @@ class SlideshowCreator(QMainWindow):
             self.audio_table.setCurrentCell(row +1, 1)
         else:
             self.audio_table.setCurrentCell(row -1, 1)
+
+
+
+    def open_audio_library(self):
+        dialog = AudioLibraryDialog(self)
+        dialog.exec_()
 
 
 
@@ -1804,6 +1825,110 @@ class CustomDelegate(QStyledItemDelegate):
             painter.fillRect(option.rect, QColor(100, 100, 150))  # Dark blue background
             painter.restore()
         super().paint(painter, option, index)
+
+
+
+class AudioLibraryDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Audio Library")
+        self.setGeometry(100, 100, 600, 400)
+        
+        self.songs = []
+        self.load_songs()
+        
+        self.init_ui()
+    
+    def init_ui(self):
+        layout = QVBoxLayout()
+        
+        # Search bar
+        search_layout = QHBoxLayout()
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Search songs...")
+        self.search_input.textChanged.connect(self.filter_songs)
+        search_layout.addWidget(self.search_input)
+        layout.addLayout(search_layout)
+        
+        # Song list
+        self.song_list = QListWidget()
+        self.populate_song_list()
+        layout.addWidget(self.song_list)
+        
+        # Info panel
+        self.info_label = QLabel("Select a song to view details")
+        layout.addWidget(self.info_label)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        self.add_button = QPushButton("Add Selected")
+        self.add_button.clicked.connect(self.add_selected_songs)
+        button_layout.addWidget(self.add_button)
+        
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(self.close)
+        button_layout.addWidget(close_button)
+        
+        layout.addLayout(button_layout)
+        self.setLayout(layout)
+        
+        # Connect selection change
+        self.song_list.itemSelectionChanged.connect(self.update_song_info)
+    
+    def load_songs(self):
+        songs_file = "C:\\NeriaLTD\\Eventure\\Songs\\songs.json"
+        try:
+            with open(songs_file, 'r', encoding='utf-8') as f:
+                self.songs = json.load(f)
+        except FileNotFoundError:
+            self.songs = []
+            print("Songs file not found. Creating empty library.")
+        except json.JSONDecodeError:
+            self.songs = []
+            print("Error reading songs file. Check JSON format.")
+    
+    def populate_song_list(self, filter_text=""):
+        self.song_list.clear()
+        for song in self.songs:
+            if filter_text.lower() in song['name'].lower() or \
+               filter_text.lower() in song['author'].lower() or \
+               filter_text.lower() in song['fits_for'].lower():
+                item = QListWidgetItem(f"{song['name']} - {song['author']}")
+                item.setData(Qt.UserRole, song)  # Store the full song data
+                self.song_list.addItem(item)
+    
+    def filter_songs(self):
+        filter_text = self.search_input.text()
+        self.populate_song_list(filter_text)
+    
+    def update_song_info(self):
+        selected_items = self.song_list.selectedItems()
+        if selected_items:
+            song = selected_items[0].data(Qt.UserRole)
+            info_text = (
+                f"<b>Name:</b> {song['name']}<br>"
+                f"<b>Author:</b> {song['author']}<br>"
+                f"<b>Duration:</b> {self.format_duration(song['duration'])}<br>"
+                f"<b>Fits for:</b> {song['fits_for']}<br>"
+                f"<b>Path:</b> {song['path']}"
+            )
+            self.info_label.setText(info_text)
+    
+    def format_duration(self, seconds):
+        minutes = int(seconds // 60)
+        seconds = int(seconds % 60)
+        return f"{minutes}:{seconds:02d}"
+    
+    def add_selected_songs(self):
+        selected_items = self.song_list.selectedItems()
+        for item in selected_items:
+            song = item.data(Qt.UserRole)
+            # Check if this song is already in the project
+            if not any(audio['path'] == song['path'] for audio in self.parent().audio_files):
+                self.parent().audio_files.append({'path': song['path']})
+        
+        self.parent().update_audio_table()
+        self.close()
 
 
 
