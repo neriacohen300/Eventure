@@ -97,5 +97,9 @@
     "audio_and_video_error": "Audio and Video doesn't match",
     "error_select_location_premiere": "Please select a location for the exported Premiere project.",
     "shortcut_set": "Set",
-    "shortcut_shortcut": "Shortcut"
+    "shortcut_shortcut": "Shortcut",
+    "label_audio_library": "Audio Library",
+    "song_info_label": "Select a song to view details",
+    "add_selected": "Add Selected",
+    "search_songs": "Search songs..."
 }

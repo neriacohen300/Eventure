@@ -98,5 +98,9 @@
     "audio_and_video_error": "האודיו והוידאו אינם מתאימים",
     "error_select_location_premiere": "אנא בחר מקום אחר לייצוא הפרוייקט של פרימייר.",
     "shortcut_set": "קבע",
-    "shortcut_shortcut": "קיצור"
+    "shortcut_shortcut": "קיצור",
+    "label_audio_library": "ספריית שירים",
+    "song_info_label": "בחר שיר כדי לקרוא פרטים עליו",
+    "add_selected": "הוסף נבחרים",
+    "search_songs": "חפש שירים..."
 }

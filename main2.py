@@ -216,7 +216,7 @@ class SlideshowCreator(QMainWindow):
         self.audio_files_label = QLabel(self.tr("label_audio_files"))
         self.audio_files_label.setFont(QFont(self.text_font, self.text_font_size, QFont.Bold))
 
-        self.audio_library_button = QPushButton(self.tr("Audio Library"))
+        self.audio_library_button = QPushButton(self.tr("label_audio_library"))
         self.audio_library_button.setFont(QFont(self.button_font, self.button_font_size, QFont.Bold))
         self.audio_library_button.clicked.connect(self.open_audio_library)
         right_panel.addWidget(self.audio_files_label)
@@ -589,7 +589,7 @@ class SlideshowCreator(QMainWindow):
 
 
     def open_audio_library(self):
-        dialog = AudioLibraryDialog(self)
+        dialog = AudioLibraryDialog(tr_function=self.tr, parent=self)
         dialog.exec_()
 
 
@@ -1362,6 +1362,9 @@ class SlideshowCreator(QMainWindow):
         ]
         self.audio_table.setHorizontalHeaderLabels(audio_headers)
 
+        #update button
+        self.audio_library_button.setText(self.tr("label_audio_library"))
+
 
 
 
@@ -1683,12 +1686,13 @@ class ImageProcessingPremiereWorker(QThread):
 class EasyTextWritingDialog(QDialog):
     def __init__(self, images, affected_rows, start_index=0, tr_function=None, parent=None):
         super().__init__(parent)
+        self.tr = tr_function
         self.setWindowTitle(self.tr("action_easy_text_writing"))
         self.setGeometry(200, 200, 400, 200)
         self.images = images
         self.affected_rows = affected_rows
         self.current_index = start_index
-        self.tr = tr_function
+        
 
 
         self.layout = QVBoxLayout(self)
@@ -1755,14 +1759,15 @@ class EasyTextWritingDialog(QDialog):
 
 
 class InfoDialog(QDialog):
-    def __init__(self, images, audio_files, tr_function, parent=None):
+    def __init__(self, images, audio_files, tr_function=None, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Info")
+        self.tr = tr_function
+        self.setWindowTitle(self.tr("menu_info"))
         self.setGeometry(300, 300, 300, 150)
 
         self.layout = QVBoxLayout(self)
 
-        self.tr = tr_function
+        
 
         # Calculate total durations
         total_images_duration_with_second = sum(img['duration'] for img in images)
@@ -1829,15 +1834,18 @@ class CustomDelegate(QStyledItemDelegate):
 
 
 class AudioLibraryDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, tr_function=None, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Audio Library")
+        self.tr = tr_function
+        
+        self.setWindowTitle(self.tr("label_audio_library"))
         self.setGeometry(100, 100, 600, 400)
         
         self.songs = []
         self.load_songs()
         
         self.init_ui()
+        
     
     def init_ui(self):
         layout = QVBoxLayout()
@@ -1845,7 +1853,7 @@ class AudioLibraryDialog(QDialog):
         # Search bar
         search_layout = QHBoxLayout()
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Search songs...")
+        self.search_input.setPlaceholderText(self.tr("search_songs"))
         self.search_input.textChanged.connect(self.filter_songs)
         search_layout.addWidget(self.search_input)
         layout.addLayout(search_layout)
@@ -1856,16 +1864,16 @@ class AudioLibraryDialog(QDialog):
         layout.addWidget(self.song_list)
         
         # Info panel
-        self.info_label = QLabel("Select a song to view details")
+        self.info_label = QLabel(self.tr("song_info_label"))
         layout.addWidget(self.info_label)
         
         # Buttons
         button_layout = QHBoxLayout()
-        self.add_button = QPushButton("Add Selected")
+        self.add_button = QPushButton(self.tr("add_selected"))
         self.add_button.clicked.connect(self.add_selected_songs)
         button_layout.addWidget(self.add_button)
         
-        close_button = QPushButton("Close")
+        close_button = QPushButton(self.tr("close"))
         close_button.clicked.connect(self.close)
         button_layout.addWidget(close_button)
         

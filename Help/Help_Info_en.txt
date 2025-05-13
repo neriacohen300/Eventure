@@ -80,3 +80,10 @@ Info:
 
 topic: Info
 Info: check you project info in Info > Show Info.
+
+topic: ------
+Info: 
+
+
+topic: AUdio Library
+Info: You have 19 already downloaded music for your slideshows
