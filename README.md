@@ -3,19 +3,42 @@
 
 
 
-## ❓ How to download?
-* first run this command
-  `pip install PyQt5 pillow openpyxl python-pptx bidi`
+# Eventure - Slideshow Creator
 
-* Then download from releases the `Eventure.zip`
-* Export it wherever you want to
+Eventure is a powerful slideshow creation application that allows users to create professional slideshows with images, audio, and transitions. The application supports multiple languages and can export to video or Adobe Premiere projects.
 
-## What do you need to change?
-* in `main2.py` cahnge `style_file_path`, `premiere_project_source`
-* in `Image_resizer.py` change `FONT`
 
-## What do you need to know?? 
-* to check for second image is just for premiere export not regular one
+### Key Components
 
-# If I don't know how to use the app?
-* You don't have anything to worry about! There is a helpful `Help` tab in the app menu bar and it has a explanation of every thing you'll need to know!
+- **UI Components**: The user interface is separated from business logic
+- **Core Logic**: Slideshow and project management functionality
+- **Utilities**: Image processing, export functionality, and other utilities
+- **Themes**: Application theming system
+- **Internationalization**: Multi-language support
+- **Resources**: Fonts, help documentation, and audio files
+
+## Features
+
+- Import and manage images with customizable durations
+- Add transitions between slides with various effects
+- Add text overlays to images with RTL language support
+- Import and manage audio files
+- Export to video files
+- Export to Adobe Premiere projects
+- Multi-language support (English, Hebrew)
+- Customizable themes
+
+## Dependencies
+
+- PyQt5: UI framework
+- PIL (Pillow): Image processing
+- openpyxl: Excel file handling
+- bidi: Bidirectional text support
+
+## License
+
+This project is proprietary software.
+
+## Contact
+
+For questions or support, please contact the project maintainers.
