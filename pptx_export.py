@@ -5,6 +5,7 @@ from pptx import Presentation
 from openpyxl import Workbook
 from openpyxl.utils import get_column_letter
 import re
+from datetime import datetime
 
 # Function to clean text for Excel (remove illegal characters)
 # Function to clean text for Excel (remove only illegal control characters)
@@ -118,6 +119,9 @@ def extract_pptx_content_to_slideshow_file(pptx_file):
     # Open the .pptx file
     presentation = Presentation(pptx_file)
 
+    current_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+
     # Prepare the output slideshow file
     slideshow_file = os.path.join(pptx_folder, f"{pptx_file_name}.slideshow")
     with open(slideshow_file, "w", encoding="utf-8") as file:
@@ -134,8 +138,9 @@ def extract_pptx_content_to_slideshow_file(pptx_file):
             # Write to the slideshow file
             for i, image in enumerate(images):
                 is_second_image = "True" if len(images) > 1 and i > 0 else "False"
+
                 file.write(
-                    f"{image},5,fade,1,{text if i == 0 else ''},0,{is_second_image}\n"
+                    f"{image},5,fade,1,{text if i == 0 else ''},0,{is_second_image},{current_date}\n"
                 )
 
             print(f"Processed Slide {slide_num}: {pptx_folder} (Images: {len(images)}, Text: {len(text)} characters)")
