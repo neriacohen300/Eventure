@@ -2,7 +2,7 @@
 <PremiereData Version="3">
 	<Project ObjectRef="1"/>
 	<Project ObjectID="1" ClassID="62ad66dd-0dcd-42da-a660-6d8fbde94876" Version="43">
-		<RootProjectItem ObjectURef="e2eab840-f0c9-43e8-93ff-c0e9716cacc4"/>
+		<RootProjectItem ObjectURef="a1b1a1ed-42a3-4d46-aba9-114a8fe462f5"/>
 		<ProjectSettings ObjectRef="2"/>
 		<MovieCompileSettings ObjectRef="3"/>
 		<StillCompileSettings ObjectRef="4"/>
@@ -14,13 +14,13 @@
 		<ProjectWorkspace ObjectRef="10"/>
 		<NextID>1000000</NextID>
 	</Project>
-	<RootProjectItem ObjectUID="e2eab840-f0c9-43e8-93ff-c0e9716cacc4" ClassID="1c307a89-9318-47d7-a583-bf2553736543" Version="1">
+	<RootProjectItem ObjectUID="a1b1a1ed-42a3-4d46-aba9-114a8fe462f5" ClassID="1c307a89-9318-47d7-a583-bf2553736543" Version="1">
 		<ProjectItem Version="1">
 			<Name>Root Bin</Name>
 		</ProjectItem>
 		<ProjectItemContainer Version="1">
 			<Items Version="1">
-				<Item Index="0" ObjectURef="9bdd0501-afe5-47ac-80d3-cdf3c03e06a4"/>
+				<Item Index="0" ObjectURef="3377d67d-a624-4637-8930-cf31ae71787c"/>
 			</Items>
 		</ProjectItemContainer>
 	</RootProjectItem>
@@ -123,14 +123,14 @@
 	</IngestSettings>
 	<WorkspaceSettings ObjectID="10" ClassID="c4372273-e1aa-4683-98aa-a2ceadf3066c" Version="1">
 	</WorkspaceSettings>
-	<StyleProjectItem ObjectUID="9bdd0501-afe5-47ac-80d3-cdf3c03e06a4" ClassID="31673410-6b9a-420b-990a-fdfe31ef94f3" Version="1">
+	<StyleProjectItem ObjectUID="3377d67d-a624-4637-8930-cf31ae71787c" ClassID="31673410-6b9a-420b-990a-fdfe31ef94f3" Version="1">
 		<ProjectItem Version="1">
 			<Node Version="1">
 				<Properties Version="1">
 					<Column.PropertyText.Label>BE.Prefs.LabelColors.Unknown</Column.PropertyText.Label>
 				</Properties>
 			</Node>
-			<Name>טקסט למצגת - עברית</Name>
+			<Name>טקסט למצגת - עברית 3.0</Name>
 		</ProjectItem>
 		<Component ObjectRef="27"/>
 	</StyleProjectItem>
@@ -442,7 +442,7 @@
 		<ParameterControlType>9</ParameterControlType>
 		<Name>Source Text</Name>
 		<StartKeyframePosition>-91445760000000000</StartKeyframePosition>
-		<StartKeyframeValue Encoding="base64" BinaryHash="0c8c54a9-2aca-d3d0-7fef-a80c000001ec">1AEAAAAAAABEMyIRDAAAAAAABgAKAAQABgAAAGQAAAAAAF4AUAAQAAwAAAAAAEwASAAAAAAAAAAAAEQAQwA8AAAAOAA0ADAALAArACQAIAAAAAAAAAAAAAAAGgAAAAAAAAAAAAAAFAAAABwAAAAAAAAAAAAAAAgAAAAAABsABwBeAAAAAAAAAUgAAACIAAAAnAAAAEQAAAAAAAEA56mDQTIz10EAAMhCAAAAAVgAAAAAAEBBAADAQAAAQEAAAMhCAAAAAUgAAAACAAAAAgAAACj///8s////AQAAAAwAAAAAAAYACAAEAAYAAAAEAAAADQAAAEFuaW1hdGlvblR5cGUAAAA2////AP///z7///8AAAAAAQAAAAQAAAALAAAASGVlYm8tQmxhY2sAAQAAAAwAAAAIAAwABAAIAAgAAAAIAAAARAAAAAIAAABBYQAAAAA2ACAAAAAcABgAAAAUAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAAAAAgABAA2AAAAAgAAABwAAAAgAAAAAAAAACgAAAA4AAAA0gWKQgQABAAEAAAABAAGAAQAAAAAAAoACgAHAAgACQAKAAAAAAAAAAAACgAIAAUABgAHAAoAAAAAAAAA
+		<StartKeyframeValue Encoding="base64" BinaryHash="3be5a0f0-96e0-4fe8-77f0-ef2e000001ec">1AEAAAAAAABEMyIRDAAAAAAABgAKAAQABgAAAGQAAAAAAF4ATAAQAAwAAAAAAEgARAAAAAAAAAAAAEAAAAA8AAAAOAA0ADAALAArACQAIAAAAAAAAAAAAAAAGgAAAAAAAAAAAAAAFAAAABwAAAAAAAAAAAAAAAgAAAAAABsABwBeAAAAAAAAAUQAAACEAAAAnAAAAEAAAAAAAAEA56mDQTIz10EAAMhCAAAAAVQAAAAAAEBBAADAQAAAQEAAAMhCSAAAAAIAAAACAAAAJP///yj///8BAAAADAAAAAAABgAIAAQABgAAAAQAAAANAAAAQW5pbWF0aW9uVHlwZQAAADL///8A////Ov///wAAAAABAAAABAAAAAwAAABCaXJ6aWEtQmxhY2sAAAAAAQAAAAwAAAAIAAwABAAIAAgAAAAIAAAARAAAAAIAAABBYQAAAAA2ACAAAAAcABgAAAAUAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADAAAAAgABAA2AAAAAgAAABwAAAAgAAAAAAAAACgAAAA4AAAAXeSZQgQABAAEAAAABAAGAAQAAAAAAAoACgAHAAgACQAKAAAAAAAAAAAACgAIAAUABgAHAAoAAAAAAAAA
 		</StartKeyframeValue>
 	</ArbVideoComponentParam>
 	<VideoComponentParam ObjectID="41" ClassID="cc12343e-f113-4d3b-ae05-b287db77d461" Version="9">
