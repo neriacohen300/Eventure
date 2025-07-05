@@ -1,7 +1,33 @@
 import os
-from PIL import Image, ImageFilter, ImageDraw
+from PIL import Image, ImageFilter, ImageDraw, ExifTags
 import concurrent.futures
 
+
+def load_image_respecting_exif(path):
+    try:
+        image = Image.open(path)
+
+        try:
+            exif = image._getexif()
+            if exif:
+                for orientation in ExifTags.TAGS:
+                    if ExifTags.TAGS[orientation] == 'Orientation':
+                        orientation_key = orientation
+                        break
+                orientation_value = exif.get(orientation_key, None)
+                if orientation_value == 3:
+                    image = image.rotate(180, expand=True)
+                elif orientation_value == 6:
+                    image = image.rotate(270, expand=True)
+                elif orientation_value == 8:
+                    image = image.rotate(90, expand=True)
+        except Exception as ex:
+            print(f"EXIF correction failed: {ex}")
+
+        return image
+    except Exception as e:
+        print(f"Image load failed ({path}): {e}")
+        return None
 
 def process_images(image_paths, output_folder, progress_callback=None):
     try:
@@ -29,7 +55,10 @@ def process_images(image_paths, output_folder, progress_callback=None):
 
 def process_single_image(index, img_data, bg_folder, img_folder):
     rotation = img_data['rotation']
-    original_image = Image.open(img_data['path']).convert("RGBA")
+    original_image = load_image_respecting_exif(img_data['path'])
+    if original_image is None:
+        return False
+    original_image = original_image.convert("RGBA")
     
     if rotation:
         original_image = original_image.rotate(rotation, expand=True)

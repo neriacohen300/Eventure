@@ -13,8 +13,8 @@ import subprocess
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QInputDialog, QAction,
                              QListWidget,QProgressBar,QComboBox,QMessageBox,QDialog, QTextEdit, QListWidgetItem, QCheckBox, QStyledItemDelegate,QPushButton, QLabel, QFileDialog, QSlider, QStyle, QTableWidgetItem, QSpinBox, QHeaderView, QTableWidget, QLineEdit)
 from PyQt5.QtCore import Qt, QUrl, QSize, QProcess, QTimer, QThread, pyqtSignal, QEvent
-from PyQt5.QtGui import QIcon, QFont, QPixmap,QTextCursor, QCursor, QTransform, QColor, QBrush
-from PIL import Image, ImageFilter
+from PyQt5.QtGui import QIcon, QFont, QPixmap,QTextCursor, QCursor, QTransform, QColor, QBrush, QImage
+from PIL import Image, ImageFilter, ExifTags
 from openpyxl import Workbook
 import openpyxl
 import Image_resizer, premiere_export
@@ -22,7 +22,8 @@ from concurrent.futures import ThreadPoolExecutor
                                                   
 from EVENTURE_THEMES.theme import set_theme
 
-os.environ["QT_PLUGIN_PATH"] = os.path.join(os.path.dirname(sys.executable), "Lib", "site-packages", "PyQt5", "Qt", "plugins")
+plugin_path = os.path.join(os.path.dirname(sys.executable), "Library", "plugins", "platforms")
+os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = plugin_path
 
 
 
@@ -804,26 +805,49 @@ class SlideshowCreator(QMainWindow):
 
 
     """05_Preview Functions"""
+
+
+    def load_image_respecting_exif(self, path):
+        try:
+            image = Image.open(path)
+
+            # Handle EXIF rotation
+            try:
+                exif = image._getexif()
+                if exif:
+                    for orientation in ExifTags.TAGS.keys():
+                        if ExifTags.TAGS[orientation] == 'Orientation':
+                            orientation_key = orientation
+                            break
+                    orientation_value = exif.get(orientation_key, None)
+
+                    if orientation_value == 3:
+                        image = image.rotate(180, expand=True)
+                    elif orientation_value == 6:
+                        image = image.rotate(270, expand=True)
+                    elif orientation_value == 8:
+                        image = image.rotate(90, expand=True)
+            except Exception as ex:
+                print(f"EXIF processing failed: {ex}")
+
+            image = image.convert("RGBA")
+            data = image.tobytes("raw", "RGBA")
+            qimg = QImage(data, image.width, image.height, QImage.Format_RGBA8888)
+            return QPixmap.fromImage(qimg)
+
+        except Exception as e:
+            print(f"Failed to load image {path}: {e}")
+            return QPixmap()  # Return empty pixmap on error
+
+
+
     def update_preview(self):
         """Update preview when a slide is selected"""
         selected_items = self.image_table.selectedItems()
         if selected_items and self.images:  # Check if images list is not empty
             row = self.image_table.row(selected_items[0])
             if 0 <= row < len(self.images):  # Ensure the row is valid
-                img_data = self.images[row]
-                img_path = img_data['path']
-                rotation = img_data.get('rotation', 0)  # Default to 0 if 'rotation' is not set
-                
-                # Load the image
-                pixmap = QPixmap(img_path)
-                if rotation != 0:
-                    # Apply rotation
-                    transform = QTransform()
-                    transform.rotate(rotation)
-                    pixmap = pixmap.transformed(transform, Qt.SmoothTransformation)
-                
-                # Display the rotated image in the preview
-                self.preview_label.setPixmap(pixmap.scaled(400, 300, Qt.KeepAspectRatio))
+                self.update_preview_with_row(row)
 
 
     def update_preview_with_row(self, row):
@@ -832,17 +856,20 @@ class SlideshowCreator(QMainWindow):
             img_data = self.images[row]
             img_path = img_data['path']
             rotation = img_data.get('rotation', 0)  # Default to 0 if 'rotation' is not set
-            
-            # Load the image
-            pixmap = QPixmap(img_path)
-            if rotation != 0:
-                # Apply rotation
-                transform = QTransform()
-                transform.rotate(rotation)
-                pixmap = pixmap.transformed(transform, Qt.SmoothTransformation)
-            
-            # Display the rotated image in the preview
-            self.preview_label.setPixmap(pixmap.scaled(400, 300, Qt.KeepAspectRatio))
+
+            # Load and auto-correct EXIF orientation
+            pixmap = self.load_image_respecting_exif(img_path)
+
+            if not pixmap.isNull():
+                if rotation != 0:
+                    transform = QTransform()
+                    transform.rotate(rotation)
+                    pixmap = pixmap.transformed(transform, Qt.SmoothTransformation)
+
+                # Display the rotated image in the preview
+                self.preview_label.setPixmap(pixmap.scaled(400, 300, Qt.KeepAspectRatio))
+            else:
+                self.preview_label.setText(self.tr("preview_unavailable"))  # or hardcoded "Preview unavailable"
 
 
     def setup_connections(self):
@@ -911,7 +938,7 @@ class SlideshowCreator(QMainWindow):
                     text = img.get('text', '')
                     if '\n' in text:
                         text = text.replace('\n', '\\n')
-                    f.write(f"{img['path']},{img.get('duration', 5)},{img.get('transition', 'fade')},{img.get('transition_duration', 1)},{text},{img.get('rotation', '')},{img.get('is_second_image', False)},{img.get('date', "")}\n") 
+                    f.write(f"{img['path']},{img.get('duration', 5)},{img.get('transition', 'fade')},{img.get('transition_duration', 1)},{text},{img.get('rotation', '')},{img.get('is_second_image', False)},{img.get('date', '')}\n")
                 self.loaded_project = file_name
 
     def load_project(self):
@@ -1085,7 +1112,7 @@ class SlideshowCreator(QMainWindow):
         # Create the "Texts" folder if it doesn't exist
         premiere_text_folder = os.path.join(self.premiere_project_folder, "03_טקסט")
         os.makedirs(premiere_text_folder, exist_ok=True)
-        style_file_path = r"E:\------ תכנות ------\Eventure\Premiere_Project\טקסט למצגת - עברית.prtextstyle"
+        style_file_path = r"E:\------ Programing ------\Eventure\Premiere_Project\טקסט למצגת - עברית.prtextstyle"
         # Copy the original text file to the new location
         original_text_file_path = os.path.join(premiere_text_folder, "טקסט למצגת - בעברית.prtextstyle")
         shutil.copy(style_file_path, original_text_file_path)
@@ -1146,7 +1173,7 @@ class SlideshowCreator(QMainWindow):
 
     def copy_premiere_project_file(self):
         # Define the source and destination paths for the Premiere project file
-        premiere_project_source = r"E:\------ תכנות ------\Eventure\Premiere_Project\Project.prproj"
+        premiere_project_source = r"E:\------ Programing ------\Eventure\Premiere_Project\Project.prproj"
         project_destination_folder = os.path.join(self.premiere_project_folder, "04_פרוייקט")
         os.makedirs(project_destination_folder, exist_ok=True)
         project_file_name = os.path.basename(self.premiere_project_folder) + ".prproj"

@@ -1,16 +1,44 @@
 import os
 from bidi.algorithm import get_display  # Handles RTL text
-from PIL import Image, ImageFilter, ImageDraw, ImageFont
+from PIL import Image, ImageFilter, ImageDraw, ImageFont, ExifTags
 
 # Cache font at module level
-FONT = ImageFont.truetype(r"E:\------ תכנות ------\Eventure\Fonts\Birzia-Black.otf", 85)
+FONT = ImageFont.truetype(r"E:\------ Programing ------\Eventure\Fonts\Birzia-Black.otf", 85)
+
+def load_image_respecting_exif(path):
+    try:
+        image = Image.open(path)
+
+        try:
+            exif = image._getexif()
+            if exif:
+                for orientation in ExifTags.TAGS:
+                    if ExifTags.TAGS[orientation] == 'Orientation':
+                        orientation_key = orientation
+                        break
+                orientation_value = exif.get(orientation_key, None)
+                if orientation_value == 3:
+                    image = image.rotate(180, expand=True)
+                elif orientation_value == 6:
+                    image = image.rotate(270, expand=True)
+                elif orientation_value == 8:
+                    image = image.rotate(90, expand=True)
+        except Exception as ex:
+            print(f"EXIF correction failed: {ex}")
+
+        return image
+    except Exception as e:
+        print(f"Image load failed ({path}): {e}")
+        return None
+
 
 def process_image(image_path, output_folder, text, rotation):
     font = FONT
     try:
-        original_image = Image.open(image_path)
+        original_image = load_image_respecting_exif(image_path)
+        if original_image is None:
+            raise ValueError("Could not load image with EXIF correction.")
 
-        # Rotate the original image if rotation is specified
         if rotation:
             original_image = original_image.rotate(rotation, expand=True)
 
