@@ -3,6 +3,12 @@
 
 
 
+# 🔍 How to Download?
+
+download the source code to your pc
+and inside the folder open cmd and run this command: 'pip install -r requirements.txt'
+
+
 # Eventure - Slideshow Creator
 
 Eventure is a powerful slideshow creation application that allows users to create professional slideshows with images, audio, and transitions. The application supports multiple languages and can export to video or Adobe Premiere projects.
