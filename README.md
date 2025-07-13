@@ -10,6 +10,11 @@ and inside the folder open cmd and run this command: `pip install -r requirement
 also download ffmpeg, and go over the code to check if the paths are good for you
 
 
+# 🎯 How to use?
+
+I prefer using it with Adobe Premiere Pro, so I just import all of the images and audio files, rearange them, and then just click export to premiere and you would have a new folder with the images already centerd and with a project file aswell, so it would be just adding a few effects from my preset and bamm, you've got a slideshow!
+
+
 # Eventure - Slideshow Creator
 
 Eventure is a powerful slideshow creation application that allows users to create professional slideshows with images, audio, and transitions. The application supports multiple languages and can export to video or Adobe Premiere projects.
