@@ -7,6 +7,7 @@
 
 download the source code to your pc
 and inside the folder open cmd and run this command: `pip install -r requirements.txt`
+also download ffmpeg, and go over the code to check if the paths are good for you
 
 
 # Eventure - Slideshow Creator
