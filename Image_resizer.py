@@ -87,7 +87,9 @@ def process_image(image_path, output_folder, text, rotation):
             hebrew_text = get_display(text)
 
             # Calculate text size
-            text_width, text_height = draw.textsize(hebrew_text, font=font)
+            bbox = draw.textbbox((0, 0), hebrew_text, font=font)
+            text_width = bbox[2] - bbox[0]
+            text_height = bbox[3] - bbox[1]
 
             # Calculate background dimensions and position
             bg_width = text_width + 40  # Add padding
@@ -96,16 +98,16 @@ def process_image(image_path, output_folder, text, rotation):
             bg_y = 1080 - bg_height - 50  # Place the background near the bottom, adjust the offset for height
 
             # Draw rounded rectangle as the background
-            radius = 10  # Border radius
+            radius = 12  # Border radius
             draw.rounded_rectangle(
                 (bg_x, bg_y, bg_x + bg_width, bg_y + bg_height),
                 radius=radius,
                 fill="white"
             )
 
-            # Add the text in black
+            # Add the text in black, positioned slightly higher than the background
             text_x = (1920 - text_width) // 2
-            text_y = bg_y + 10  # Center text vertically within the background
+            text_y = bg_y - 4  # Moved text up by 15 pixels (from +10 to -5)
             draw.text((text_x, text_y), hebrew_text, font=font, fill="black")
 
         # Create the output folder if it doesn't exist
