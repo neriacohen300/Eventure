@@ -6,7 +6,7 @@
 # 🔍 How to Download?
 
 download the source code to your pc
-and inside the folder open cmd and run this command: 'pip install -r requirements.txt'
+and inside the folder open cmd and run this command: `pip install -r requirements.txt`
 
 
 # Eventure - Slideshow Creator
