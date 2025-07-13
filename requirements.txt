@@ -1,0 +1,13 @@
+et_xmlfile==2.0.0
+lxml==6.0.0
+openpyxl==3.1.5
+pillow==11.3.0
+pip==24.0
+PyQt5==5.15.11
+PyQt5-Qt5==5.15.2
+PyQt5_sip==12.17.0
+python-bidi==0.6.6
+python-pptx==1.0.2
+setuptools==65.5.0
+typing_extensions==4.14.1
+xlsxwriter==3.2.5
