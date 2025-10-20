@@ -63,6 +63,16 @@ class SlideshowCreator(QMainWindow):
 
         print(f"Folder '{songs_folder.name}' copied to '{destination_folder}'")
 
+
+        fonts_folder = script_dir / "Fonts"
+
+        destination_folder = BASEPATH / fonts_folder.name
+
+        # Copy the folder and its contents
+        shutil.copytree(fonts_folder, destination_folder, dirs_exist_ok=True)
+
+        print(f"Folder '{fonts_folder.name}' copied to '{destination_folder}'")
+
         self.language = "en"  # Default language
         self.translations = {}
         self.load_translations()

@@ -1,9 +1,17 @@
 import os
 from bidi.algorithm import get_display  # Handles RTL text
 from PIL import Image, ImageFilter, ImageDraw, ImageFont, ExifTags
+from pathlib import Path
+
+
+
+BASEPATH = Path.home() / "Neria-LTD" / "Eventure"
+
 
 # Cache font at module level
-FONT = ImageFont.truetype(r"E:\------ Programing ------\Eventure\Fonts\Birzia-Black.otf", 85)
+FONT = ImageFont.truetype(f"{BASEPATH / "Birzia-Black.otf"}", 85)
+
+
 
 def load_image_respecting_exif(path):
     try:
