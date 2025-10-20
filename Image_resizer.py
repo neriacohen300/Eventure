@@ -1,4 +1,5 @@
 import os
+import shutil
 from bidi.algorithm import get_display  # Handles RTL text
 from PIL import Image, ImageFilter, ImageDraw, ImageFont, ExifTags
 from pathlib import Path
@@ -6,11 +7,22 @@ from pathlib import Path
 
 
 BASEPATH = Path.home() / "Neria-LTD" / "Eventure"
+script_dir = Path(__file__).resolve().parent
+fonts_folder = script_dir / "Fonts"
+
+destination_folder = BASEPATH / fonts_folder.name
+
+# Copy the folder and its contents
+shutil.copytree(fonts_folder, destination_folder, dirs_exist_ok=True)
+
+print(f"Folder '{fonts_folder.name}' copied to '{destination_folder}'")
 
 
 # Cache font at module level
-FONT = ImageFont.truetype(f"{BASEPATH / "Birzia-Black.otf"}", 85)
 
+
+FONT = ImageFont.truetype(str(BASEPATH / "Fonts" / "Birzia-Black.otf"), 85)
+BASEPATH.mkdir(parents=True, exist_ok=True)
 
 
 def load_image_respecting_exif(path):
