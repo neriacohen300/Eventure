@@ -14,7 +14,6 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QListWidget,QProgressBar,QComboBox,QMessageBox,QDialog, QTextEdit, QListWidgetItem, QCheckBox, QStyledItemDelegate,QPushButton, QLabel, QFileDialog, QSlider, QStyle, QTableWidgetItem, QSpinBox, QHeaderView, QTableWidget, QLineEdit)
 from PyQt5.QtCore import Qt, QUrl, QSize, QProcess, QTimer, QThread, pyqtSignal, QEvent
 from PyQt5.QtGui import QIcon, QFont, QPixmap,QTextCursor, QCursor, QTransform, QColor, QBrush, QImage
-from PyQt5.QtWinExtras import QWinTaskbarButton, QWinTaskbarProgress
 from PIL import Image, ImageFilter, ExifTags
 from openpyxl import Workbook
 import openpyxl
@@ -138,13 +137,6 @@ class SlideshowCreator(QMainWindow):
 
 
 
-        # Taskbar integration
-        self.taskbar_button = QWinTaskbarButton(self)
-        self.taskbar_button.setWindow(self.windowHandle())
-        self.taskbar_progress = self.taskbar_button.progress()
-        self.taskbar_progress.setRange(0, 100)
-        self.taskbar_progress.reset()
-        # Set dark background for the main widget
 
         """Left Panel - Image List with Durations"""
         left_panel = QVBoxLayout()

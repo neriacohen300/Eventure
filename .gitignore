@@ -1,5 +1,6 @@
 Eventure.lnk
 venv/
+.venv/
 __pycache__/
 *.py[codz]
 *$py.class
