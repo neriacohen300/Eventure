@@ -26,7 +26,8 @@ from EVENTURE_THEMES.theme import set_theme
 plugin_path = os.path.join(os.path.dirname(sys.executable), "Library", "plugins", "platforms")
 os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = plugin_path
 
-
+BASEPATH = Path.home() / "Neria-LTD" / "Eventure"
+BASEPATH.mkdir(parents=True, exist_ok=True)
 
 """main class"""
 class SlideshowCreator(QMainWindow):
@@ -37,11 +38,8 @@ class SlideshowCreator(QMainWindow):
 
         script_dir = Path(__file__).resolve().parent
         help_folder = script_dir / "Help"
-        # Ensure the directory exists
-        os.makedirs("C:\\NeriaLTD\\Eventure", exist_ok=True)
 
-        destination_root = Path("C:\\NeriaLTD\\Eventure")
-        destination_folder = destination_root / help_folder.name
+        destination_folder = BASEPATH / help_folder.name
 
         # Copy the folder and its contents
         shutil.copytree(help_folder, destination_folder, dirs_exist_ok=True)
@@ -50,8 +48,7 @@ class SlideshowCreator(QMainWindow):
 
         language_folder = script_dir / "Languages"
 
-        destination_root = Path("C:\\NeriaLTD\\Eventure")
-        destination_folder = destination_root / language_folder.name
+        destination_folder = BASEPATH / language_folder.name
 
         # Copy the folder and its contents
         shutil.copytree(language_folder, destination_folder, dirs_exist_ok=True)
@@ -60,8 +57,7 @@ class SlideshowCreator(QMainWindow):
 
         songs_folder = script_dir / "Songs"
 
-        destination_root = Path("C:\\NeriaLTD\\Eventure")
-        destination_folder = destination_root / songs_folder.name
+        destination_folder = BASEPATH / songs_folder.name
 
         # Copy the folder and its contents
         shutil.copytree(songs_folder, destination_folder, dirs_exist_ok=True)
@@ -1238,14 +1234,16 @@ class SlideshowCreator(QMainWindow):
     def save_shortcuts(self):
         
         # Save shortcuts to a file
-        with open("C:\\NeriaLTD\\Eventure\\shortcuts.txt", "w") as f:
+        shortcuts_file_path = BASEPATH / "shortcuts.txt"
+        with open(shortcuts_file_path, "w") as f:
             for action, shortcut in self.shortcuts.items():
                 f.write(f"{action}:{shortcut}\n")
 
     def load_shortcuts(self):
         # Load shortcuts from file
+        shortcuts_file_path = BASEPATH / "shortcuts.txt"
         try:
-            with open("C:\\NeriaLTD\\Eventure\\shortcuts.txt", "r") as f:
+            with open(shortcuts_file_path, "r") as f:
                 for line in f:
                     action, shortcut = line.strip().split(":")
                     self.shortcuts[action] = shortcut
@@ -1301,8 +1299,8 @@ class SlideshowCreator(QMainWindow):
 
     "10_Translations Functions"
     def load_translations(self):
+        lang_file = BASEPATH / "Languages" / f"lang_{self.language}.json"
         try:
-            lang_file = f"C:\\NeriaLTD\\Eventure\\Languages\\lang_{self.language}.json"
             with open(lang_file, 'r', encoding='utf-8') as f:
                 self.translations = json.load(f)
         except FileNotFoundError:
@@ -1649,7 +1647,8 @@ class HelpDialog(QDialog):
     def load_help_info(self):
         help_data = {}
         try:
-            with open(f'C:\\NeriaLTD\\Eventure\\Help\\Help_Info_{self.language}.txt', 'r', encoding='utf-8') as f:
+            help_file_path = BASEPATH / "Help" / f"Help_Info_{self.language}.txt"
+            with open(help_file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
                 blocks = content.split('topic:')
                 for block in blocks:
@@ -1937,7 +1936,7 @@ class AudioLibraryDialog(QDialog):
         self.song_list.itemSelectionChanged.connect(self.update_song_info)
     
     def load_songs(self):
-        songs_file = "C:\\NeriaLTD\\Eventure\\Songs\\songs.json"
+        songs_file = BASEPATH / "Songs" / "songs.json"
         try:
             with open(songs_file, 'r', encoding='utf-8') as f:
                 self.songs = json.load(f)
@@ -1971,7 +1970,7 @@ class AudioLibraryDialog(QDialog):
                 f"<b>Author:</b> {song['author']}<br>"
                 f"<b>Duration:</b> {self.format_duration(song['duration'])}<br>"
                 f"<b>Fits for:</b> {song['fits_for']}<br>"
-                f"<b>Path:</b> {song['path']}"
+                f"<b>Path:</b> {Path(song["path"].replace("{BASE_PATH}", str(BASEPATH)))}"
             )
             self.info_label.setText(info_text)
     
@@ -1985,8 +1984,8 @@ class AudioLibraryDialog(QDialog):
         for item in selected_items:
             song = item.data(Qt.UserRole)
             # Check if this song is already in the project
-            if not any(audio['path'] == song['path'] for audio in self.parent().audio_files):
-                self.parent().audio_files.append({'path': song['path']})
+            if not any(audio['path'] == Path(song["path"].replace("{BASE_PATH}", str(BASEPATH))) for audio in self.parent().audio_files):
+                self.parent().audio_files.append({'path': Path(song["path"].replace("{BASE_PATH}", str(BASEPATH)))})
         
         self.parent().update_audio_table()
         self.close()
