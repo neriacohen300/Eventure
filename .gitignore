@@ -1,0 +1,6 @@
+Eventure.lnk
+venv/
+__pycache__/
+*.py[codz]
+*$py.class
+Load_Music/
