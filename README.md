@@ -1,3 +1,6 @@
+<img width="1920" height="600" alt="Eventure-Banner" src="https://github.com/user-attachments/assets/46cd6b6b-c219-401a-abc7-871e3a22c544" />
+
+
 ![image](https://github.com/user-attachments/assets/88a35ffb-390a-4785-bee7-a2c2a2bbb0a6)
 
 
