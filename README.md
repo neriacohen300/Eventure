@@ -56,7 +56,7 @@ Eventure is a powerful slideshow creation application that allows users to creat
 
 ## License
 
-This project is proprietary software.
+MIT License
 
 ## Contact
 
