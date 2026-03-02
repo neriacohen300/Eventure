@@ -21,7 +21,18 @@ Key improvements over original:
   │  • Premiere style file path now relative (no hardcoded E:\\ path)        │
   │  • load_project validates line count before indexing                     │
   └─────────────────────────────────────────────────────────────────────────┘
+
+CRITICAL – multiprocessing fix (Windows):
+  freeze_support() MUST be the very first executable line in the entry-point
+  file.  On Windows, ProcessPoolExecutor spawns fresh Python processes that
+  re-import this module; if freeze_support() isn't first, every worker tries
+  to boot the full Qt app and crashes immediately.
 """
+
+# ── freeze_support MUST come before every other import ───────────────────────
+import multiprocessing
+multiprocessing.freeze_support()
+# ─────────────────────────────────────────────────────────────────────────────
 
 import configparser
 import copy
@@ -52,10 +63,10 @@ from PIL import Image, ExifTags
 from openpyxl import Workbook
 import openpyxl
 
-import Image_resizer
 import premiere_export
 
 from EVENTURE_THEMES.theme import set_theme
+
 
 # ── Environment ──────────────────────────────────────────────────────────────
 
@@ -360,8 +371,9 @@ class SlideshowCreator(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        script_dir = Path(__file__).resolve().parent
-        _copy_resource_folders(script_dir, ["Help", "Languages", "Songs", "Fonts"])
+        # Resource folders are synced once at startup in __main__ block below.
+        # Do NOT call _copy_resource_folders here — worker processes also
+        # instantiate classes during import, and we must not do file I/O there.
 
         self.language     = "en"
         self.translations = {}
@@ -1214,11 +1226,31 @@ class SlideshowCreator(QMainWindow):
         self.taskbar_progress.setValue(0)
 
         self.image_premiere_worker = ImageProcessingPremiereWorker(
-            self.images, self.premiere_project_folder, self.common_width, self.common_height
+            self.images, self.premiere_project_folder,
+            self.common_width, self.common_height,
+            audio_files=self.audio_files,          # ← pass audio for XML music track
         )
         self.image_premiere_worker.progress.connect(self.update_image_premiere_progress)
         self.image_premiere_worker.finished.connect(self.on_image_premiere_processing_finished)
+        self.image_premiere_worker.xml_ready.connect(self.on_premiere_xml_ready)
         self.image_premiere_worker.start()
+
+    def on_premiere_xml_ready(self, xml_path: str):
+        """Called when the Premiere XML timeline has been written to disk."""
+        print(f"Premiere XML ready: {xml_path}")
+        # Move the XML into the 04_project folder so it lives next to the .prproj
+        dst_folder = os.path.join(self.premiere_project_folder, "04_פרוייקט")
+        os.makedirs(dst_folder, exist_ok=True)
+        dst = os.path.join(dst_folder, "premiere_timeline.xml")
+        try:
+            shutil.move(xml_path, dst)
+            QMessageBox.information(
+                self,
+                "Premiere XML",
+                f"Timeline XML saved:\n{dst}\n\nIn Premiere Pro: File → Import → premiere_timeline.xml",
+            )
+        except Exception as e:
+            print(f"Could not move XML to project folder: {e}")
 
     def update_image_premiere_progress(self, value: int):
         self.image_premiere_progress_bar.setValue(value)
@@ -1638,18 +1670,66 @@ class ImageProcessingWorker(QThread):
 
 
 class ImageProcessingPremiereWorker(QThread):
-    progress = pyqtSignal(int)
-    finished = pyqtSignal()
+    progress    = pyqtSignal(int)
+    finished    = pyqtSignal()
+    xml_ready   = pyqtSignal(str)   # emits path to the generated XML file
 
-    def __init__(self, images, output_folder, common_width, common_height):
+    def __init__(self, images, output_folder, common_width, common_height,
+                 audio_files=None):
         super().__init__()
         self.images        = images
         self.output_folder = output_folder
         self.common_width  = common_width
         self.common_height = common_height
+        self.audio_files   = audio_files or []
 
     def run(self):
+        # ── Step 1: process images (backgrounds + foregrounds) ────────────────
         premiere_export.process_images(self.images, self.output_folder, self.progress.emit)
+
+        # ── Step 2: build slide list mapping processed files → slide data ─────
+        bg_folder  = os.path.join(self.output_folder, "01_images", "backgrounds")
+        img_folder = os.path.join(self.output_folder, "01_images", "foregrounds")
+
+        slide_list = []
+        for i, img in enumerate(self.images, start=1):
+            if img.get("is_second_image"):
+                fg = os.path.join(img_folder, f"img{i}_2nd_of_img{i-1}.png")
+                slide_list.append({
+                    "bg_path":  None,
+                    "fg_path":  fg if os.path.exists(fg) else None,
+                    "duration": img.get("duration", 5.0),
+                    "text":     img.get("text", ""),
+                })
+            else:
+                bg = os.path.join(bg_folder, f"background_img{i}.jpg")
+                fg = os.path.join(img_folder, f"img{i}.png")
+                slide_list.append({
+                    "bg_path":  bg if os.path.exists(bg) else None,
+                    "fg_path":  fg if os.path.exists(fg) else None,
+                    "duration": img.get("duration", 5.0),
+                    "text":     img.get("text", ""),
+                })
+
+        # ── Step 3: pick first audio file as background music (if any) ────────
+        music_path = None
+        if self.audio_files:
+            first = self.audio_files[0]
+            p = str(first["path"]) if hasattr(first["path"], "__fspath__") else first["path"]
+            if os.path.exists(p):
+                music_path = p
+
+        # ── Step 4: generate the Premiere XML timeline ────────────────────────
+        try:
+            xml_path = premiere_export.generate_premiere_xml(
+                slide_list   = slide_list,
+                output_folder= self.output_folder,
+                music_path   = music_path,
+            )
+            self.xml_ready.emit(xml_path)
+        except Exception as e:
+            print(f"XML generation error: {e}")
+
         self.finished.emit()
 
 
@@ -1879,6 +1959,12 @@ class AudioLibraryDialog(QDialog):
 # ── Entry Point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    # Image_resizer is imported HERE, not at module level.
+    # This guarantees the folder-sync code only runs in the main process,
+    # never inside the worker processes spawned by ProcessPoolExecutor.
+    import Image_resizer
+    Image_resizer.sync_app_folders()
+
     app = QApplication(sys.argv)
     app.setWindowIcon(QIcon("logo.ico"))
     set_theme(app, theme="dark")
