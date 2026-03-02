@@ -234,6 +234,7 @@ def render_ken_burns_clip(image_path: str, effect: str, duration: float,
             # Anchor to center — critical to prevent shake
             sx = (src_w - sw) / 2.0
             sy = (src_h - sh) / 2.0
+
         elif effect == "pan_left":
             sw, sh = float(W), float(H)
             sx = (src_w - W) * (1.0 - t)
@@ -685,7 +686,7 @@ class SlideshowCreator(QMainWindow):
         self.image_table.setItem(row, 8, date_item)
 
         kb_cb = QComboBox()
-        kb_cb.addItems(["none", "zoom_in", "zoom_out", "zoom_in_out", "zoom_out_in",
+        kb_cb.addItems(["none", "zoom_in", "zoom_out",
                          "pan_left", "pan_right", "pan_up", "pan_down"])
         kb_cb.setCurrentText(img.get("ken_burns", "none"))
         kb_cb.currentTextChanged.connect(lambda text, r=row: self._update_ken_burns(r, text))
@@ -1156,7 +1157,7 @@ class SlideshowCreator(QMainWindow):
             self.images[row]["ken_burns"] = value
 
     def _set_all_ken_burns(self):
-        KB_OPTIONS = ["none", "zoom_in", "zoom_out", "zoom_in_out", "zoom_out_in",
+        KB_OPTIONS = ["none", "zoom_in", "zoom_out",
                       "pan_left", "pan_right", "pan_up", "pan_down"]
         dialog = QInputDialog(self)
         dialog.setWindowTitle("Set Ken Burns Effect")
