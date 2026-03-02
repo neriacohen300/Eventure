@@ -13,9 +13,8 @@
 
 # 🔍 How to Download?
 
-download the source code to your pc
-and inside the folder open cmd and run this command: `pip install -r requirements.txt`
-also download ffmpeg, and go over the code to check if the paths are good for you
+Download the latest release from the `Release` page.
+Download the setup.exe file and if you would like an Adobe Premiere Pro preset pack that would help you, download it too.
 
 
 # 🎯 How to use?
