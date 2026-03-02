@@ -1108,8 +1108,11 @@ class SlideshowCreator(QMainWindow):
         file_name, _ = QFileDialog.getOpenFileName(
             self, "Load Project", "", "Project Files (*.slideshow);;All Files (*)"
         )
-        if not file_name:
-            return
+        if file_name:
+            self._load_project_from_path(file_name)
+
+    def _load_project_from_path(self, file_name: str):
+        """Load a .slideshow file from an explicit path (also called by file association)."""
         try:
             with open(file_name, "r", encoding="utf-8") as f:
                 lines = f.readlines()
@@ -1124,25 +1127,36 @@ class SlideshowCreator(QMainWindow):
                 parts = line.strip().split(",")
                 if len(parts) < 8:
                     continue
-                path, dur, transition, trans_dur, text, rotation, is_second, date = parts[:8]
-                ken_burns  = parts[8].strip() if len(parts) > 8 else "none"
-                text_on_kb = parts[9].strip().lower() != "false" if len(parts) > 9 else True
+                # parts: path, dur, transition, trans_dur, text, rotation,
+                #        second_image_path, second_image_rotation, date, ken_burns, text_on_kb
+                path         = parts[0]
+                dur          = parts[1]
+                transition   = parts[2]
+                trans_dur    = parts[3]
+                text         = parts[4]
+                rotation     = parts[5]
+                is_second  = parts[6]
+                date         = parts[7] if len(parts) > 7 else ""
+                ken_burns    = parts[8].strip()  if len(parts) > 8  else "none"
+                text_on_kb   = parts[9].strip().lower() != "false" if len(parts) > 9 else True
+
                 self.images.append({
-                    "path":               path,
-                    "duration":           int(dur),
-                    "transition":         transition,
+                    "path":                path,
+                    "duration":            int(dur),
+                    "transition":          transition,
                     "transition_duration": self.default_transition_duration,
-                    "text":               text.replace("\\n", "\n"),
-                    "rotation":           int(rotation),
-                    "is_second_image":    is_second.strip().lower() == "true",
-                    "date":               date,
-                    "ken_burns":          ken_burns,
-                    "text_on_kb":         text_on_kb,
+                    "text":                text.replace("\\n", "\n"),
+                    "rotation":            int(rotation),
+                    "is_second_image":     is_second.strip().lower() == "true",
+                    "date":                date,
+                    "ken_burns":           ken_burns,
+                    "text_on_kb":          text_on_kb,
                 })
 
             self.update_image_table()
             self.update_audio_table()
             self.loaded_project = file_name
+
         except Exception as e:
             QMessageBox.critical(self, self.tr("error"), f"Failed to load project:\n{e}")
 
@@ -1712,20 +1726,12 @@ class ImageProcessingPremiereWorker(QThread):
                     "text":     img.get("text", ""),
                 })
 
-        # ── Step 3: pick first audio file as background music (if any) ────────
-        music_path = None
-        if self.audio_files:
-            first = self.audio_files[0]
-            p = str(first["path"]) if hasattr(first["path"], "__fspath__") else first["path"]
-            if os.path.exists(p):
-                music_path = p
-
-        # ── Step 4: generate the Premiere XML timeline ────────────────────────
+        # ── Step 3: generate the Premiere XML timeline ────────────────────────
         try:
             xml_path = premiere_export.generate_premiere_xml(
                 slide_list   = slide_list,
                 output_folder= self.output_folder,
-                music_path   = music_path,
+                music_paths   = self.audio_files,
             )
             self.xml_ready.emit(xml_path)
         except Exception as e:
@@ -1960,9 +1966,6 @@ class AudioLibraryDialog(QDialog):
 # ── Entry Point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    # Image_resizer is imported HERE, not at module level.
-    # This guarantees the folder-sync code only runs in the main process,
-    # never inside the worker processes spawned by ProcessPoolExecutor.
     import Image_resizer
     Image_resizer.sync_app_folders()
 
@@ -1973,4 +1976,13 @@ if __name__ == "__main__":
     window.create_menu()
     window.setup_connections()
     window.show()
+
+    # ── File association fix: open .slideshow passed by Windows shell ─────────
+    # When the user double-clicks a .slideshow file (or "Open with" the app),
+    # Windows passes the file path as sys.argv[1].  Load it automatically.
+    if len(sys.argv) > 1:
+        arg = sys.argv[1]
+        if arg.endswith(".slideshow") and os.path.exists(arg):
+            window._load_project_from_path(arg)
+
     sys.exit(app.exec_())

@@ -20,6 +20,8 @@ from PIL import Image, ImageFilter, ExifTags
 import concurrent.futures
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from typing import Optional
+from mutagen import File as MutagenFile
+
 
 
 # ── EXIF helpers ─────────────────────────────────────────────────────────────
@@ -265,44 +267,51 @@ def _build_video_clip(
     return item
 
 
+def get_audio_duration_frames(path: str) -> int:
+    audio = MutagenFile(path)
+    return _frames(audio.info.length) if audio else _frames(FPS)
+
+
 def _build_audio_clip(
     music_path: str,
-    total_duration_frames: int,
+    start_frame: int,
+    duration_frames: int,
+    total_sequence_frames: int,
 ) -> ET.Element:
-    """Build an audio <clipitem> for the background music track."""
     clip_id = _make_clip_id()
     item = ET.Element("clipitem", id=clip_id)
     ET.SubElement(item, "name").text       = os.path.basename(music_path)
-    ET.SubElement(item, "duration").text   = str(total_duration_frames)
-    ET.SubElement(item, "start").text      = "0"
-    ET.SubElement(item, "end").text        = str(total_duration_frames)
+    ET.SubElement(item, "duration").text   = str(get_audio_duration_frames(str(music_path)))
+    ET.SubElement(item, "start").text      = str(start_frame)
+    ET.SubElement(item, "end").text        = str(start_frame + get_audio_duration_frames(str(music_path)))
     ET.SubElement(item, "in").text         = "0"
-    ET.SubElement(item, "out").text        = str(total_duration_frames)
+    ET.SubElement(item, "out").text        = str(get_audio_duration_frames(str(music_path)))
 
     file_el = ET.SubElement(item, "file", id="file-" + clip_id)
     ET.SubElement(file_el, "name").text    = os.path.basename(music_path)
     ET.SubElement(file_el, "pathurl").text = "file:" + music_path.replace("\\", "/")
-    ET.SubElement(file_el, "duration").text = str(total_duration_frames)
+    ET.SubElement(file_el, "duration").text = str(total_sequence_frames)
     rate = ET.SubElement(file_el, "rate")
     ET.SubElement(rate, "timebase").text   = TIMEBASE
     ET.SubElement(rate, "ntsc").text       = "FALSE"
     media = ET.SubElement(file_el, "media")
     audio_m = ET.SubElement(media, "audio")
-    ET.SubElement(audio_m, "duration").text = str(total_duration_frames)
+    ET.SubElement(audio_m, "duration").text = str(total_sequence_frames)
 
-    # Fade-out keyframes on the last 2 seconds
-    fade_start = max(0, total_duration_frames - _frames(2))
-    filters = ET.SubElement(item, "filters")
-    vol_filter = ET.SubElement(filters, "filter")
-    ET.SubElement(vol_filter, "name").text     = "Audio Levels"
-    ET.SubElement(vol_filter, "effectid").text = "audiolevels"
-    vol_param = ET.SubElement(vol_filter, "parameter")
-    ET.SubElement(vol_param, "parameterid").text = "level"
-    ET.SubElement(vol_param, "name").text        = "Level"
-    kf_vol = ET.SubElement(vol_param, "keyframe_list")
-    _add_keyframe(kf_vol, 0,                    "100")
-    _add_keyframe(kf_vol, fade_start,           "100")
-    _add_keyframe(kf_vol, total_duration_frames, "0")
+    is_last = (start_frame + get_audio_duration_frames(str(music_path)) >= total_sequence_frames)
+    if is_last:
+        fade_start = max(0, get_audio_duration_frames(str(music_path)) - _frames(2))
+        filters = ET.SubElement(item, "filters")
+        vol_filter = ET.SubElement(filters, "filter")
+        ET.SubElement(vol_filter, "name").text     = "Audio Levels"
+        ET.SubElement(vol_filter, "effectid").text = "audiolevels"
+        vol_param = ET.SubElement(vol_filter, "parameter")
+        ET.SubElement(vol_param, "parameterid").text = "level"
+        ET.SubElement(vol_param, "name").text        = "Level"
+        kf_vol = ET.SubElement(vol_param, "keyframe_list")
+        _add_keyframe(kf_vol, 0,                    "100")
+        _add_keyframe(kf_vol, fade_start,           "100")
+        _add_keyframe(kf_vol, total_sequence_frames, "0")
 
     return item
 
@@ -310,7 +319,7 @@ def _build_audio_clip(
 def generate_premiere_xml(
     slide_list: list[dict],
     output_folder: str,
-    music_path: Optional[str] = None,
+    music_paths: list[str] = None,   # ← now a list
     default_duration_sec: float = 5.0,
     transition_duration_sec: float = 1.0,
 ) -> str:
@@ -399,10 +408,19 @@ def generate_premiere_xml(
 
     # ── Audio track (background music) ────────────────────────────────────────
     audio = ET.SubElement(media, "audio")
-    if music_path and os.path.exists(music_path):
+    if music_paths:
         audio_track = ET.SubElement(audio, "track")
-        audio_clip = _build_audio_clip(music_path, seq_dur)
-        audio_track.append(audio_clip)
+        cursor_audio = 0
+        for item in music_paths:
+            path = item["path"] if isinstance(item, dict) else item
+            if not os.path.exists(path):
+                continue
+            if cursor_audio >= seq_dur:
+                break
+            audio_dur = get_audio_duration_frames(path)  # real file duration
+            audio_clip = _build_audio_clip(path, cursor_audio, audio_dur, seq_dur)
+            audio_track.append(audio_clip)
+            cursor_audio += audio_dur 
 
     # ── Pretty-print & save ───────────────────────────────────────────────────
     xml_str = minidom.parseString(
@@ -426,7 +444,7 @@ def generate_premiere_xml(
 def export_slideshow(
     image_paths: list[dict],
     output_folder: str,
-    music_path: Optional[str] = None,
+    music_path: list[str] = None,
     default_duration_sec: float = 5.0,
     progress_callback=None,
 ) -> str:
