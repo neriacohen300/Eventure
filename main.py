@@ -135,6 +135,186 @@ def _copy_resource_folders(script_dir: Path, resources: list[str]) -> None:
         print(f"Folder '{name}' synced to '{dst}'")
 
 
+# ── Ken Burns pre-renderer ───────────────────────────────────────────────────
+#
+# Instead of using FFmpeg's notoriously fragile zoompan filter (which produces
+# variable-framerate streams that break xfade), we pre-render Ken Burns as a
+# real .mp4 clip per image using Pillow + ffmpeg pipe.  The main export then
+# uses these clips as normal video inputs — stable timestamps, correct size,
+# no surprises.
+
+_KB_FPS = 25
+
+def render_ken_burns_clip(image_path: str, effect: str, duration: float,
+                           output_path: str, rotation: int = 0,
+                           text: str = "", text_on_kb: bool = True) -> bool:
+    """
+    Render a smooth Ken Burns clip to output_path (H.264 mp4, 1920x1080, 25fps).
+
+    text        – overlay text drawn on every frame
+    text_on_kb  – if False, text is composited as a STATIC overlay so it stays
+                  perfectly still while the image pans/zooms beneath it.
+    """
+    from PIL import Image as _Image, ImageDraw as _Draw, ImageFont as _Font
+    from PIL import ExifTags as _ExifTags
+    import subprocess as _sp
+    import numpy as _np
+
+    W, H, FPS = 1920, 1080, _KB_FPS
+    frames = max(1, int(duration * FPS))
+
+    # ── Load & orient ─────────────────────────────────────────────────────────
+    try:
+        img = _Image.open(image_path)
+        try:
+            exif = img._getexif()
+            if exif:
+                for tag, val in exif.items():
+                    if _ExifTags.TAGS.get(tag) == "Orientation":
+                        if val == 3:   img = img.rotate(180, expand=True)
+                        elif val == 6: img = img.rotate(270, expand=True)
+                        elif val == 8: img = img.rotate(90,  expand=True)
+                        break
+        except Exception:
+            pass
+        if rotation:
+            img = img.rotate(rotation, expand=True)
+        img = img.convert("RGB")
+    except Exception as e:
+        print(f"KB render: cannot open {image_path}: {e}")
+        return False
+
+    # ── Build 130% source canvas ──────────────────────────────────────────────
+    SCALE = 1.30
+    src_w = int(W * SCALE)
+    src_h = int(H * SCALE)
+    img_aspect = img.width / img.height
+    tgt_aspect = src_w / src_h
+    if img_aspect > tgt_aspect:
+        rh = src_h;  rw = int(rh * img_aspect)
+    else:
+        rw = src_w;  rh = int(rw / img_aspect)
+    img = img.resize((rw, rh), _Image.Resampling.LANCZOS)
+    cx = (rw - src_w) // 2;  cy = (rh - src_h) // 2
+    img = img.crop((cx, cy, cx + src_w, cy + src_h))
+    src = _np.array(img)
+
+    px = float(src_w - W)
+    py = float(src_h - H)
+
+    # ── Pre-compute ALL rects as floats (smooth — no per-frame rounding) ──────
+    def make_rects():
+        rects = []
+        for f in range(frames):
+            t = f / max(frames - 1, 1)
+            if effect == "zoom_in":
+                sw = src_w + (W - src_w) * t
+                sh = src_h + (H - src_h) * t
+                sx = (src_w - sw) / 2.0;  sy = (src_h - sh) / 2.0
+            elif effect == "zoom_out":
+                sw = W + (src_w - W) * t
+                sh = H + (src_h - H) * t
+                sx = (src_w - sw) / 2.0;  sy = (src_h - sh) / 2.0
+            elif effect == "zoom_in_out":
+                t2 = t * 2.0 if t < 0.5 else 2.0 - t * 2.0
+                sw = src_w + (W - src_w) * t2
+                sh = src_h + (H - src_h) * t2
+                sx = (src_w - sw) / 2.0;  sy = (src_h - sh) / 2.0
+            elif effect == "zoom_out_in":
+                t2 = t * 2.0 if t < 0.5 else 2.0 - t * 2.0
+                sw = W + (src_w - W) * t2
+                sh = H + (src_h - H) * t2
+                sx = (src_w - sw) / 2.0;  sy = (src_h - sh) / 2.0
+            elif effect == "pan_left":
+                sw, sh = float(W), float(H)
+                sx = px * (1.0 - t);  sy = py / 2.0
+            elif effect == "pan_right":
+                sw, sh = float(W), float(H)
+                sx = px * t;  sy = py / 2.0
+            elif effect == "pan_up":
+                sw, sh = float(W), float(H)
+                sx = px / 2.0;  sy = py * (1.0 - t)
+            elif effect == "pan_down":
+                sw, sh = float(W), float(H)
+                sx = px / 2.0;  sy = py * t
+            else:
+                sw, sh = float(W), float(H)
+                sx, sy = px / 2.0, py / 2.0
+            rects.append((sx, sy, sw, sh))
+        return rects
+
+    rects = make_rects()
+
+    # ── Prepare static text overlay (when text_on_kb=False) ──────────────────
+    static_text_overlay = None
+    if text and text.strip() and not text_on_kb:
+        try:
+            from bidi.algorithm import get_display as _bidi
+            from pathlib import Path as _Path
+            _font_path = _Path.home() / "Neria-LTD" / "Eventure" / "Fonts" / "Birzia-Black.otf"
+            try:
+                _font = _Font.truetype(str(_font_path), 85)
+            except Exception:
+                _font = _Font.load_default()
+            overlay = _Image.new("RGBA", (W, H), (0, 0, 0, 0))
+            draw = _Draw.Draw(overlay)
+            htext = _bidi(text)
+            bbox = draw.textbbox((0, 0), htext, font=_font)
+            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+            bg_w, bg_h = tw + 40, th + 20
+            bg_x = (W - bg_w) // 2;  bg_y = H - bg_h - 50
+            draw.rounded_rectangle((bg_x, bg_y, bg_x + bg_w, bg_y + bg_h), radius=12, fill="white")
+            draw.text(((W - tw) // 2, bg_y - 4), htext, font=_font, fill="black")
+            static_text_overlay = _np.array(overlay)   # RGBA
+        except Exception as e:
+            print(f"KB text overlay error: {e}")
+
+    # ── Pipe frames into ffmpeg ───────────────────────────────────────────────
+    cmd = [
+        "ffmpeg", "-y",
+        "-f", "rawvideo", "-vcodec", "rawvideo",
+        "-s", f"{W}x{H}", "-pix_fmt", "rgb24", "-r", str(FPS),
+        "-i", "pipe:0",
+        "-vcodec", "libx264", "-pix_fmt", "yuv420p",
+        "-preset", "fast", "-crf", "20",
+        "-r", str(FPS), "-movflags", "+faststart",
+        output_path,
+    ]
+    proc = None
+    try:
+        proc = _sp.Popen(cmd, stdin=_sp.PIPE, stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+        for f in range(frames):
+            sx, sy, sw, sh = rects[f]
+            isx = max(0, min(int(round(sx)), src_w - 1))
+            isy = max(0, min(int(round(sy)), src_h - 1))
+            isw = max(1, min(int(round(sw)), src_w - isx))
+            ish = max(1, min(int(round(sh)), src_h - isy))
+
+            crop = src[isy:isy + ish, isx:isx + isw]
+            pil_frame = _Image.fromarray(crop).resize(
+                (W, H),
+                _Image.Resampling.LANCZOS if isw != W or ish != H else _Image.Resampling.NEAREST
+            )
+
+            # Composite static text on top if needed
+            if static_text_overlay is not None:
+                pil_frame = pil_frame.convert("RGBA")
+                text_layer = _Image.fromarray(static_text_overlay, "RGBA")
+                pil_frame = _Image.alpha_composite(pil_frame, text_layer).convert("RGB")
+
+            proc.stdin.write(_np.array(pil_frame).tobytes())
+
+        proc.stdin.close()
+        proc.wait()
+        return proc.returncode == 0
+    except Exception as e:
+        print(f"KB render pipe error: {e}")
+        if proc:
+            try: proc.stdin.close()
+            except Exception: pass
+        return False
+
+
 # ── Taskbar Progress Stub ────────────────────────────────────────────────────
 
 class _TaskbarProgressStub:
@@ -223,7 +403,7 @@ class SlideshowCreator(QMainWindow):
         left_panel = QVBoxLayout()
         self.image_table = QTableWidget()
         self.image_table.setItemDelegate(CustomDelegate())
-        self.image_table.setColumnCount(9)
+        self.image_table.setColumnCount(11)
         self.image_table.setHorizontalHeaderLabels([
             self.tr("table_header_actions"),
             self.tr("table_header_image"),
@@ -234,9 +414,11 @@ class SlideshowCreator(QMainWindow):
             self.tr("table_header_rotation"),
             self.tr("table_header_second_image"),
             self.tr("table_header_date"),
+            "Ken Burns",
+            "Text Static",
         ])
         self.image_table.setFont(QFont(self.deafult_font, 10, QFont.Bold))
-        for col in range(9):
+        for col in range(11):
             self.image_table.horizontalHeader().setSectionResizeMode(
                 col, QHeaderView.ResizeToContents
             )
@@ -388,6 +570,8 @@ class SlideshowCreator(QMainWindow):
                     "rotation": 0,
                     "is_second_image": False,
                     "date": datetime.fromtimestamp(os.path.getmtime(f)).strftime("%Y-%m-%d %H:%M:%S"),
+                    "ken_burns": "none",
+                    "text_on_kb": True,
                 }
                 for f in files
             ]
@@ -460,6 +644,21 @@ class SlideshowCreator(QMainWindow):
         self.image_table.setItem(row, 6, rotation_item)
         self.image_table.setCellWidget(row, 7, second_cb)
         self.image_table.setItem(row, 8, date_item)
+
+        kb_cb = QComboBox()
+        kb_cb.addItems(["none", "zoom_in", "zoom_out", "zoom_in_out", "zoom_out_in",
+                         "pan_left", "pan_right", "pan_up", "pan_down"])
+        kb_cb.setCurrentText(img.get("ken_burns", "none"))
+        kb_cb.currentTextChanged.connect(lambda text, r=row: self._update_ken_burns(r, text))
+        self.image_table.setCellWidget(row, 9, kb_cb)
+
+        text_static_cb = QCheckBox()
+        text_static_cb.setChecked(not img.get("text_on_kb", True))  # checked = static
+        text_static_cb.setToolTip("Keep text static (unaffected by Ken Burns)")
+        text_static_cb.stateChanged.connect(
+            lambda state, r=row: self._update_text_on_kb(r, state != Qt.Checked)
+        )
+        self.image_table.setCellWidget(row, 10, text_static_cb)
 
         # Action buttons
         move_up_btn   = QPushButton("↑")
@@ -703,8 +902,24 @@ class SlideshowCreator(QMainWindow):
                 duration = img["duration"] + self.images[i - 1]["transition_duration"]
             else:
                 duration = img["duration"] + img["transition_duration"]
-            inputs.append(f'-loop 1 -t {duration} -i "{img["path"]}"')
-            filters.append(f"[{i}:v]scale=1920:1080,setsar=1,format=yuv420p[{i}v]")
+            # If a pre-rendered KB clip exists, use it as a video input (not looped still)
+            kb_clip = img.get("_kb_clip_path")
+            if kb_clip and os.path.exists(kb_clip):
+                # Normalize to forward slashes — os.path.join uses backslash on
+                # Windows but original paths may use forward slash, causing FFmpeg
+                # to silently fail on mixed-separator paths like E:/foo\bar.mp4
+                kb_clip_norm = str(kb_clip).replace("\\", "/")
+                inputs.append(f'-t {duration} -i "{kb_clip_norm}"')
+                filters.append(
+                    f"[{i}:v]fps=25,setpts=PTS-STARTPTS,scale=1920:1080,setsar=1,format=yuv420p[{i}v]"
+                )
+            else:
+                img_path_norm = str(img["path"]).replace("\\", "/")
+                inputs.append(f'-loop 1 -t {duration} -i "{img_path_norm}"')
+                filters.append(
+                    f"[{i}:v]fps=25,scale=1920:1080,setsar=1,"
+                    f"setpts=PTS-STARTPTS,format=yuv420p[{i}v]"
+                )
 
         for i in range(len(self.images) - 1):
             offset = sum(img["duration"] for img in self.images[: i + 1]) - self.images[i]["transition_duration"]
@@ -719,7 +934,8 @@ class SlideshowCreator(QMainWindow):
         audio_streams = []
 
         for i, audio in enumerate(self.audio_files):
-            inputs.append(f'-i "{audio["path"]}"')
+            audio_norm = str(audio["path"]).replace("\\", "/")
+            inputs.append(f'-i "{audio_norm}"')
             audio_streams.append(f"[{audio_index + i}:a]")
 
         if len(audio_streams) > 1:
@@ -733,8 +949,8 @@ class SlideshowCreator(QMainWindow):
             f'ffmpeg -y {" ".join(inputs)} '
             f'-filter_complex "{filter_complex}" '
             f'-map {final_stream} {audio_map} '
-            f'-c:a aac -c:v libx264 -pix_fmt yuv420p -preset ultrafast -shortest '
-            f'"{self.output_file}"'
+            f'-c:a aac -c:v libx264 -pix_fmt yuv420p -preset ultrafast -movflags +faststart -shortest '
+            f'"{str(self.output_file).replace(chr(92), "/")}"'
         )
 
         if self.backup_state:
@@ -830,7 +1046,8 @@ class SlideshowCreator(QMainWindow):
                 f.write(
                     f"{img['path']},{img.get('duration', 5)},{img.get('transition', 'fade')},"
                     f"{img.get('transition_duration', 1)},{text},{img.get('rotation', 0)},"
-                    f"{img.get('is_second_image', False)},{img.get('date', '')}\n"
+                    f"{img.get('is_second_image', False)},{img.get('date', '')},{img.get('ken_burns', 'none')},"
+                    f"{img.get('text_on_kb', True)}\n"
                 )
 
     def save_project(self):
@@ -868,6 +1085,8 @@ class SlideshowCreator(QMainWindow):
                 if len(parts) < 8:
                     continue
                 path, dur, transition, trans_dur, text, rotation, is_second, date = parts[:8]
+                ken_burns  = parts[8].strip() if len(parts) > 8 else "none"
+                text_on_kb = parts[9].strip().lower() != "false" if len(parts) > 9 else True
                 self.images.append({
                     "path":               path,
                     "duration":           int(dur),
@@ -877,6 +1096,8 @@ class SlideshowCreator(QMainWindow):
                     "rotation":           int(rotation),
                     "is_second_image":    is_second.strip().lower() == "true",
                     "date":               date,
+                    "ken_burns":          ken_burns,
+                    "text_on_kb":         text_on_kb,
                 })
 
             self.update_image_table()
@@ -890,6 +1111,28 @@ class SlideshowCreator(QMainWindow):
     def update_transition(self, row: int, transition: str):
         if 0 <= row < len(self.images):
             self.images[row]["transition"] = transition
+
+    def _update_ken_burns(self, row: int, value: str):
+        if 0 <= row < len(self.images):
+            self.images[row]["ken_burns"] = value
+
+    def _set_all_ken_burns(self):
+        KB_OPTIONS = ["none", "zoom_in", "zoom_out", "zoom_in_out", "zoom_out_in",
+                      "pan_left", "pan_right", "pan_up", "pan_down"]
+        dialog = QInputDialog(self)
+        dialog.setWindowTitle("Set Ken Burns Effect")
+        dialog.setLabelText("Select effect for all images:")
+        dialog.setComboBoxItems(KB_OPTIONS)
+        if dialog.exec_() == QDialog.Accepted:
+            effect = dialog.textValue()
+            for img in self.images:
+                img["ken_burns"] = effect
+            self.update_image_table()
+
+    def _update_text_on_kb(self, row: int, value: bool):
+        if 0 <= row < len(self.images):
+            self.images[row]["text_on_kb"] = value
+
 
     def set_all_images_transition(self):
         dialog = QInputDialog(self)
@@ -1172,7 +1415,7 @@ class SlideshowCreator(QMainWindow):
             self.tr("table_header_duration"), self.tr("table_header_transition"),
             self.tr("table_header_transition_length"), self.tr("table_header_text"),
             self.tr("table_header_rotation"), self.tr("table_header_second_image"),
-            self.tr("table_header_date"),
+            self.tr("table_header_date"), "Ken Burns", "Text Static",
         ])
         self.audio_table.setHorizontalHeaderLabels([
             self.tr("table_header_actions"), self.tr("table_header_audio_file"),
@@ -1226,6 +1469,10 @@ class SlideshowCreator(QMainWindow):
 
         self.set_all_images_transition_type_action      = _action("action_set_all_transition_type",          self.set_all_images_transition,            self.Transitions_menu)
         self.set_random_transition_for_each_image_action = _action("action_set_random_transition_per_image", self.set_random_transition_for_each_image, self.Transitions_menu)
+
+        self.set_all_ken_burns_action = QAction("Set All Ken Burns Effect", self)
+        self.set_all_ken_burns_action.triggered.connect(self._set_all_ken_burns)
+        self.Img_menu.addAction(self.set_all_ken_burns_action)
 
         self.easy_text_writing_action = _action("action_easy_text_writing", self.open_easy_text_writing, self.Text_menu, "easy_text")
 
@@ -1284,34 +1531,72 @@ class ImageProcessingWorker(QThread):
         self.common_width  = common_width
         self.common_height = common_height
 
-    def _process_one(self, i: int) -> tuple[int, str | None]:
-        img      = self.images[i]["path"]
+    def _resize_one(self, i: int) -> tuple[int, str | None]:
+        """Step 1: resize/blur image if needed. Run in parallel (PIL, no ffmpeg)."""
+        img_path = self.images[i]["path"]
         rotation = self.images[i]["rotation"]
         text     = self.images[i]["text"]
         try:
-            original = Image.open(img)
+            original = Image.open(img_path)
             if original.size != (self.common_width, self.common_height):
-                new_path = Image_resizer.process_image(img, self.output_folder, text, rotation)
+                new_path = Image_resizer.process_image(img_path, self.output_folder, text, rotation)
                 return i, new_path
         except Exception as e:
-            print(f"Error opening image {img}: {e}")
+            print(f"Error opening image {img_path}: {e}")
         return i, None
 
     def run(self):
         total = len(self.images)
-        completed = 0
 
+        # ── Phase 1: parallel image resize/blur ───────────────────────────────
         with ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as executor:
-            futures = {executor.submit(self._process_one, i): i for i in range(total)}
+            futures = {executor.submit(self._resize_one, i): i for i in range(total)}
+            done = 0
             for future in as_completed(futures):
-                completed += 1
+                done += 1
                 try:
                     i, new_path = future.result()
                     if new_path:
                         self.images[i]["path"] = new_path
                 except Exception as e:
-                    print(f"Worker error: {e}")
-                self.progress.emit(int(completed / total * 100))
+                    print(f"Resize error: {e}")
+                # Phase 1 = first 50% of progress bar
+                self.progress.emit(int(done / total * 50))
+
+        # ── Phase 2: sequential Ken Burns rendering (one ffmpeg at a time) ────
+        # Must be sequential — running many ffmpeg processes in parallel causes
+        # resource exhaustion and corrupted output files.
+        kb_images = [i for i in range(total)
+                     if self.images[i].get("ken_burns", "none") != "none"]
+        kb_dir = os.path.join(self.output_folder, "kb_clips")
+        if kb_images:
+            os.makedirs(kb_dir, exist_ok=True)
+
+        for done_kb, i in enumerate(kb_images):
+            img  = self.images[i]
+            effect   = img["ken_burns"]
+            # Use the SAME duration formula as build_ffmpeg_command uses for -t,
+            # so the clip is never shorter than what FFmpeg will request.
+            # Middle clips need duration+transition so xfade can read the overlap.
+            if i == 0:
+                clip_duration = img.get("duration", 5)
+            elif i == len(self.images) - 1:
+                clip_duration = img.get("duration", 5) + self.images[i - 1].get("transition_duration", 1)
+            else:
+                clip_duration = img.get("duration", 5) + img.get("transition_duration", 1)
+            kb_out   = os.path.join(kb_dir, f"kb_{i}_{effect}.mp4").replace("\\", "/")
+            print(f"Rendering Ken Burns clip {done_kb+1}/{len(kb_images)}: {effect} for image {i} ({clip_duration}s)")
+            success = render_ken_burns_clip(
+                img["path"], effect, clip_duration, kb_out,
+                text=img.get("text", ""),
+                text_on_kb=img.get("text_on_kb", True),
+            )
+            if success:
+                self.images[i]["_kb_clip_path"] = kb_out
+            else:
+                print(f"  KB render failed for image {i}, will use still image")
+            # Phase 2 = second 50% of progress bar
+            self.progress.emit(50 + int((done_kb + 1) / max(len(kb_images), 1) * 50))
 
         self.finished.emit()
 
