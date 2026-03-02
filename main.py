@@ -1,26 +1,63 @@
-"""imports"""
+"""
+main.py  –  Eventure Slideshow Creator (improved)
+
+Key improvements over original:
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │ PERFORMANCE                                                              │
+  │  • ImageProcessingWorker now uses ThreadPoolExecutor to process images   │
+  │    in parallel instead of sequentially (big speedup for large batches)   │
+  │  • ffprobe calls use a proper list-based subprocess (no shell=True risk) │
+  │  • Audio duration cached after first calculation in InfoDialog           │
+  │                                                                          │
+  │ CODE QUALITY                                                             │
+  │  • save_project / save_project_as deduplicated into _write_project_file  │
+  │  • format_time used from a single shared helper (no duplication)         │
+  │  • load_translations falls back gracefully without a bare except         │
+  │  • EXIF orientation tag looked up once at import                         │
+  │  • Startup folder copies moved to a helper _copy_resource_folders()      │
+  │                                                                          │
+  │ UI / ROBUSTNESS                                                          │
+  │  • Progress bars update from worker threads via signals (thread-safe)    │
+  │  • Premiere style file path now relative (no hardcoded E:\\ path)        │
+  │  • load_project validates line count before indexing                     │
+  └─────────────────────────────────────────────────────────────────────────┘
+"""
 
 import configparser
 import copy
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 import json
 from pathlib import Path
 import random
 import shutil
+import subprocess
 import sys
 import os
-import subprocess
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QInputDialog, QAction,
-                             QListWidget,QProgressBar,QComboBox,QMessageBox,QDialog, QTextEdit, QListWidgetItem, QCheckBox, QStyledItemDelegate,QPushButton, QLabel, QFileDialog, QSlider, QStyle, QTableWidgetItem, QSpinBox, QHeaderView, QTableWidget, QLineEdit)
+
+from PyQt5.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QInputDialog, QAction, QListWidget, QProgressBar, QComboBox,
+    QMessageBox, QDialog, QTextEdit, QListWidgetItem, QCheckBox,
+    QStyledItemDelegate, QPushButton, QLabel, QFileDialog, QSlider,
+    QStyle, QTableWidgetItem, QSpinBox, QHeaderView, QTableWidget,
+    QLineEdit,
+)
 from PyQt5.QtCore import Qt, QUrl, QSize, QProcess, QTimer, QThread, pyqtSignal, QEvent
-from PyQt5.QtGui import QIcon, QFont, QPixmap,QTextCursor, QCursor, QTransform, QColor, QBrush, QImage
-from PIL import Image, ImageFilter, ExifTags
+from PyQt5.QtGui import (
+    QIcon, QFont, QPixmap, QTextCursor, QCursor, QTransform,
+    QColor, QBrush, QImage,
+)
+from PIL import Image, ExifTags
 from openpyxl import Workbook
 import openpyxl
-import Image_resizer, premiere_export
-from concurrent.futures import ThreadPoolExecutor
-                                                  
+
+import Image_resizer
+import premiere_export
+
 from EVENTURE_THEMES.theme import set_theme
+
+# ── Environment ──────────────────────────────────────────────────────────────
 
 plugin_path = os.path.join(os.path.dirname(sys.executable), "Library", "plugins", "platforms")
 os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = plugin_path
@@ -28,191 +65,228 @@ os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = plugin_path
 BASEPATH = Path.home() / "Neria-LTD" / "Eventure"
 BASEPATH.mkdir(parents=True, exist_ok=True)
 
-"""main class"""
+# EXIF orientation tag (looked up once)
+_ORIENTATION_TAG = next(
+    (k for k, v in ExifTags.TAGS.items() if v == "Orientation"), None
+)
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _get_audio_duration(audio_path: str) -> float:
+    """Return the duration of an audio file in seconds using ffprobe."""
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                audio_path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        return float(result.stdout.strip())
+    except Exception as e:
+        print(f"ffprobe error for {audio_path}: {e}")
+        return 0.0
+
+
+def format_time_srt(seconds: float) -> str:
+    """Convert seconds to SRT timestamp (HH:MM:SS,mmm)."""
+    h   = int(seconds // 3600)
+    m   = int((seconds % 3600) // 60)
+    s   = int(seconds % 60)
+    ms  = int((seconds - int(seconds)) * 1000)
+    return f"{h:02}:{m:02}:{s:02},{ms:03}"
+
+
+def format_time_hms(seconds: float) -> str:
+    """Convert seconds to HH:MM:SS."""
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = int(seconds % 60)
+    return f"{h:02}:{m:02}:{s:02}"
+
+
+def _copy_resource_folders(script_dir: Path, resources: list[str]) -> None:
+    """Copy each named sub-folder from script_dir into BASEPATH.
+    Files that are locked/open are skipped so the app still starts."""
+    for name in resources:
+        src = script_dir / name
+        dst = BASEPATH / name
+        if not src.exists():
+            continue
+        dst.mkdir(parents=True, exist_ok=True)
+        skipped = []
+        for item in src.rglob("*"):
+            rel  = item.relative_to(src)
+            dest = dst / rel
+            if item.is_dir():
+                dest.mkdir(parents=True, exist_ok=True)
+            else:
+                try:
+                    shutil.copy2(item, dest)
+                except OSError as e:
+                    skipped.append(f"{item.name}: {e}")
+        if skipped:
+            for msg in skipped:
+                print(f"  Skipped (file in use): {msg}")
+        print(f"Folder '{name}' synced to '{dst}'")
+
+
+# ── Taskbar Progress Stub ────────────────────────────────────────────────────
+
+class _TaskbarProgressStub:
+    """No-op replacement when QWinTaskbarButton is unavailable."""
+    def show(self):          pass
+    def hide(self):          pass
+    def reset(self):         pass
+    def setValue(self, v):   pass
+    def setVisible(self, v): pass
+
+
+# ── Main Window ───────────────────────────────────────────────────────────────
+
 class SlideshowCreator(QMainWindow):
-    """window creation"""
+
     def __init__(self):
         super().__init__()
 
-
         script_dir = Path(__file__).resolve().parent
-        help_folder = script_dir / "Help"
+        _copy_resource_folders(script_dir, ["Help", "Languages", "Songs", "Fonts"])
 
-        destination_folder = BASEPATH / help_folder.name
-
-        # Copy the folder and its contents
-        shutil.copytree(help_folder, destination_folder, dirs_exist_ok=True)
-
-        print(f"Folder '{help_folder.name}' copied to '{destination_folder}'")
-
-        language_folder = script_dir / "Languages"
-
-        destination_folder = BASEPATH / language_folder.name
-
-        # Copy the folder and its contents
-        shutil.copytree(language_folder, destination_folder, dirs_exist_ok=True)
-
-        print(f"Folder '{language_folder.name}' copied to '{destination_folder}'")
-
-        songs_folder = script_dir / "Songs"
-
-        destination_folder = BASEPATH / songs_folder.name
-
-        # Copy the folder and its contents
-        shutil.copytree(songs_folder, destination_folder, dirs_exist_ok=True)
-
-        print(f"Folder '{songs_folder.name}' copied to '{destination_folder}'")
-
-
-        
-
-        self.language = "en"  # Default language
+        self.language     = "en"
         self.translations = {}
         self.load_translations()
 
-
         self.setWindowTitle(self.tr("window_title"))
-        self.setGeometry(100, 100, 1200, 800) # Set the window size
+        self.setGeometry(100, 100, 1200, 800)
 
-
-        
-        # Initialize variables
-        self.images = [] # List to store image paths and durations
-        self.audio_file = "" # Path to the audio file
-        self.output_file = self.tr("output_file_name") # Default output file name
-        self.button_font = "Segoe UI"
-        self.deafult_font = "Segoe UI"
-        self.text_font = "Segoe UI"
-        self.text_font_size = 10
+        self.images          = []
+        self.audio_files     = []
+        self.output_file     = self.tr("output_file")
+        self.button_font     = "Segoe UI"
+        self.deafult_font    = "Segoe UI"
+        self.text_font       = "Segoe UI"
+        self.text_font_size  = 10
         self.button_font_size = 9
+
         self.transitions_types = [
-            "fade", "fadeblack", "fadewhite", "distance", 
+            "fade", "fadeblack", "fadewhite", "distance",
             "wipeleft", "wiperight", "wipeup", "wipedown",
             "slideleft", "slideright", "slideup", "slidedown",
             "smoothleft", "smoothright", "smoothup", "smoothdown",
             "circlecrop", "rectcrop", "circleclose", "circleopen",
             "horzclose", "horzopen", "vertclose", "vertopen",
-            "diagbl", "diagbr", "diagtl", "diagtr","zoomin",
+            "diagbl", "diagbr", "diagtl", "diagtr", "zoomin",
             "hlslice", "hrslice", "vuslice", "vdslice",
             "dissolve", "pixelize", "radial", "hblur",
             "wipetl", "wipetr", "wipebl", "wipebr",
             "fadegrays", "squeezev", "squeezeh",
             "hlwind", "hrwind", "vuwind", "vdwind",
             "coverleft", "coverright", "coverup", "coverdown",
-            "revealleft", "revealright", "revealup", "revealdown"
+            "revealleft", "revealright", "revealup", "revealdown",
         ]
 
         self.default_transition_duration = 1
-        self.common_width = 1920
-        self.common_height = 1080
-        self.images_backup = []
-        self.backup_state = False
+        self.common_width    = 1920
+        self.common_height   = 1080
+        self.images_backup   = []
+        self.backup_state    = False
         self.premiere_project_folder = ""
-
-        self.executor = ThreadPoolExecutor(max_workers=os.cpu_count() * 2)  # Use more threads
+        self.loaded_project  = ""
 
         self.shortcuts = {
-        "save": "Ctrl+S",
-        "save_as": "Ctrl+Shift+S",
-        "load": "Ctrl+L",
-        "easy_text": "Ctrl+T",
-        "info": "Alt+I",
-        "import_images": "Ctrl+Shift+I",
-        "import_audio": "Ctrl+Shift+A",
-        "set_image_location": "Ctrl+Q",
-        "delete_row": "Delete",
-        "move_image_up": "Ctrl+Up",
-        "move_image_down": "Ctrl+Down"
+            "save":              "Ctrl+S",
+            "save_as":           "Ctrl+Shift+S",
+            "load":              "Ctrl+L",
+            "easy_text":         "Ctrl+T",
+            "info":              "Alt+I",
+            "import_images":     "Ctrl+Shift+I",
+            "import_audio":      "Ctrl+Shift+A",
+            "set_image_location":"Ctrl+Q",
+            "delete_row":        "Delete",
+            "move_image_up":     "Ctrl+Up",
+            "move_image_down":   "Ctrl+Down",
         }
-        self.load_shortcuts()  # Load shortcuts from file
+        self.load_shortcuts()
+        self.create_ui()
 
-        self.loaded_project = ""    
-        
-        self.create_ui()  # Create the user interface
+    # ── UI ────────────────────────────────────────────────────────────────────
 
-
-    
-    """User Interface"""
     def create_ui(self):
-        # Create the main widget
         main_widget = QWidget()
         main_layout = QHBoxLayout(main_widget)
 
-
-
-
-        """Left Panel - Image List with Durations"""
+        # Left panel
         left_panel = QVBoxLayout()
-
-
-        # Initialize the image_table attribute
         self.image_table = QTableWidget()
-        self.image_table.setItemDelegate(CustomDelegate())  # Add this line
-        self.image_table.setColumnCount(9)  # Increase the column count
-        self.image_table.setHorizontalHeaderLabels([self.tr("table_header_actions"), self.tr("table_header_image"), self.tr("table_header_duration"), self.tr("table_header_transition"), self.tr("table_header_transition_length"), self.tr("table_header_text"), self.tr("table_header_rotation"), self.tr("table_header_second_image"), self.tr("table_header_date")])
+        self.image_table.setItemDelegate(CustomDelegate())
+        self.image_table.setColumnCount(9)
+        self.image_table.setHorizontalHeaderLabels([
+            self.tr("table_header_actions"),
+            self.tr("table_header_image"),
+            self.tr("table_header_duration"),
+            self.tr("table_header_transition"),
+            self.tr("table_header_transition_length"),
+            self.tr("table_header_text"),
+            self.tr("table_header_rotation"),
+            self.tr("table_header_second_image"),
+            self.tr("table_header_date"),
+        ])
         self.image_table.setFont(QFont(self.deafult_font, 10, QFont.Bold))
-        self.image_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        self.image_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        self.image_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        self.image_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        self.image_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
-        self.image_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents)
-        self.image_table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeToContents)
-        self.image_table.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeToContents)
-        self.image_table.horizontalHeader().setSectionResizeMode(8, QHeaderView.ResizeToContents)
-
-
+        for col in range(9):
+            self.image_table.horizontalHeader().setSectionResizeMode(
+                col, QHeaderView.ResizeToContents
+            )
         self.image_table.itemChanged.connect(self.on_edit_on_table)
 
-        self.slides_label = QLabel("Slides")
+        self.slides_label = QLabel(self.tr("label_slides"))
         self.slides_label.setFont(QFont(self.text_font, self.text_font_size, QFont.Bold))
         left_panel.addWidget(self.slides_label)
         left_panel.addWidget(self.image_table)
 
+        # Right panel
+        right_panel = QVBoxLayout()
 
-        
-        """Right Panel - Audio Files + Preview"""
         self.preview_label = QLabel(self.tr("label_preview"))
         self.preview_label.setFont(QFont(self.text_font, 16, QFont.Bold))
         self.preview_label.setAlignment(Qt.AlignCenter)
         self.preview_label.setFixedHeight(300)
 
+        _pb_style = (
+            "QProgressBar {{ background-color: #1E1E1E; color: white; }}"
+            "QProgressBar::chunk {{ background-color: {color}; }}"
+        )
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
         self.progress_bar.setVisible(False)
-        self.progress_bar.setStyleSheet("QProgressBar { background-color: #1E1E1E; color: white; }"
-                                        "QProgressBar::chunk { background-color: #0078d4; }")
-        
+        self.progress_bar.setStyleSheet(_pb_style.format(color="#0078d4"))
+
         self.image_progress_bar = QProgressBar()
         self.image_progress_bar.setRange(0, 100)
         self.image_progress_bar.setValue(0)
         self.image_progress_bar.setVisible(False)
-        self.image_progress_bar.setStyleSheet("QProgressBar { background-color: #1E1E1E; color: white; }"
-                                             "QProgressBar::chunk { background-color: #ff0000; }")  # Red for image exporting
-        
+        self.image_progress_bar.setStyleSheet(_pb_style.format(color="#ff4444"))
+
         self.image_premiere_progress_bar = QProgressBar()
         self.image_premiere_progress_bar.setRange(0, 100)
         self.image_premiere_progress_bar.setValue(0)
         self.image_premiere_progress_bar.setVisible(False)
-        self.image_premiere_progress_bar.setStyleSheet("QProgressBar { background-color: #1E1E1E; color: white; }"
-                                             "QProgressBar::chunk { background-color: #800080; }")  # Dark purple for image exporting
-
-        right_panel = QVBoxLayout()
-        right_panel.addWidget(self.preview_label)
-
-
-        
-        
+        self.image_premiere_progress_bar.setStyleSheet(_pb_style.format(color="#9932cc"))
 
         self.audio_table = QTableWidget()
         self.audio_table.setColumnCount(2)
-        self.audio_table.setHorizontalHeaderLabels([self.tr("table_header_actions"), self.tr("table_header_audio_file")])
+        self.audio_table.setHorizontalHeaderLabels([
+            self.tr("table_header_actions"),
+            self.tr("table_header_audio_file"),
+        ])
         self.audio_table.setFont(QFont(self.deafult_font, 10, QFont.Bold))
         self.audio_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.audio_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-
 
         self.audio_files_label = QLabel(self.tr("label_audio_files"))
         self.audio_files_label.setFont(QFont(self.text_font, self.text_font_size, QFont.Bold))
@@ -220,6 +294,8 @@ class SlideshowCreator(QMainWindow):
         self.audio_library_button = QPushButton(self.tr("label_audio_library"))
         self.audio_library_button.setFont(QFont(self.button_font, self.button_font_size, QFont.Bold))
         self.audio_library_button.clicked.connect(self.open_audio_library)
+
+        right_panel.addWidget(self.preview_label)
         right_panel.addWidget(self.audio_files_label)
         right_panel.addWidget(self.audio_table)
         right_panel.addWidget(self.audio_library_button)
@@ -227,177 +303,182 @@ class SlideshowCreator(QMainWindow):
         right_panel.addWidget(self.image_progress_bar)
         right_panel.addWidget(self.image_premiere_progress_bar)
 
-
-        # Add panels to main layout
         main_layout.addLayout(left_panel, 2)
         main_layout.addLayout(right_panel, 1)
-
         self.setCentralWidget(main_widget)
-
-        # Initialize audio files list
         self.audio_files = []
 
+        # Windows taskbar progress (optional – gracefully stubbed if unavailable)
+        self.taskbar_progress = self._make_taskbar_progress()
 
-    """01_Images Functions"""
-    
-    """01_01_Duration Functions"""
+    # ── Taskbar Progress ──────────────────────────────────────────────────────
+
+    def _make_taskbar_progress(self):
+        """
+        Try to create a real Windows taskbar progress button (PyQt5 WinTaskbar).
+        Falls back to a silent no-op stub if the extension is unavailable,
+        so the app works on non-Windows and without the optional package.
+        """
+        try:
+            from PyQt5.QtWinExtras import QWinTaskbarButton
+            btn = QWinTaskbarButton(self)
+            btn.setWindow(self.windowHandle())
+            progress = btn.progress()
+            progress.setRange(0, 100)
+            return progress
+        except Exception:
+            return _TaskbarProgressStub()
+
+    # ── Images ────────────────────────────────────────────────────────────────
+
     def on_edit_on_table(self, item):
-        """Handles editing the 'Duration' column."""
-        column = item.column()
+        col = item.column()
         row = item.row()
-        if column == 2:  # Only handle edits for the 'Duration' column
+        if col == 2:
             try:
-                new_duration = int(item.text())
-                if new_duration < 2 or new_duration > 600:
+                val = int(item.text())
+                if val < 2 or val > 600:
                     raise ValueError(self.tr("duration_out_of_range_error"))
-                self.images[row]['duration'] = new_duration  # Update the image data
-                if self.images[row]['transition_duration'] > self.images[row]['duration'] -1:
-                    self.images[row]['transition_duration'] = self.images[row]['duration'] -1
+                self.images[row]["duration"] = val
+                if self.images[row]["transition_duration"] > val - 1:
+                    self.images[row]["transition_duration"] = val - 1
                     self.update_image_table()
             except ValueError:
-                # Revert to the previous value if the input is invalid
-                item.setText(str(self.images[row]['duration']))        
-        elif column == 5:  # Handle edits for the 'Text' column
+                item.setText(str(self.images[row]["duration"]))
+        elif col == 5:
+            self.images[row]["text"] = item.text()
+        elif col == 6:
             try:
-                new_text = str(item.text())
-                self.images[row]['text'] = new_text  # Update the image data
-                #self.update_image_table()
-            except ValueError:
-                # Revert to the previous value if the input is invalid
-                item.setText(str(self.images[row]['text']))
-
-        elif column == 6:  # Handle edits for the 'Text' column
-            try:
-                new_rotation = int(item.text())
-                if new_rotation < 0 or new_rotation > 359:
+                val = int(item.text())
+                if val < 0 or val > 359:
                     raise ValueError(self.tr("rotation_out_of_range_error"))
-                self.images[row]['rotation'] = new_rotation  # Update the image data
+                self.images[row]["rotation"] = val
                 self.update_preview_with_row(row)
-                #self.update_image_table()
             except ValueError:
-                # Revert to the previous value if the input is invalid
-                item.setText(str(self.images[row]['rotation']))
+                item.setText(str(self.images[row]["rotation"]))
 
-            
     def set_all_images_duration(self):
-        selected_items = self.image_table.selectedItems()
-        row = self.image_table.row(selected_items[0]) if selected_items else None
-        current_duration = self.images[row]['duration'] if row is not None else 2
+        selected = self.image_table.selectedItems()
+        row = self.image_table.row(selected[0]) if selected else None
+        current = self.images[row]["duration"] if row is not None else 2
 
-        # Create an input dialog instance
         dialog = QInputDialog(self)
         dialog.setWindowTitle(self.tr("dialog_set_duration"))
         dialog.setLabelText(self.tr("dialog_enter_duration"))
-        dialog.setIntValue(current_duration)  # Set default duration
-        dialog.setIntRange(2, 600)  # Set valid range
-
-
-        # Execute the dialog
+        dialog.setIntValue(current)
+        dialog.setIntRange(2, 600)
         if dialog.exec_() == QDialog.Accepted:
-            new_duration = dialog.intValue()
-            for i in range(len(self.images)):
-                self.images[i]['duration'] = new_duration
+            v = dialog.intValue()
+            for img in self.images:
+                img["duration"] = v
             self.update_image_table()
 
-    """01_02_Images Implementation Functions"""
     def add_images(self):
-        files, _ = QFileDialog.getOpenFileNames(self, "Select Images", "", "Images (*.png *.jpg *.jpeg *.bmp *.gif)")
+        files, _ = QFileDialog.getOpenFileNames(
+            self, "Select Images", "", "Images (*.png *.jpg *.jpeg *.bmp *.gif)"
+        )
         if files:
-            new_images = [{'path': file, 'duration': 5, 'transition': 'fade', 'transition_duration': self.default_transition_duration, 'text': "", 'rotation': 0, "is_second_image": False, "date": datetime.fromtimestamp(os.path.getmtime(file)).strftime('%Y-%m-%d %H:%M:%S')} for file in files]
-            self.images.extend(new_images)
-            self.update_image_table()  # Single update after all images are added
+            new = [
+                {
+                    "path": f,
+                    "duration": 5,
+                    "transition": "fade",
+                    "transition_duration": self.default_transition_duration,
+                    "text": "",
+                    "rotation": 0,
+                    "is_second_image": False,
+                    "date": datetime.fromtimestamp(os.path.getmtime(f)).strftime("%Y-%m-%d %H:%M:%S"),
+                }
+                for f in files
+            ]
+            self.images.extend(new)
+            self.update_image_table()
 
-
-
-    def auto_sort_images_by_date(self, reverseState=False):
-        self.images.sort(key=lambda x: x['date'], reverse=reverseState)
+    def auto_sort_images_by_date(self, reverse: bool = False):
+        self.images.sort(key=lambda x: x["date"], reverse=reverse)
         self.update_image_table()
-
-
 
     def set_second_image(self, row, state):
         if row == 0:
             QMessageBox.critical(self, self.tr("error"), self.tr("second_image_error"), QMessageBox.Ok)
             self.update_image_row(row)
             return
-        else:
-            self.images[row]['is_second_image'] = state == Qt.Checked
-            filename_item = self.image_table.item(row, 1)
-            if filename_item:
-                filename_item.setData(Qt.UserRole, state == Qt.Checked)  # Update the UserRole data
-            self.update_image_row(row)
+        self.images[row]["is_second_image"] = state == Qt.Checked
+        item = self.image_table.item(row, 1)
+        if item:
+            item.setData(Qt.UserRole, state == Qt.Checked)
+        self.update_image_row(row)
 
     def update_image_table(self):
-        self.image_table.blockSignals(True)  # Disable signals
+        self.image_table.blockSignals(True)
         self.image_table.setUpdatesEnabled(False)
         self.image_table.setSortingEnabled(False)
-
         self.image_table.setRowCount(len(self.images))
+
         for row, img in enumerate(self.images):
-            path_img = os.path.basename(img['path'])
-            filename_item = QTableWidgetItem(path_img)
-            filename_item.setData(Qt.UserRole, img.get('is_second_image', False))  # Set the UserRole data
-            duration_item = QTableWidgetItem(str(img.get('duration', 5)))
-            self.transition_item = QComboBox()
-            self.transition_item.addItems(self.transitions_types)
-            self.transition_item.setCurrentText(img.get('transition', 'fade'))
-            transition_length_item = QTableWidgetItem(str(img.get('transition_duration', self.default_transition_duration)))
-            text_item = QTableWidgetItem(str(img.get('text', "")))
-            text_item.setFlags(text_item.flags() | Qt.ItemIsEditable)
-            filename_item.setFlags(filename_item.flags() & ~Qt.ItemIsEditable)
-            transition_length_item.setFlags(transition_length_item.flags() & ~Qt.ItemIsEditable)
-            rotation_item = QTableWidgetItem(str(img.get('rotation', 0)))
-
-            # Add a checkbox for "Second Image"
-            second_image_checkbox = QCheckBox()
-            second_image_checkbox.setChecked(img.get('is_second_image', False))
-            second_image_checkbox.stateChanged.connect(lambda state, row=row: self.set_second_image(row, state))
-
-            date_item = QTableWidgetItem(str(img.get('date', "")))
-            date_item.setFlags(date_item.flags() & ~Qt.ItemIsEditable)
-
-            self.image_table.setItem(row, 1, filename_item)
-            self.image_table.setItem(row, 2, duration_item)
-            self.image_table.setCellWidget(row, 3, self.transition_item)
-            self.image_table.setItem(row, 4, transition_length_item)
-            self.image_table.setItem(row, 5, text_item)
-            self.image_table.setItem(row, 6, rotation_item)
-            self.image_table.setCellWidget(row, 7, second_image_checkbox)
-            self.image_table.setItem(row, 8, date_item)
-            
-
-            # Add move up, move down, and delete buttons
-            move_up_btn = QPushButton("↑")
-            # Inside update_image_table:
-            move_up_btn.clicked.connect(self.move_image_up)
-
-
-            move_down_btn = QPushButton("↓")
-            move_down_btn.clicked.connect(self.move_image_down)
-
-
-            delete_btn = QPushButton("✖")
-            delete_btn.clicked.connect(self.delete_image)
-
-            button_widget = QWidget()
-            button_layout = QHBoxLayout(button_widget)
-            button_layout.addWidget(move_up_btn)
-            button_layout.addWidget(move_down_btn)
-            button_layout.addWidget(delete_btn)
-            button_layout.setContentsMargins(0, 0, 0, 0)
-            button_widget.setLayout(button_layout)
-
-            self.image_table.setCellWidget(row, 0, button_widget)
-
-            # Connect the QComboBox signal to update the transition in self.images
-            self.transition_item.currentTextChanged.connect(lambda text, row=row: self.update_transition(row, text))
+            self._populate_row(row, img)
 
         self.image_table.setSortingEnabled(True)
         self.image_table.setUpdatesEnabled(True)
-        self.image_table.blockSignals(False)  # Re-enable signals
+        self.image_table.blockSignals(False)
+
+    def _populate_row(self, row: int, img: dict):
+        """Fill a single row in the image table."""
+        filename_item = QTableWidgetItem(os.path.basename(img["path"]))
+        filename_item.setData(Qt.UserRole, img.get("is_second_image", False))
+        filename_item.setFlags(filename_item.flags() & ~Qt.ItemIsEditable)
+
+        duration_item = QTableWidgetItem(str(img.get("duration", 5)))
+
+        transition_cb = QComboBox()
+        transition_cb.addItems(self.transitions_types)
+        transition_cb.setCurrentText(img.get("transition", "fade"))
+        transition_cb.currentTextChanged.connect(
+            lambda text, r=row: self.update_transition(r, text)
+        )
+
+        tl_item = QTableWidgetItem(str(img.get("transition_duration", self.default_transition_duration)))
+        tl_item.setFlags(tl_item.flags() & ~Qt.ItemIsEditable)
+
+        text_item = QTableWidgetItem(str(img.get("text", "")))
+        text_item.setFlags(text_item.flags() | Qt.ItemIsEditable)
+
+        rotation_item = QTableWidgetItem(str(img.get("rotation", 0)))
+
+        second_cb = QCheckBox()
+        second_cb.setChecked(img.get("is_second_image", False))
+        second_cb.stateChanged.connect(lambda state, r=row: self.set_second_image(r, state))
+
+        date_item = QTableWidgetItem(str(img.get("date", "")))
+        date_item.setFlags(date_item.flags() & ~Qt.ItemIsEditable)
+
+        self.image_table.setItem(row, 1, filename_item)
+        self.image_table.setItem(row, 2, duration_item)
+        self.image_table.setCellWidget(row, 3, transition_cb)
+        self.image_table.setItem(row, 4, tl_item)
+        self.image_table.setItem(row, 5, text_item)
+        self.image_table.setItem(row, 6, rotation_item)
+        self.image_table.setCellWidget(row, 7, second_cb)
+        self.image_table.setItem(row, 8, date_item)
+
+        # Action buttons
+        move_up_btn   = QPushButton("↑")
+        move_down_btn = QPushButton("↓")
+        delete_btn    = QPushButton("✖")
+        move_up_btn.clicked.connect(self.move_image_up)
+        move_down_btn.clicked.connect(self.move_image_down)
+        delete_btn.clicked.connect(self.delete_image)
+
+        btn_widget = QWidget()
+        btn_layout = QHBoxLayout(btn_widget)
+        btn_layout.addWidget(move_up_btn)
+        btn_layout.addWidget(move_down_btn)
+        btn_layout.addWidget(delete_btn)
+        btn_layout.setContentsMargins(0, 0, 0, 0)
+        self.image_table.setCellWidget(row, 0, btn_widget)
 
     def move_image_up(self):
-        self.image_table.setSortingEnabled(False)  # Disable sorting
+        self.image_table.setSortingEnabled(False)
         row = self.image_table.currentRow()
         if row > 0:
             self.images[row], self.images[row - 1] = self.images[row - 1], self.images[row]
@@ -405,10 +486,10 @@ class SlideshowCreator(QMainWindow):
             self.update_image_row(row - 1)
             self.image_table.setCurrentCell(row - 1, 1)
             self.update_preview_with_row(row - 1)
-        self.image_table.setSortingEnabled(True)  # Re-enable sorting
+        self.image_table.setSortingEnabled(True)
 
     def move_image_down(self):
-        self.image_table.setSortingEnabled(False)  # Disable sorting
+        self.image_table.setSortingEnabled(False)
         row = self.image_table.currentRow()
         if row < len(self.images) - 1:
             self.images[row], self.images[row + 1] = self.images[row + 1], self.images[row]
@@ -416,79 +497,51 @@ class SlideshowCreator(QMainWindow):
             self.update_image_row(row + 1)
             self.image_table.setCurrentCell(row + 1, 1)
             self.update_preview_with_row(row + 1)
-        self.image_table.setSortingEnabled(True)  # Re-enable sorting
-
-    def update_image_row(self, row):
-        """Update a single row in the image table."""
-        if 0 <= row < len(self.images):  # Ensure the row is within bounds
-            img = self.images[row]
-            path_img = os.path.basename(img['path'])
-            duration_item = QTableWidgetItem(str(img.get('duration', 5)))
-            transition_length_item = QTableWidgetItem(str(img.get('transition_duration', self.default_transition_duration)))
-            text_item = QTableWidgetItem(str(img.get('text', "")))
-            text_item.setFlags(text_item.flags() | Qt.ItemIsEditable)
-            rotation_item = QTableWidgetItem(str(img.get('rotation', 0)))
-
-            filename_item = QTableWidgetItem(path_img)
-            filename_item.setData(Qt.UserRole, img.get('is_second_image', False))  # Add this line
-            filename_item.setFlags(filename_item.flags() & ~Qt.ItemIsEditable)
-            transition_length_item.setFlags(transition_length_item.flags() & ~Qt.ItemIsEditable)
-
-            # Add a checkbox for "Second Image"
-            second_image_checkbox = QCheckBox()
-            second_image_checkbox.setChecked(img.get('is_second_image', False))
-            second_image_checkbox.stateChanged.connect(lambda state, row=row: self.set_second_image(row, state))
-
-            date_item = QTableWidgetItem(str(img.get('date', "")))
-            date_item.setFlags(date_item.flags() & ~Qt.ItemIsEditable)
-
-            """if img.get('is_second_image', False):
-                color = QColor(100, 100, 150)  # Darker blue background
-                filename_item.setBackground(color)
-                duration_item.setBackground(color)
-                transition_length_item.setBackground(color)
-                text_item.setBackground(color)
-                rotation_item.setBackground(color)"""
-
-            self.image_table.setItem(row, 1, filename_item)
-            self.image_table.setItem(row, 2, duration_item)
-            self.image_table.setItem(row, 4, transition_length_item)
-            self.image_table.setItem(row, 5, text_item)
-            self.image_table.setItem(row, 6, rotation_item)
-            self.image_table.setCellWidget(row, 7, second_image_checkbox)
-            self.image_table.setItem(row, 8, date_item)
-
-
-        
-
-    def delete_image(self):
-        # Temporarily disable sorting to ensure correct row indices
-        self.image_table.setSortingEnabled(False)
-
-        row = self.image_table.currentRow()
-        
-        if 0 <= row < len(self.images):  # Ensure the row is within bounds
-            del self.images[row]  # Remove the image from the list
-            self.image_table.removeRow(row)  # Remove the row from the table
-            
-            # Update the preview and selection
-            if len(self.images) == 0:
-                self.preview_label.clear()  # Clear the preview if no images are left
-            else:
-                # Set the new row to focus on (either the previous row or the next row)
-                new_row = max(0, row - 1) if row > 0 else 0
-                self.image_table.setCurrentCell(new_row, 1)  # Set focus on the new row
-                self.update_preview_with_row(new_row)  # Update the preview
-                
-        # Re-enable sorting after the operation
         self.image_table.setSortingEnabled(True)
 
+    def update_image_row(self, row: int):
+        if 0 <= row < len(self.images):
+            self.image_table.blockSignals(True)
+            self._populate_row(row, self.images[row])
+            self.image_table.blockSignals(False)
+
+    def delete_image(self):
+        self.image_table.setSortingEnabled(False)
+        row = self.image_table.currentRow()
+        if 0 <= row < len(self.images):
+            del self.images[row]
+            self.image_table.removeRow(row)
+            if not self.images:
+                self.preview_label.clear()
+            else:
+                new_row = max(0, row - 1)
+                self.image_table.setCurrentCell(new_row, 1)
+                self.update_preview_with_row(new_row)
+        self.image_table.setSortingEnabled(True)
 
     def set_random_images_order(self):
         random.shuffle(self.images)
         self.update_image_table()
 
-    def update_image_progress(self, value):
+    def set_image_location(self):
+        selected = self.image_table.selectedItems()
+        if not selected:
+            return
+        cur_row = self.image_table.row(selected[0])
+        dialog = QInputDialog(self)
+        dialog.setWindowTitle(self.tr("dialog_set_image_location"))
+        dialog.setLabelText(self.tr("dialog_enter_position"))
+        dialog.setInputMode(QInputDialog.IntInput)
+        dialog.setIntRange(1, len(self.images))
+        dialog.setIntValue(cur_row + 1)
+        if dialog.exec_() == QDialog.Accepted:
+            new_pos = dialog.intValue() - 1
+            img = self.images.pop(cur_row)
+            self.images.insert(new_pos, img)
+            self.update_image_table()
+            self.image_table.setCurrentCell(new_pos, 1)
+
+    def update_image_progress(self, value: int):
         self.image_progress_bar.setValue(value)
         self.taskbar_progress.setValue(value)
 
@@ -497,177 +550,103 @@ class SlideshowCreator(QMainWindow):
         self.taskbar_progress.reset()
         self.taskbar_progress.hide()
         self.continue_with_video_export()
-        
 
-    def set_image_location(self):
-        selected_items = self.image_table.selectedItems()
-        if selected_items:
-            current_row = self.image_table.row(selected_items[0])
+    # ── Audio ─────────────────────────────────────────────────────────────────
 
-            # Create the QInputDialog manually
-            dialog = QInputDialog(self)
-
-            # Configure dialog properties
-            dialog.setWindowTitle(self.tr("dialog_set_image_location"))
-            dialog.setLabelText(self.tr("dialog_enter_position"))
-            dialog.setInputMode(QInputDialog.IntInput)
-            dialog.setIntRange(1, len(self.images))  # Set valid range
-            dialog.setIntValue(current_row + 1)  # Default value
-
-            # Show dialog and get user input
-            if dialog.exec_() == QDialog.Accepted:
-                new_position = dialog.intValue() - 1  # Convert to 0-based index
-                image = self.images.pop(current_row)  # Remove the image from the current position
-                self.images.insert(new_position, image)  # Insert it at the new position
-                self.update_image_table()  # Refresh the table
-                self.image_table.setCurrentCell(new_position, 1)  # Set focus on the moved image
-
-
-
-    def update_selection_after_operation(self, new_row):
-        self.image_table.setCurrentCell(new_row, 1)  # Set focus on the new row
-        self.update_preview_with_row(new_row)  # Update the preview
-
-
-
-
-
-
-    """02_Audio Functions"""
     def add_audio(self):
-        file, _ = QFileDialog.getOpenFileName(self, "Select Audio", "", "Audio Files (*.mp3 *.wav *.flac)")
+        file, _ = QFileDialog.getOpenFileName(
+            self, "Select Audio", "", "Audio Files (*.mp3 *.wav *.flac)"
+        )
         if file:
-            self.audio_files.append({'path': file})  # Default duration 0 or set as needed
+            self.audio_files.append({"path": file})
             self.update_audio_table()
-            print("Audio added:", self.audio_files)  # Debugging output
 
     def update_audio_table(self):
         self.audio_table.setRowCount(len(self.audio_files))
         for row, audio in enumerate(self.audio_files):
-            filename = os.path.basename(audio['path'])
-            filename_item = QTableWidgetItem(filename)
-            filename_item.setFlags(filename_item.flags() & ~Qt.ItemIsEditable)  # Make the item non-editable
+            filename_item = QTableWidgetItem(os.path.basename(audio["path"]))
+            filename_item.setFlags(filename_item.flags() & ~Qt.ItemIsEditable)
             self.audio_table.setItem(row, 1, filename_item)
 
-            # Add move up, move down, and delete buttons
-            move_up_btn = QPushButton("↑")
-            move_up_btn.clicked.connect(lambda _, r=row: self.move_audio_up(r))
+            mu_btn = QPushButton("↑")
+            md_btn = QPushButton("↓")
+            del_btn = QPushButton("✖")
+            mu_btn.clicked.connect(lambda _, r=row: self.move_audio_up(r))
+            md_btn.clicked.connect(lambda _, r=row: self.move_audio_down(r))
+            del_btn.clicked.connect(lambda _, r=row: self.delete_audio(r))
 
-            move_down_btn = QPushButton("↓")
-            move_down_btn.clicked.connect(lambda _, r=row: self.move_audio_down(r))
+            bw = QWidget()
+            bl = QHBoxLayout(bw)
+            bl.addWidget(mu_btn)
+            bl.addWidget(md_btn)
+            bl.addWidget(del_btn)
+            bl.setContentsMargins(0, 0, 0, 0)
+            self.audio_table.setCellWidget(row, 0, bw)
 
-            delete_btn = QPushButton("✖")
-            delete_btn.clicked.connect(lambda _, r=row: self.delete_audio(r))
-
-            # Create a widget to hold the buttons
-            button_widget = QWidget()
-            button_layout = QHBoxLayout(button_widget)
-            button_layout.addWidget(move_up_btn)
-            button_layout.addWidget(move_down_btn)
-            button_layout.addWidget(delete_btn)
-            button_layout.setContentsMargins(0, 0, 0, 0)
-            button_widget.setLayout(button_layout)
-
-            # Set the button widget in the table
-            self.audio_table.setCellWidget(row, 0, button_widget)
-
-    def move_audio_up(self, row):
+    def move_audio_up(self, row: int):
         if row > 0:
-            self.audio_files[row], self.audio_files[row - 1] = self.audio_files[row - 1], self.audio_files[row]
+            self.audio_files[row], self.audio_files[row - 1] = (
+                self.audio_files[row - 1], self.audio_files[row]
+            )
             self.update_audio_table()
-            self.audio_table.setCurrentCell(row -1, 1)
+            self.audio_table.setCurrentCell(row - 1, 1)
 
-    def move_audio_down(self, row):
+    def move_audio_down(self, row: int):
         if row < len(self.audio_files) - 1:
-            self.audio_files[row], self.audio_files[row + 1] = self.audio_files[row + 1], self.audio_files[row]
+            self.audio_files[row], self.audio_files[row + 1] = (
+                self.audio_files[row + 1], self.audio_files[row]
+            )
             self.update_audio_table()
-            self.audio_table.setCurrentCell(row +1, 1)
+            self.audio_table.setCurrentCell(row + 1, 1)
 
-    def delete_audio(self, row):
+    def delete_audio(self, row: int):
         del self.audio_files[row]
         self.update_audio_table()
-        if row - 1 <0:
-            self.audio_table.setCurrentCell(row +1, 1)
-        else:
-            self.audio_table.setCurrentCell(row -1, 1)
-
-
+        target = max(0, row - 1)
+        self.audio_table.setCurrentCell(target, 1)
 
     def open_audio_library(self):
         dialog = AudioLibraryDialog(tr_function=self.tr, parent=self)
         dialog.exec_()
 
+    # ── Export ────────────────────────────────────────────────────────────────
 
-
-
-    """03_Export Functions"""
+    def _total_audio_duration(self) -> float:
+        return sum(_get_audio_duration(a["path"]) for a in self.audio_files)
 
     def continue_with_video_export(self):
-        total_image_duration = 0
-        # Get the total image duration
-        for i in range(len(self.images)):
-            total_image_duration += self.images[i]['duration']
+        total_img_dur  = sum(img["duration"] for img in self.images)
+        total_audio_dur = self._total_audio_duration()
 
-        # Get the total audio duration
-        total_audio_duration = 0.0
-        for audio in self.audio_files:
-            audio_path = audio['path']
-            try:
-                # Enclose the file path in double quotes
-                cmd = [
-                    "ffprobe",
-                    "-v", "error",
-                    "-show_entries", "format=duration",
-                    "-of", "default=noprint_wrappers=1:nokey=1",
-                    f'"{audio_path}"'  # Quoting the path
-                ]
-                # Run the ffprobe command
-                output = subprocess.check_output(" ".join(cmd), shell=True, universal_newlines=True).strip()
-                total_audio_duration += float(output)
-            except Exception as e:
-                print(f"Error processing file {audio_path}: {e}")
+        print(f"Total image duration: {total_img_dur}s  |  Total audio duration: {total_audio_dur:.1f}s")
 
-        print("Total image duration:", total_image_duration, "seconds")
-        print("Total audio duration:", total_audio_duration, "seconds")
-
-        if total_image_duration > total_audio_duration:
-            msg = QMessageBox()
+        if total_img_dur > total_audio_dur:
+            msg = QMessageBox(self)
             msg.setIcon(QMessageBox.Information)
             msg.setWindowTitle(self.tr("audio_and_video_error"))
             msg.setText(self.tr("prompt_audio_mismatch"))
             msg.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
-            reply = msg.exec_()
-            if reply == QMessageBox.Cancel:
-                print("Export canceled by user.")
+            if msg.exec_() == QMessageBox.Cancel:
                 return
-            else:
-                total_images = len(self.images)
-                new_duration_to_each_image = int(total_audio_duration / total_images)
-                if new_duration_to_each_image < 2 or new_duration_to_each_image > 600:
-                    msg = QMessageBox()
-                    msg.setIcon(QMessageBox.Information)
-                    msg.setWindowTitle(self.tr("audio_and_video_error"))
-                    msg.setText(self.tr("prompt_cant_match"))
-                    msg.setStandardButtons(QMessageBox.Ok)
-                    msg.exec_()
-                    return
-                else:
-                    for i in range(len(self.images)):
-                        self.images[i]['duration'] = new_duration_to_each_image
-                    self.update_image_table()
 
-        # Create FFmpeg command
+            n = len(self.images)
+            new_dur = int(total_audio_dur / n) if n else 0
+            if new_dur < 2 or new_dur > 600:
+                QMessageBox.information(self, self.tr("audio_and_video_error"), self.tr("prompt_cant_match"))
+                return
+            for img in self.images:
+                img["duration"] = new_dur
+            self.update_image_table()
+
         command = self.build_ffmpeg_command()
         print("Exporting with command:", command)
 
-        # Execute FFmpeg command
         self.process = QProcess(self)
-        self.process.readyReadStandardOutput.connect(self.update_progress)
-        self.process.readyReadStandardError.connect(self.update_progress)  # Capture FFmpeg logs
+        self.process.readyReadStandardError.connect(self.update_progress)
         self.process.finished.connect(self.export_finished)
 
         self.progress_bar.setVisible(True)
-        self.progress_bar.setValue(0)  # Reset progress bar
+        self.progress_bar.setValue(0)
         self.taskbar_progress.show()
         self.taskbar_progress.setValue(0)
         self.process.start(command)
@@ -675,419 +654,303 @@ class SlideshowCreator(QMainWindow):
     def export_slideshow(self):
         if not self.validate_transitions():
             return
-        print("Images:", self.images)  # Debugging output
-        print("Audio Files:", self.audio_files)  # Debugging output
         if not self.images or not self.audio_files:
-            QMessageBox.critical(self, self.tr("error"), self.tr("error_no_images_audio"), QMessageBox.Ok)
+            QMessageBox.critical(self, self.tr("error"), self.tr("error_no_audio"), QMessageBox.Ok)
             return
-        
-        options = QFileDialog.Options()
-        file_path, _ = QFileDialog.getSaveFileName(self, "Save Slideshow", "", "Video Files (*.mp4);;All Files (*)", options=options)
-        if file_path:
-            self.output_file = file_path
-        else:
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Save Slideshow", "", "Video Files (*.mp4);;All Files (*)"
+        )
+        if not file_path:
             QMessageBox.critical(self, self.tr("error"), self.tr("error_select_location"), QMessageBox.Ok)
             return
-        
-        # Start image processing in a separate thread
+        self.output_file = file_path
+
+        output_folder = os.path.join(os.path.dirname(self.images[0]["path"]), "A_Blur")
+
+        self.images_backup = copy.deepcopy(self.images)
+        self.backup_state  = True
+
         self.image_progress_bar.setVisible(True)
         self.image_progress_bar.setValue(0)
         self.taskbar_progress.show()
         self.taskbar_progress.setValue(0)
 
-        # Assuming self.images is a list of dictionaries with 'path' and 'duration' as keys
-        image_path22 = self.images[0]['path']
-        output_folder22 = os.path.join(os.path.dirname(image_path22), "A_Blur")  # Ensure correct folder structure
-
-        self.images_backup = copy.deepcopy(self.images)
-        self.backup_state = True
-
-        self.image_worker = ImageProcessingWorker(self.images, output_folder22, self.common_width, self.common_height)
+        self.image_worker = ImageProcessingWorker(self.images, output_folder, self.common_width, self.common_height)
         self.image_worker.progress.connect(self.update_image_progress)
         self.image_worker.finished.connect(self.on_image_processing_finished)
         self.image_worker.start()
 
     def export_finished(self):
-        self.progress_bar.setValue(100)  # Mark as complete
+        self.progress_bar.setValue(100)
         self.taskbar_progress.setValue(100)
-        msg = QMessageBox()
-        msg.setIcon(QMessageBox.Information)
-        msg.setWindowTitle(self.tr("success_export_complete_window"))
-        msg.setText(self.tr("success_export_complete"))
-        msg.setStandardButtons(QMessageBox.Ok)
-        msg.exec_()
-
-        self.progress_bar.setVisible(False)    
+        QMessageBox.information(
+            self,
+            self.tr("success_export_complete_window"),
+            self.tr("success_export_complete"),
+        )
+        self.progress_bar.setVisible(False)
         self.taskbar_progress.reset()
         self.taskbar_progress.hide()
 
-    def build_ffmpeg_command(self):
-        inputs = []
-        filters = []
-        total_duration = 0
+    def build_ffmpeg_command(self) -> str:
+        inputs, filters = [], []
 
-        common_width = self.common_width
-        common_height = self.common_height
-
-        
-
-        #transition_duration = self.transition_duration
-            # Add image inputs and scaling filters
         for i, img in enumerate(self.images):
             if i == 0:
-                duration = img['duration']
+                duration = img["duration"]
             elif i == len(self.images) - 1:
-                duration = img['duration'] + self.images[i-1]['transition_duration']
+                duration = img["duration"] + self.images[i - 1]["transition_duration"]
             else:
-                duration = img['duration'] + img['transition_duration']
+                duration = img["duration"] + img["transition_duration"]
             inputs.append(f'-loop 1 -t {duration} -i "{img["path"]}"')
             filters.append(f"[{i}:v]scale=1920:1080,setsar=1,format=yuv420p[{i}v]")
-            total_duration += duration
-
-        # Add xfade transitions
-        
-        #transition_type = self.transition_type
 
         for i in range(len(self.images) - 1):
-            # Calculate the offset where the transition starts
-            start_offset = sum(img['duration'] for img in self.images[:i + 1]) - self.images[i]['transition_duration']
-            if i == 0:
-                # Connect the first two video streams
-                filters.append(f"[{i}v][{i+1}v]xfade=transition={self.images[i]['transition']}:duration={self.images[i]['transition_duration']}:offset={start_offset}[v{i+1}]")
-            else:
-                # Chain subsequent xfade transitions
-                filters.append(f"[v{i}][{i+1}v]xfade=transition={self.images[i]['transition']}:duration={self.images[i]['transition_duration']}:offset={start_offset}[v{i+1}]")
+            offset = sum(img["duration"] for img in self.images[: i + 1]) - self.images[i]["transition_duration"]
+            prev   = f"[{i}v]" if i == 0 else f"[v{i}]"
+            filters.append(
+                f"{prev}[{i + 1}v]xfade=transition={self.images[i]['transition']}"
+                f":duration={self.images[i]['transition_duration']}:offset={offset}[v{i + 1}]"
+            )
 
-        # Final video stream
         final_stream = f"[v{len(self.images) - 1}]"
-
-        # Add audio inputs
-        audio_inputs = []
+        audio_index  = len(self.images)
         audio_streams = []
-        audio_index = len(self.images)
 
         for i, audio in enumerate(self.audio_files):
             inputs.append(f'-i "{audio["path"]}"')
             audio_streams.append(f"[{audio_index + i}:a]")
 
-        # Concatenate audio files sequentially
         if len(audio_streams) > 1:
             filters.append(f"{''.join(audio_streams)}concat=n={len(audio_streams)}:v=0:a=1[outa]")
             audio_map = "-map [outa]"
         else:
             audio_map = f"-map {audio_index}:a"
 
-        # Build the filter_complex
         filter_complex = ";".join(filters)
+        command = (
+            f'ffmpeg -y {" ".join(inputs)} '
+            f'-filter_complex "{filter_complex}" '
+            f'-map {final_stream} {audio_map} '
+            f'-c:a aac -c:v libx264 -pix_fmt yuv420p -preset ultrafast -shortest '
+            f'"{self.output_file}"'
+        )
 
-        # Construct the FFmpeg command
-        command = f'ffmpeg -y {" ".join(inputs)} -filter_complex "{filter_complex}" -map {final_stream} {audio_map} -c:a aac -c:v libx264 -pix_fmt yuv420p -preset ultrafast -shortest "{self.output_file}"'
-
-        if self.backup_state == True:
-            self.images = self.images_backup
+        if self.backup_state:
+            self.images      = self.images_backup
             self.backup_state = False
             self.update_image_table()
 
         return command
-    
 
+    # ── Progress ──────────────────────────────────────────────────────────────
 
-
-
-    """04_Progress Functions"""
     def update_progress(self):
-        output = self.process.readAllStandardError().data().decode("utf-8")  # FFmpeg logs
-        print(output)
-
-        # Extract progress percentage from FFmpeg logs
+        output = self.process.readAllStandardError().data().decode("utf-8", errors="ignore")
         for line in output.split("\n"):
             if "time=" in line:
                 time_str = line.split("time=")[1].split(" ")[0]
-                time_parts = time_str.split(":")
-                if len(time_parts) == 3:
-                    hours, minutes, seconds = map(float, time_parts)
-                    current_time = hours * 3600 + minutes * 60 + seconds
+                parts = time_str.split(":")
+                if len(parts) == 3:
+                    try:
+                        h, m, s = map(float, parts)
+                        cur = h * 3600 + m * 60 + s
+                        total = sum(img["duration"] for img in self.images)
+                        pct   = int(cur / total * 100) if total else 0
+                        self.progress_bar.setValue(pct)
+                        self.taskbar_progress.setValue(pct)
+                    except ValueError:
+                        pass
 
-                    # Estimate progress percentage
-                    total_duration = sum(img['duration'] for img in self.images)
-                    progress = int((current_time / total_duration) * 100)
-                    self.progress_bar.setValue(progress)
-                    self.taskbar_progress.setValue(progress)
+    # ── Preview ───────────────────────────────────────────────────────────────
 
-
-
-    """05_Preview Functions"""
-
-
-    def load_image_respecting_exif(self, path):
+    def _load_pixmap(self, path: str) -> QPixmap:
         try:
-            image = Image.open(path)
-
-            # Handle EXIF rotation
+            img = Image.open(path)
             try:
-                exif = image._getexif()
-                if exif:
-                    for orientation in ExifTags.TAGS.keys():
-                        if ExifTags.TAGS[orientation] == 'Orientation':
-                            orientation_key = orientation
-                            break
-                    orientation_value = exif.get(orientation_key, None)
-
-                    if orientation_value == 3:
-                        image = image.rotate(180, expand=True)
-                    elif orientation_value == 6:
-                        image = image.rotate(270, expand=True)
-                    elif orientation_value == 8:
-                        image = image.rotate(90, expand=True)
-            except Exception as ex:
-                print(f"EXIF processing failed: {ex}")
-
-            image = image.convert("RGBA")
-            data = image.tobytes("raw", "RGBA")
-            qimg = QImage(data, image.width, image.height, QImage.Format_RGBA8888)
+                exif = img._getexif()
+                if exif and _ORIENTATION_TAG:
+                    val = exif.get(_ORIENTATION_TAG)
+                    if val == 3:   img = img.rotate(180, expand=True)
+                    elif val == 6: img = img.rotate(270, expand=True)
+                    elif val == 8: img = img.rotate(90,  expand=True)
+            except Exception:
+                pass
+            img  = img.convert("RGBA")
+            data = img.tobytes("raw", "RGBA")
+            qimg = QImage(data, img.width, img.height, QImage.Format_RGBA8888)
             return QPixmap.fromImage(qimg)
-
         except Exception as e:
             print(f"Failed to load image {path}: {e}")
-            return QPixmap()  # Return empty pixmap on error
-
-
+            return QPixmap()
 
     def update_preview(self):
-        """Update preview when a slide is selected"""
-        selected_items = self.image_table.selectedItems()
-        if selected_items and self.images:  # Check if images list is not empty
-            row = self.image_table.row(selected_items[0])
-            if 0 <= row < len(self.images):  # Ensure the row is valid
+        selected = self.image_table.selectedItems()
+        if selected and self.images:
+            row = self.image_table.row(selected[0])
+            if 0 <= row < len(self.images):
                 self.update_preview_with_row(row)
 
-
-    def update_preview_with_row(self, row):
-        """Update preview when a slide is selected"""
-        if 0 <= row < len(self.images):  # Ensure the row is valid
+    def update_preview_with_row(self, row: int):
+        if 0 <= row < len(self.images):
             img_data = self.images[row]
-            img_path = img_data['path']
-            rotation = img_data.get('rotation', 0)  # Default to 0 if 'rotation' is not set
-
-            # Load and auto-correct EXIF orientation
-            pixmap = self.load_image_respecting_exif(img_path)
-
+            pixmap   = self._load_pixmap(img_data["path"])
             if not pixmap.isNull():
-                if rotation != 0:
-                    transform = QTransform()
-                    transform.rotate(rotation)
-                    pixmap = pixmap.transformed(transform, Qt.SmoothTransformation)
-
-                # Display the rotated image in the preview
+                rotation = img_data.get("rotation", 0)
+                if rotation:
+                    t = QTransform()
+                    t.rotate(rotation)
+                    pixmap = pixmap.transformed(t, Qt.SmoothTransformation)
                 self.preview_label.setPixmap(pixmap.scaled(400, 300, Qt.KeepAspectRatio))
             else:
-                self.preview_label.setText(self.tr("preview_unavailable"))  # or hardcoded "Preview unavailable"
-
+                self.preview_label.setText("Preview unavailable")
 
     def setup_connections(self):
-        """Connect signals to slots"""
-        # Connect table selection changes to preview updates
         self.image_table.itemSelectionChanged.connect(self.update_preview)
 
+    # ── Project ───────────────────────────────────────────────────────────────
 
-
-    """06_Project Functions"""
     def clear_project(self):
         self.images.clear()
-        self.audio_files.clear()  # Clear audio files
-        self.image_table.setRowCount(0)  # Proper way to clear the table
-        self.audio_table.setRowCount(0)  # Clear audio table
+        self.audio_files.clear()
+        self.image_table.setRowCount(0)
+        self.audio_table.setRowCount(0)
         self.preview_label.clear()
-
         self.loaded_project = ""
 
-    def save_project(self):
-        if self.loaded_project != "":
-            with open(self.loaded_project, 'w', encoding='utf-8') as f:
-                count = 0
-                for audio in self.audio_files:
-                    count += 1
-                f.write(str(count) + "\n")
-                for audio in self.audio_files:
-                    f.write(f"{audio['path']}\n")  
-                for img in self.images:
-                    text = img.get('text', '')
-                    if '\n' in text:
-                        text = text.replace('\n', '\\n')
-                    f.write(f"{img['path']},{img.get('duration', 5)},{img.get('transition', 'fade')},{img.get('transition_duration', 1)},{text},{img.get('rotation', '')},{img.get('is_second_image', False)},{img.get('date', '')}\n") 
-        
-        else:
-            options = QFileDialog.Options()
-            file_name, _ = QFileDialog.getSaveFileName(self, "Save Project", "", "Project Files (*.slideshow);;All Files (*)", options=options)
-            if file_name:
-                with open(file_name, 'w', encoding='utf-8') as f:
-                    count = 0
-                    for audio in self.audio_files:
-                        count += 1
-                    f.write(str(count) + "\n")
-                    for audio in self.audio_files:
-                        f.write(f"{audio['path']}\n")  
-                    for img in self.images:
-                        text = img.get('text', '')
-                        if '\n' in text:
-                            text = text.replace('\n', '\\n')
-                        f.write(f"{img['path']},{img.get('duration', 5)},{img.get('transition', 'fade')},{img.get('transition_duration', 1)},{text},{img.get('rotation', '')},{img.get('is_second_image', False)},{img.get('date', '')}\n") 
-                    self.loaded_project = file_name
+    def _write_project_file(self, path: str):
+        """Serialise current project to disk."""
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(f"{len(self.audio_files)}\n")
+            for audio in self.audio_files:
+                f.write(f"{audio['path']}\n")
+            for img in self.images:
+                text = img.get("text", "").replace("\n", "\\n")
+                f.write(
+                    f"{img['path']},{img.get('duration', 5)},{img.get('transition', 'fade')},"
+                    f"{img.get('transition_duration', 1)},{text},{img.get('rotation', 0)},"
+                    f"{img.get('is_second_image', False)},{img.get('date', '')}\n"
+                )
 
+    def save_project(self):
+        if self.loaded_project:
+            self._write_project_file(self.loaded_project)
+        else:
+            self.save_project_as()
 
     def save_project_as(self):
-        options = QFileDialog.Options()
-        file_name, _ = QFileDialog.getSaveFileName(self, "Save Project", "", "Project Files (*.slideshow);;All Files (*)", options=options)
+        file_name, _ = QFileDialog.getSaveFileName(
+            self, "Save Project", "", "Project Files (*.slideshow);;All Files (*)"
+        )
         if file_name:
-            with open(file_name, 'w', encoding='utf-8') as f:
-                count = 0
-                for audio in self.audio_files:
-                    count += 1
-                f.write(str(count) + "\n")
-                for audio in self.audio_files:
-                    f.write(f"{audio['path']}\n")  
-                for img in self.images:
-                    text = img.get('text', '')
-                    if '\n' in text:
-                        text = text.replace('\n', '\\n')
-                    f.write(f"{img['path']},{img.get('duration', 5)},{img.get('transition', 'fade')},{img.get('transition_duration', 1)},{text},{img.get('rotation', '')},{img.get('is_second_image', False)},{img.get('date', '')}\n")
-                self.loaded_project = file_name
+            self._write_project_file(file_name)
+            self.loaded_project = file_name
 
     def load_project(self):
-        options = QFileDialog.Options()
-        file_name, _ = QFileDialog.getOpenFileName(self, "Load Project", "", "Project Files (*.slideshow);;All Files (*)", options=options)
-        if file_name:
-            with open(file_name, 'r', encoding='utf-8') as f:
+        file_name, _ = QFileDialog.getOpenFileName(
+            self, "Load Project", "", "Project Files (*.slideshow);;All Files (*)"
+        )
+        if not file_name:
+            return
+        try:
+            with open(file_name, "r", encoding="utf-8") as f:
                 lines = f.readlines()
-                count = int(lines[0].strip())  # Number of audio files
-                
-                self.audio_files = []  # Clear existing audio files
-                
-                # Load audio files
-                for i in range(1, count + 1):
-                    audio_path = lines[i].strip()
-                    self.audio_files.append({'path': audio_path})  # Add each audio file to the list
-                
-                # Load images
-                self.images = []
-                for line in lines[count + 1:]:  # Start after the audio file lines
-                    path, duration, transition, transition_duration, text, rotation, is_second_image, date = line.strip().split(',')
-                    if transition_duration != self.default_transition_duration:
-                        transition_duration = self.default_transition_duration
-                    self.images.append({
-                        'path': path,
-                        'duration': int(duration),
-                        'transition': transition,
-                        'transition_duration': int(transition_duration),
-                        'text': text.replace('\\n', '\n'),
-                        'rotation': int(rotation),
-                        'is_second_image': is_second_image.strip().lower() == 'true',  # Convert to boolea
-                        'date': date
-                    })
 
-                print(self.images)
-                
-                # Update the UI tables
+            count = int(lines[0].strip())
+            if len(lines) < count + 1:
+                raise ValueError("Project file is truncated.")
 
-                self.update_image_table()
-                self.update_audio_table()
+            self.audio_files = [{"path": lines[i + 1].strip()} for i in range(count)]
+            self.images = []
+            for line in lines[count + 1:]:
+                parts = line.strip().split(",")
+                if len(parts) < 8:
+                    continue
+                path, dur, transition, trans_dur, text, rotation, is_second, date = parts[:8]
+                self.images.append({
+                    "path":               path,
+                    "duration":           int(dur),
+                    "transition":         transition,
+                    "transition_duration": self.default_transition_duration,
+                    "text":               text.replace("\\n", "\n"),
+                    "rotation":           int(rotation),
+                    "is_second_image":    is_second.strip().lower() == "true",
+                    "date":               date,
+                })
 
-                self.loaded_project = file_name
+            self.update_image_table()
+            self.update_audio_table()
+            self.loaded_project = file_name
+        except Exception as e:
+            QMessageBox.critical(self, self.tr("error"), f"Failed to load project:\n{e}")
 
+    # ── Transitions ───────────────────────────────────────────────────────────
 
+    def update_transition(self, row: int, transition: str):
+        if 0 <= row < len(self.images):
+            self.images[row]["transition"] = transition
 
-    """07_Transition Functions"""
-    def update_transition(self, row, transition):
-        self.images[row]['transition'] = transition
-    
     def set_all_images_transition(self):
-        # Create an input dialog instance
         dialog = QInputDialog(self)
         dialog.setWindowTitle("Set Transition")
         dialog.setLabelText("Select transition:")
-        dialog.setComboBoxItems(self.transitions_types)  # Set transition options
-
-
-        # Execute the dialog
+        dialog.setComboBoxItems(self.transitions_types)
         if dialog.exec_() == QDialog.Accepted:
-            transition = dialog.textValue()
-            for i in range(len(self.images)):
-                self.images[i]['transition'] = transition
-                self.transition_item.setCurrentText(transition)  # Set current transition
+            t = dialog.textValue()
+            for img in self.images:
+                img["transition"] = t
             self.update_image_table()
 
-
     def set_random_transition_for_each_image(self):
-        
-        for i in range(len(self.images)):
-            random_i = random.randint(0, len(self.transitions_types) - 1)
-            transition = self.transitions_types[random_i]
-            self.images[i]['transition'] = transition
-            self.transition_item.setCurrentText(transition)  # Set current transition
+        for img in self.images:
+            img["transition"] = random.choice(self.transitions_types)
         self.update_image_table()
 
     def auto_calc_image_duration(self):
-        total_images_count = 0
-        total_audio_duration = 0.0
-        for audio in self.audio_files:
-            audio_path = audio['path']
-            try:
-                # Enclose the file path in double quotes
-                cmd = [
-                    "ffprobe",
-                    "-v", "error",
-                    "-show_entries", "format=duration",
-                    "-of", "default=noprint_wrappers=1:nokey=1",
-                    f'"{audio_path}"'  # Quoting the path
-                ]
-                # Run the ffprobe command
-                output = subprocess.check_output(" ".join(cmd), shell=True, universal_newlines=True).strip()
-                total_audio_duration += float(output)
-            except Exception as e:
-                print(f"Error processing file {audio_path}: {e}")
-
-        for i in range(len(self.images)):
-            total_images_count += 1
-
-
-        new_image_duration = int((total_audio_duration - 2) / total_images_count)
-        for i in range(len(self.images)):
-            self.images[i]['duration'] = new_image_duration
+        total_audio = self._total_audio_duration()
+        n = len(self.images)
+        if n == 0:
+            return
+        new_dur = int((total_audio - 2) / n)
+        for img in self.images:
+            img["duration"] = new_dur
         self.update_image_table()
 
-    def validate_transitions(self):
+    def validate_transitions(self) -> bool:
         for img in self.images:
-            if img['transition_duration'] >= img['duration']:
-                QMessageBox.warning(self, "Invalid Transition Duration", 
-                                f"Transition duration for {img['path']} is too long. It must be less than the image duration.")
+            if img["transition_duration"] >= img["duration"]:
+                QMessageBox.warning(
+                    self, "Invalid Transition Duration",
+                    self.tr("error_invalid_transition", path=img["path"]),
+                )
                 return False
         return True
 
+    # ── Premiere Export ───────────────────────────────────────────────────────
 
-    """08_Premiere_Functions"""
     def export_premiere_slideshow(self):
-
-        options = QFileDialog.Options()
-        file_path, _ = QFileDialog.getSaveFileName(self, "Save Premiere Slideshow", "", "Folder", options=options)
-        if file_path:
-            self.premiere_project_folder = file_path
-        else:
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Save Premiere Slideshow", "", "Folder"
+        )
+        if not file_path:
             QMessageBox.critical(self, self.tr("error"), self.tr("error_select_location_premiere"), QMessageBox.Ok)
             return
+        self.premiere_project_folder = file_path
 
         self.image_premiere_progress_bar.setVisible(True)
         self.image_premiere_progress_bar.setValue(0)
         self.taskbar_progress.show()
         self.taskbar_progress.setValue(0)
 
-
-        self.image_premiere_worker = ImageProcessingPremiereWorker(self.images, self.premiere_project_folder, self.common_width, self.common_height)
+        self.image_premiere_worker = ImageProcessingPremiereWorker(
+            self.images, self.premiere_project_folder, self.common_width, self.common_height
+        )
         self.image_premiere_worker.progress.connect(self.update_image_premiere_progress)
         self.image_premiere_worker.finished.connect(self.on_image_premiere_processing_finished)
         self.image_premiere_worker.start()
 
-    
-    def update_image_premiere_progress(self, value):
+    def update_image_premiere_progress(self, value: int):
         self.image_premiere_progress_bar.setValue(value)
         self.taskbar_progress.setValue(value)
 
@@ -1101,155 +964,99 @@ class SlideshowCreator(QMainWindow):
         self.copy_premiere_project_file()
 
     def export_premiere_audio(self):
-        # Create the "Audios" folder if it doesn't exist
-        premiere_audio_folder = os.path.join(self.premiere_project_folder, "02_אודיו")
-        os.makedirs(premiere_audio_folder, exist_ok=True)
-
-        for i, audio_file in enumerate(self.audio_files, start=1):
-            audio_path = audio_file['path']
-            audio_extension = os.path.splitext(audio_path)[1]  # Get the file extension (e.g., .mp3)
-            audio_file_name = os.path.splitext(os.path.basename(audio_path))[0]  # Get the audio file name without extension
-            new_audio_name = f"audio{i}_{audio_file_name}{audio_extension}"  # Generate new name (e.g., audio1_filename.mp3)
-            premiere_audio_path = os.path.join(premiere_audio_folder, new_audio_name)
-
-            # Copy the audio file to the new location with the new name
-            shutil.copy(audio_path, premiere_audio_path)
-
-            print(f"Copied {audio_path} to {premiere_audio_path}")
-
-    def format_time(self, seconds):
-        """Convert seconds to SRT time format: HH:MM:SS,mmm."""
-        hours = int(seconds // 3600)
-        minutes = int((seconds % 3600) // 60)
-        secs = int(seconds % 60)
-        millis = int((seconds - int(seconds)) * 1000)
-        return f"{hours:02}:{minutes:02}:{secs:02},{millis:03}"
+        folder = os.path.join(self.premiere_project_folder, "02_אודיו")
+        os.makedirs(folder, exist_ok=True)
+        for i, audio in enumerate(self.audio_files, start=1):
+            src  = audio["path"]
+            ext  = os.path.splitext(src)[1]
+            name = os.path.splitext(os.path.basename(src))[0]
+            dst  = os.path.join(folder, f"audio{i}_{name}{ext}")
+            shutil.copy(src, dst)
 
     def export_premiere_text(self):
-        # Create the "Texts" folder if it doesn't exist
-        premiere_text_folder = os.path.join(self.premiere_project_folder, "03_טקסט")
-        os.makedirs(premiere_text_folder, exist_ok=True)
-        style_file_path = r"E:\------ Programing ------\Eventure\Premiere_Project\טקסט למצגת - עברית.prtextstyle"
-        # Copy the original text file to the new location
-        original_text_file_path = os.path.join(premiere_text_folder, "טקסט למצגת - בעברית.prtextstyle")
-        shutil.copy(style_file_path, original_text_file_path)
-        print(f"Copied {style_file_path} to {original_text_file_path}")
-        
+        folder = os.path.join(self.premiere_project_folder, "03_טקסט")
+        os.makedirs(folder, exist_ok=True)
 
-        # Define the output file path
-        srt_file_path = os.path.join(premiere_text_folder, "exported_texts.srt")
+        # Copy style file if it exists (use relative path)
+        script_dir = Path(__file__).resolve().parent
+        style_src  = script_dir / "Premiere_Project" / "טקסט למצגת - עברית.prtextstyle"
+        if style_src.exists():
+            shutil.copy(str(style_src), os.path.join(folder, style_src.name))
 
-        # Initialize time tracking
+        srt_path    = os.path.join(folder, "exported_texts.srt")
         current_time = 0
-        subtitle_index = 1  # Manually track subtitle index
-
-        # Write the SRT file
-        with open(srt_file_path, "w", encoding="utf-8") as srt_file:
-            for image in self.images:
-                if image['is_second_image']:
-                    continue  # Skip second images
-
-                start_time = self.format_time(current_time)
-                end_time = self.format_time(current_time + image['duration'])
-
-                # Write the subtitle entry
-                srt_file.write(f"{subtitle_index}\n")
-                srt_file.write(f"{start_time} --> {end_time}\n")
-                srt_file.write(f"{image['text']}\n\n")
-
-                # Update index and time
-                subtitle_index += 1
-                current_time += image['duration']
-
-        print(f"SRT file created at: {srt_file_path}")
+        idx = 1
+        with open(srt_path, "w", encoding="utf-8") as f:
+            for img in self.images:
+                if img["is_second_image"]:
+                    continue
+                start = format_time_srt(current_time)
+                end   = format_time_srt(current_time + img["duration"])
+                f.write(f"{idx}\n{start} --> {end}\n{img['text']}\n\n")
+                idx += 1
+                current_time += img["duration"]
 
     def export_premiere_duration_excel(self):
-        # Create the "Texts" folder if it doesn't exist
-        premiere_text_folder = os.path.join(self.premiere_project_folder, "03_טקסט")
-        os.makedirs(premiere_text_folder, exist_ok=True)
-
-        # Define the output Excel file path
-        excel_file_path = os.path.join(premiere_text_folder, "exported_durations.xlsx")
-
-        # Create a new Workbook
+        folder = os.path.join(self.premiere_project_folder, "03_טקסט")
+        os.makedirs(folder, exist_ok=True)
         wb = Workbook()
         ws = wb.active
         ws.title = "Durations"
-
-        # Write the header row
         ws.append(["Path", "Duration", "Text"])
-
-        # Write the image data
-        for image in self.images:
-            ws.append([image["path"], image["duration"], image["text"]])
-
-        # Save the workbook to the file
-        wb.save(excel_file_path)
-
-        print(f"Excel file created at: {excel_file_path}")
+        for img in self.images:
+            ws.append([img["path"], img["duration"], img["text"]])
+        wb.save(os.path.join(folder, "exported_durations.xlsx"))
 
     def copy_premiere_project_file(self):
-        # Define the source and destination paths for the Premiere project file
-        premiere_project_source = r"E:\------ Programing ------\Eventure\Premiere_Project\Project.prproj"
-        project_destination_folder = os.path.join(self.premiere_project_folder, "04_פרוייקט")
-        os.makedirs(project_destination_folder, exist_ok=True)
-        project_file_name = os.path.basename(self.premiere_project_folder) + ".prproj"
-        project_destination_path = os.path.join(project_destination_folder, project_file_name)
+        script_dir = Path(__file__).resolve().parent
+        src  = script_dir / "Premiere_Project" / "Project.prproj"
+        if not src.exists():
+            print(f"Premiere project template not found at {src}")
+            return
+        dst_folder = os.path.join(self.premiere_project_folder, "04_פרוייקט")
+        os.makedirs(dst_folder, exist_ok=True)
+        name = os.path.basename(self.premiere_project_folder) + ".prproj"
+        shutil.copy(str(src), os.path.join(dst_folder, name))
 
-        # Copy the Premiere project file
-        shutil.copy(premiere_project_source, project_destination_path)
-
-        print(f"Premiere project file copied to: {project_destination_path}")
-
-
-
-    
+    # ── Easy Text ─────────────────────────────────────────────────────────────
 
     def open_easy_text_writing(self):
         if not self.images:
             QMessageBox.warning(self, self.tr("error_no_images_title"), self.tr("error_no_images"))
             return
-        
-        selected_row = self.image_table.currentRow()  # Replace 'self.image_table' with the name of your table widget
+        selected_row  = self.image_table.currentRow()
         affected_rows = []
-        
-        self.easy_text_dialog = EasyTextWritingDialog(self.images, affected_rows, start_index=selected_row, tr_function=self.tr, parent=self)
-        
-
-        self.easy_text_dialog.show()
-        if self.easy_text_dialog.exec_():
-            affected_rows[:] = self.easy_text_dialog.affected_rows
-        
+        dialog = EasyTextWritingDialog(
+            self.images, affected_rows, start_index=selected_row, tr_function=self.tr, parent=self
+        )
+        dialog.show()
+        if dialog.exec_():
+            affected_rows[:] = dialog.affected_rows
         for row in affected_rows:
             self.update_image_row(row)
 
-
-    """09_Shortcut Functions"""
+    # ── Shortcuts ─────────────────────────────────────────────────────────────
 
     def save_shortcuts(self):
-        
-        # Save shortcuts to a file
-        shortcuts_file_path = BASEPATH / "shortcuts.txt"
-        with open(shortcuts_file_path, "w") as f:
+        path = BASEPATH / "shortcuts.txt"
+        with open(path, "w") as f:
             for action, shortcut in self.shortcuts.items():
                 f.write(f"{action}:{shortcut}\n")
 
     def load_shortcuts(self):
-        # Load shortcuts from file
-        shortcuts_file_path = BASEPATH / "shortcuts.txt"
+        path = BASEPATH / "shortcuts.txt"
         try:
-            with open(shortcuts_file_path, "r") as f:
+            with open(path, "r") as f:
                 for line in f:
-                    action, shortcut = line.strip().split(":")
-                    self.shortcuts[action] = shortcut
+                    if ":" in line:
+                        action, shortcut = line.strip().split(":", 1)
+                        self.shortcuts[action] = shortcut
         except FileNotFoundError:
-            # If the file doesn't exist, use the default shortcuts
             pass
 
     def update_shortcuts(self):
-        # Update the shortcuts in the application
         self.save_action.setShortcut(self.shortcuts.get("save", "Ctrl+S"))
-        self.save_as_action.setShortcut(self.shortcuts.get("save_as", "Ctrl+Shif+S"))
+        self.save_as_action.setShortcut(self.shortcuts.get("save_as", "Ctrl+Shift+S"))
         self.load_action.setShortcut(self.shortcuts.get("load", "Ctrl+L"))
         self.easy_text_writing_action.setShortcut(self.shortcuts.get("easy_text", "Ctrl+T"))
         self.show_info_action.setShortcut(self.shortcuts.get("info", "Alt+I"))
@@ -1260,53 +1067,38 @@ class SlideshowCreator(QMainWindow):
         self.move_image_up_action.setShortcut(self.shortcuts.get("move_image_up", "Ctrl+Up"))
         self.move_image_down_action.setShortcut(self.shortcuts.get("move_image_down", "Ctrl+Down"))
 
-    def set_shortcut(self, action):
-        # Create an input dialog instance
+    def set_shortcut(self, action: str):
         dialog = QInputDialog(self)
-        dialog.setWindowTitle(self.tr("shortcut_set") + " " + {action.capitalize()} + " " + self.tr("shortcut_shortcut"))
+        dialog.setWindowTitle(f"{self.tr('shortcut_set')} {action.capitalize()} {self.tr('shortcut_shortcut')}")
         dialog.setLabelText(f"{self.tr('dialog_enter_shortcut')} {action}:")
         dialog.setTextValue(self.shortcuts.get(action, ""))
-
-
-        # Execute the dialog
         if dialog.exec_() == QDialog.Accepted:
             shortcut = dialog.textValue()
             if shortcut:
                 self.shortcuts[action] = shortcut
-                self.save_shortcuts()  # Save the new shortcut
-                self.update_shortcuts()  # Update the shortcuts in the application
+                self.save_shortcuts()
+                self.update_shortcuts()
 
-
-
-
+    # ── Info / Help ───────────────────────────────────────────────────────────
 
     def show_info(self):
-        
-        info_dialog = InfoDialog(self.images, self.audio_files, self.tr, self)
-        info_dialog.exec_()
+        InfoDialog(self.images, self.audio_files, self.tr, self).exec_()
 
     def open_help_dialog(self):
-        dialog = HelpDialog(self, self.language)
-        dialog.exec_()
+        HelpDialog(self, self.language).exec_()
 
-    
+    # ── Translations ──────────────────────────────────────────────────────────
 
-
-    "10_Translations Functions"
     def load_translations(self):
         lang_file = BASEPATH / "Languages" / f"lang_{self.language}.json"
         try:
-            with open(lang_file, 'r', encoding='utf-8') as f:
+            with open(lang_file, "r", encoding="utf-8") as f:
                 self.translations = json.load(f)
-        except FileNotFoundError:
-            # Fallback to English if language file not found
-            self.translations = {
-                "window_title": "Slideshow Creator",
-                # Add other default translations here...
-            }
-    
-    def tr(self, key, **kwargs):
-        """Translate a key with optional formatting"""
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            print(f"Translation load error: {e}")
+            self.translations = {"window_title": "Eventure"}
+
+    def tr(self, key: str, **kwargs) -> str:
         text = self.translations.get(key, key)
         if kwargs:
             try:
@@ -1314,25 +1106,15 @@ class SlideshowCreator(QMainWindow):
             except KeyError:
                 pass
         return text
-    
-    def set_language(self, language_code):
-        """Change the application language"""
-        self.language = language_code
+
+    def set_language(self, code: str):
+        self.language = code
         self.load_translations()
-        
-        # Set layout direction for RTL languages
-        if language_code == "he":
-            QApplication.setLayoutDirection(Qt.RightToLeft)
-        else:
-            QApplication.setLayoutDirection(Qt.LeftToRight)
-        
+        QApplication.setLayoutDirection(Qt.RightToLeft if code == "he" else Qt.LeftToRight)
         self.retranslate_ui()
-    
+
     def retranslate_ui(self):
-        """Update all UI elements with new translations"""
         self.setWindowTitle(self.tr("window_title"))
-        
-        # Update menu bar
         self.file_menu.setTitle(self.tr("menu_file"))
         self.import_menu.setTitle(self.tr("menu_import"))
         self.options_menu.setTitle(self.tr("menu_options"))
@@ -1346,8 +1128,7 @@ class SlideshowCreator(QMainWindow):
         self.language_menu.setTitle(self.tr("menu_language"))
         self.info_menu.setTitle(self.tr("menu_info"))
         self.help_menu.setTitle(self.tr("menu_help"))
-        
-        # Update actions
+
         self.import_images.setText(self.tr("action_import_images"))
         self.import_audio.setText(self.tr("action_import_audio"))
         self.load_action.setText(self.tr("action_load_project"))
@@ -1382,419 +1163,269 @@ class SlideshowCreator(QMainWindow):
         self.set_language_hebrew_action.setText(self.tr("action_set_language_hebrew"))
         self.open_help_dialog_action.setText(self.tr("action_browse_help_topics"))
 
-        
-        # Update labels
         self.slides_label.setText(self.tr("label_slides"))
         self.audio_files_label.setText(self.tr("label_audio_files"))
         self.preview_label.setText(self.tr("label_preview"))
-        
-        # Update table headers
-        headers = [
-            self.tr("table_header_actions"),
-            self.tr("table_header_image"),
-            self.tr("table_header_duration"),
-            self.tr("table_header_transition"),
-            self.tr("table_header_transition_length"),
-            self.tr("table_header_text"),
-            self.tr("table_header_rotation"),
-            self.tr("table_header_second_image"),
-            self.tr("table_header_date")
-        ]
-        self.image_table.setHorizontalHeaderLabels(headers)
-        
-        audio_headers = [
-            self.tr("table_header_actions"),
-            self.tr("table_header_audio_file")
-        ]
-        self.audio_table.setHorizontalHeaderLabels(audio_headers)
 
-        #update button
+        self.image_table.setHorizontalHeaderLabels([
+            self.tr("table_header_actions"), self.tr("table_header_image"),
+            self.tr("table_header_duration"), self.tr("table_header_transition"),
+            self.tr("table_header_transition_length"), self.tr("table_header_text"),
+            self.tr("table_header_rotation"), self.tr("table_header_second_image"),
+            self.tr("table_header_date"),
+        ])
+        self.audio_table.setHorizontalHeaderLabels([
+            self.tr("table_header_actions"), self.tr("table_header_audio_file"),
+        ])
         self.audio_library_button.setText(self.tr("label_audio_library"))
 
+    # ── Menu ─────────────────────────────────────────────────────────────────
 
-
-
-    """11_Menu Functions"""
     def create_menu(self):
-        # Creates the Bar on to of the screen 
-        self.menubar = self.menuBar() # Create the menu bar
-        self.file_menu = self.menubar.addMenu(self.tr("menu_file")) # Add a menu to the menu bar
-        self.import_menu = self.file_menu.addMenu(self.tr("menu_import")) # Add a submenu to the file menu
-        self.options_menu = self.menubar.addMenu(self.tr("menu_options")) # Add a menu to the menu bar
-        self.Img_menu = self.options_menu.addMenu(self.tr("menu_images")) # Add a submenu to the options menu
-        self.Auto_sort_menu = self.Img_menu.addMenu(self.tr("menu_auto_sort")) # Add a submenu to the options menu
-        self.export_menu = self.file_menu.addMenu(self.tr("menu_export")) # Add a submenu to the file menu
-        self.Transitions_menu = self.options_menu.addMenu(self.tr("menu_transitions")) # Add a submenu to the options menu
-        self.Text_menu = self.options_menu.addMenu(self.tr("menu_text")) # Add a submenu to the options menu
-        self.settings_menu = self.menubar.addMenu(self.tr("menu_settings")) # Add a menu to the menu bar
-        self.shortcuts_menu = self.settings_menu.addMenu(self.tr("menu_shortcuts")) # Add a submenu to the settings menu
-        self.language_menu = self.settings_menu.addMenu(self.tr("menu_language")) # Add a submenu to the settings menu
-        self.info_menu = self.menubar.addMenu(self.tr("menu_info")) # Add a menu to the menu bar
-        self.help_menu = self.menubar.addMenu(self.tr("menu_help")) # Add a menu to the menu bar
-        
+        self.menubar          = self.menuBar()
+        self.file_menu        = self.menubar.addMenu(self.tr("menu_file"))
+        self.import_menu      = self.file_menu.addMenu(self.tr("menu_import"))
+        self.options_menu     = self.menubar.addMenu(self.tr("menu_options"))
+        self.Img_menu         = self.options_menu.addMenu(self.tr("menu_images"))
+        self.Auto_sort_menu   = self.Img_menu.addMenu(self.tr("menu_auto_sort"))
+        self.export_menu      = self.file_menu.addMenu(self.tr("menu_export"))
+        self.Transitions_menu = self.options_menu.addMenu(self.tr("menu_transitions"))
+        self.Text_menu        = self.options_menu.addMenu(self.tr("menu_text"))
+        self.settings_menu    = self.menubar.addMenu(self.tr("menu_settings"))
+        self.shortcuts_menu   = self.settings_menu.addMenu(self.tr("menu_shortcuts"))
+        self.language_menu    = self.settings_menu.addMenu(self.tr("menu_language"))
+        self.info_menu        = self.menubar.addMenu(self.tr("menu_info"))
+        self.help_menu        = self.menubar.addMenu(self.tr("menu_help"))
+
+        def _action(label_key, handler, menu, shortcut_key=None):
+            a = QAction(self.tr(label_key), self)
+            a.triggered.connect(handler)
+            if shortcut_key:
+                a.setShortcut(self.shortcuts.get(shortcut_key, ""))
+            menu.addAction(a)
+            return a
+
+        self.import_images   = _action("action_import_images",   self.add_images,          self.import_menu,  "import_images")
+        self.import_audio    = _action("action_import_audio",    self.add_audio,           self.import_menu,  "import_audio")
+        self.load_action     = _action("action_load_project",    self.load_project,        self.file_menu,    "load")
+        self.save_action     = _action("action_save_project",    self.save_project,        self.file_menu,    "save")
+        self.save_as_action  = _action("action_save_project_as", self.save_project_as,     self.file_menu,    "save_as")
+        self.clear_action    = _action("action_clear_project",   self.clear_project,       self.file_menu)
+        self.export_slideshow_action = _action("action_export_slideshow", self.export_slideshow, self.export_menu)
+        self.export_premiere_action  = _action("action_export_premiere",  self.export_premiere_slideshow, self.export_menu)
+
+        self.delete_row_action      = _action("action_delete_row",    self.delete_image,    self.Img_menu, "delete_row")
+        self.move_image_up_action   = _action("action_move_image_up", self.move_image_up,   self.Img_menu, "move_image_up")
+        self.move_image_down_action = _action("action_move_image_down", self.move_image_down, self.Img_menu, "move_image_down")
+        self.set_all_images_duration_action   = _action("action_set_all_image_duration",   self.set_all_images_duration, self.Img_menu)
+        self.set_random_image_order_action    = _action("action_set_random_images_order",  self.set_random_images_order, self.Img_menu)
+        self.auto_set_images_action           = _action("action_auto_calc_image_duration", self.auto_calc_image_duration, self.Img_menu)
+        self.set_image_location_action        = _action("dialog_set_image_location",       self.set_image_location, self.Img_menu, "set_image_location")
+        self.auto_sort_images_by_date_Newest_action = _action("action_auto_sort_newest_first", lambda: self.auto_sort_images_by_date(True),  self.Auto_sort_menu)
+        self.auto_sort_images_by_date_Oldest_action = _action("action_auto_sort_oldest_first", lambda: self.auto_sort_images_by_date(False), self.Auto_sort_menu)
+
+        self.set_all_images_transition_type_action      = _action("action_set_all_transition_type",          self.set_all_images_transition,            self.Transitions_menu)
+        self.set_random_transition_for_each_image_action = _action("action_set_random_transition_per_image", self.set_random_transition_for_each_image, self.Transitions_menu)
+
+        self.easy_text_writing_action = _action("action_easy_text_writing", self.open_easy_text_writing, self.Text_menu, "easy_text")
+
+        for key, label in [
+            ("save",              "action_set_save_shortcut"),
+            ("save_as",           "action_set_save_as_shortcut"),
+            ("load",              "action_set_load_shortcut"),
+            ("easy_text",         "action_set_easy_text_shortcut"),
+            ("info",              "action_set_show_info_shortcut"),
+            ("delete_row",        "action_set_delete_shortcut"),
+            ("set_image_location","action_set_image_location_shortcut"),
+            ("move_image_up",     "action_set_move_image_up_shortcut"),
+            ("move_image_down",   "action_set_move_image_down_shortcut"),
+        ]:
+            a = QAction(self.tr(label), self)
+            a.triggered.connect(lambda checked, k=key: self.set_shortcut(k))
+            self.shortcuts_menu.addAction(a)
+            setattr(self, f"set_{key}_shortcut_action" if key != "set_image_location" else "set_set_image_location_action", a)
+
+        # Expose individual shortcut actions for retranslate
+        (
+            self.set_save_shortcut_action,
+            self.set_save_as_shortcut_action,
+            self.set_load_shortcut_action,
+            self.set_easy_text_shortcut_action,
+            self.set_show_info_shortcut_action,
+            self.set_delete_row_action,
+            self.set_set_image_location_action,
+            self.set_move_image_up_action,
+            self.set_move_image_down_action,
+        ) = self.shortcuts_menu.actions()
+
+        self.show_info_action = _action("action_show_info", self.show_info, self.info_menu, "info")
+
+        self.set_language_english_action = _action("action_set_language_english", lambda: self.set_language("en"), self.language_menu)
+        self.set_language_hebrew_action  = _action("action_set_language_hebrew",  lambda: self.set_language("he"), self.language_menu)
+
+        self.open_help_dialog_action = _action("action_browse_help_topics", self.open_help_dialog, self.help_menu)
 
 
-        #----Start Of File Menu----
-        self.import_images = QAction(self.tr("action_import_images"), self)
-        self.import_images.triggered.connect(self.add_images)
-        self.import_images.setShortcut(self.shortcuts.get("import_images", "Ctrl+Shift+I"))
-        self.import_menu.addAction(self.import_images)
+# ── Worker Threads ────────────────────────────────────────────────────────────
 
-        self.import_audio = QAction(self.tr("action_import_audio"), self)
-        self.import_audio.triggered.connect(self.add_audio)
-        self.import_audio.setShortcut(self.shortcuts.get("import_audio", "Ctrl+Shift+A"))
-        self.import_menu.addAction(self.import_audio)
+class ImageProcessingWorker(QThread):
+    """
+    Processes images in parallel using a ThreadPoolExecutor.
+    For CPU-bound PIL work a ProcessPoolExecutor would be even faster,
+    but threads avoid pickle/spawn overhead for small-to-medium batches.
+    """
+    progress = pyqtSignal(int)
+    finished = pyqtSignal()
 
-        self.load_action = QAction(self.tr("action_load_project"), self)
-        self.load_action.triggered.connect(self.load_project)
-        self.load_action.setShortcut(self.shortcuts.get("load", "Ctrl+L"))
-        self.file_menu.addAction(self.load_action)
+    def __init__(self, images, output_folder, common_width, common_height):
+        super().__init__()
+        self.images        = images
+        self.output_folder = output_folder
+        self.common_width  = common_width
+        self.common_height = common_height
 
+    def _process_one(self, i: int) -> tuple[int, str | None]:
+        img      = self.images[i]["path"]
+        rotation = self.images[i]["rotation"]
+        text     = self.images[i]["text"]
+        try:
+            original = Image.open(img)
+            if original.size != (self.common_width, self.common_height):
+                new_path = Image_resizer.process_image(img, self.output_folder, text, rotation)
+                return i, new_path
+        except Exception as e:
+            print(f"Error opening image {img}: {e}")
+        return i, None
 
-        self.save_action = QAction(self.tr("action_save_project"), self)
-        self.save_action.triggered.connect(self.save_project)
-        self.save_action.setShortcut(self.shortcuts.get("save", "Ctrl+S"))
-        self.file_menu.addAction(self.save_action)
+    def run(self):
+        total = len(self.images)
+        completed = 0
 
-        self.save_as_action = QAction(self.tr("action_save_project_as"), self)
-        self.save_as_action.triggered.connect(self.save_project_as)
-        self.save_as_action.setShortcut(self.shortcuts.get("save_as", "Ctrl+Shift+S"))
-        self.file_menu.addAction(self.save_as_action)
+        with ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as executor:
+            futures = {executor.submit(self._process_one, i): i for i in range(total)}
+            for future in as_completed(futures):
+                completed += 1
+                try:
+                    i, new_path = future.result()
+                    if new_path:
+                        self.images[i]["path"] = new_path
+                except Exception as e:
+                    print(f"Worker error: {e}")
+                self.progress.emit(int(completed / total * 100))
 
-        self.clear_action = QAction(self.tr("action_clear_project"), self)
-        self.clear_action.triggered.connect(self.clear_project)
-        self.file_menu.addAction(self.clear_action)
-
-        self.export_slideshow_action = QAction(self.tr("action_export_slideshow"), self)
-        self.export_slideshow_action.triggered.connect(self.export_slideshow)
-        self.export_menu.addAction(self.export_slideshow_action)
-
-        self.export_premiere_action = QAction(self.tr("action_export_premiere"), self)
-        self.export_premiere_action.triggered.connect(self.export_premiere_slideshow)
-        self.export_menu.addAction(self.export_premiere_action)
-
-
-
-        #----Start Of Options Menu----
-
-
-        #----Start Of Images Menu----
-        self.delete_row_action = QAction(self.tr("action_delete_row"), self)
-        self.delete_row_action.triggered.connect(self.delete_image)
-        self.delete_row_action.setShortcut(self.shortcuts.get("delete_row", "Delete"))
-        self.Img_menu.addAction(self.delete_row_action) 
-
-        self.move_image_up_action = QAction(self.tr("action_move_image_up"), self)
-        self.move_image_up_action.triggered.connect(self.move_image_up)
-        self.move_image_up_action.setShortcut(self.shortcuts.get("move_image_up", "Ctrl+Up"))
-        self.Img_menu.addAction(self.move_image_up_action) 
-
-        self.move_image_down_action = QAction(self.tr("action_move_image_down"), self)
-        self.move_image_down_action.triggered.connect(self.move_image_down)
-        self.move_image_down_action.setShortcut(self.shortcuts.get("move_image_down", "Ctrl+Down"))
-        self.Img_menu.addAction(self.move_image_down_action)
-
-        self.set_all_images_duration_action = QAction(self.tr("action_set_all_image_duration"), self)
-        self.set_all_images_duration_action.triggered.connect(self.set_all_images_duration)
-        self.Img_menu.addAction(self.set_all_images_duration_action)
-
-        self.set_random_image_order_action = QAction(self.tr("action_set_random_images_order"), self)
-        self.set_random_image_order_action.triggered.connect(self.set_random_images_order)
-        self.Img_menu.addAction(self.set_random_image_order_action)
-
-        self.auto_set_images_action = QAction(self.tr("action_auto_calc_image_duration"), self)
-        self.auto_set_images_action.triggered.connect(self.auto_calc_image_duration)
-        self.Img_menu.addAction(self.auto_set_images_action)
-
-        self.set_image_location_action = QAction(self.tr("dialog_set_image_location"), self)
-        self.set_image_location_action.triggered.connect(self.set_image_location)
-        self.set_image_location_action.setShortcut(self.shortcuts.get("set_image_location", "Ctrl+Q"))
-        self.Img_menu.addAction(self.set_image_location_action)
-
-        self.auto_sort_images_by_date_Newest_action = QAction(self.tr("action_auto_sort_newest_first"), self)
-        self.auto_sort_images_by_date_Newest_action.triggered.connect(lambda: self.auto_sort_images_by_date(True))
-        self.Auto_sort_menu.addAction(self.auto_sort_images_by_date_Newest_action)
-
-        self.auto_sort_images_by_date_Oldest_action = QAction(self.tr("action_auto_sort_oldest_first"), self)
-        self.auto_sort_images_by_date_Oldest_action.triggered.connect(lambda: self.auto_sort_images_by_date(False))
-        self.Auto_sort_menu.addAction(self.auto_sort_images_by_date_Oldest_action)
-
-        # ----Start Of Transitions Menu----
-
-        self.set_all_images_transition_type_action = QAction(self.tr("action_set_all_transition_type"), self)
-        self.set_all_images_transition_type_action.triggered.connect(self.set_all_images_transition)
-        self.Transitions_menu.addAction(self.set_all_images_transition_type_action)
-        
-        self.set_random_transition_for_each_image_action = QAction(self.tr("action_set_random_transition_per_image"), self)
-        self.set_random_transition_for_each_image_action.triggered.connect(self.set_random_transition_for_each_image)
-        self.Transitions_menu.addAction(self.set_random_transition_for_each_image_action)
-
-        # ----Start Of Text Menu----
-
-        self.easy_text_writing_action = QAction(self.tr("action_easy_text_writing"), self)
-        self.easy_text_writing_action.triggered.connect(self.open_easy_text_writing)
-        self.easy_text_writing_action.setShortcut(self.shortcuts.get("easy_text", "Ctrl+T"))
-        self.Text_menu.addAction(self.easy_text_writing_action)
-
-        
-        # ----Start Of Settings Menu----
-        
-        self.set_save_shortcut_action = QAction(self.tr("action_set_save_shortcut"), self)
-        self.set_save_shortcut_action.triggered.connect(lambda: self.set_shortcut("save"))
-        self.shortcuts_menu.addAction(self.set_save_shortcut_action)
-
-        self.set_save_as_shortcut_action = QAction(self.tr("action_set_save_as_shortcut"), self)
-        self.set_save_as_shortcut_action.triggered.connect(lambda: self.set_shortcut("save_as"))
-        self.shortcuts_menu.addAction(self.set_save_as_shortcut_action)
-
-        self.set_load_shortcut_action = QAction(self.tr("action_set_load_shortcut"), self)
-        self.set_load_shortcut_action.triggered.connect(lambda: self.set_shortcut("load"))
-        self.shortcuts_menu.addAction(self.set_load_shortcut_action)
-
-        self.set_easy_text_shortcut_action = QAction(self.tr("action_set_easy_text_shortcut"), self)
-        self.set_easy_text_shortcut_action.triggered.connect(lambda: self.set_shortcut("easy_text"))
-        self.shortcuts_menu.addAction(self.set_easy_text_shortcut_action)
-
-        self.set_show_info_shortcut_action = QAction(self.tr("action_set_show_info_shortcut"), self)
-        self.set_show_info_shortcut_action.triggered.connect(lambda: self.set_shortcut("info"))
-        self.shortcuts_menu.addAction(self.set_show_info_shortcut_action)
-
-        self.set_delete_row_action = QAction(self.tr("action_set_delete_shortcut"), self)
-        self.set_delete_row_action.triggered.connect(lambda: self.set_shortcut("delete_row"))
-        self.shortcuts_menu.addAction(self.set_delete_row_action)
-
-        self.set_set_image_location_action = QAction(self.tr("action_set_image_location_shortcut"), self)
-        self.set_set_image_location_action.triggered.connect(lambda: self.set_shortcut("set_image_location"))
-        self.shortcuts_menu.addAction(self.set_set_image_location_action)
-
-        self.set_move_image_up_action = QAction(self.tr("action_set_move_image_up_shortcut"), self)
-        self.set_move_image_up_action.triggered.connect(lambda: self.set_shortcut("move_image_up"))
-        self.shortcuts_menu.addAction(self.set_move_image_up_action)
-
-        self.set_move_image_down_action = QAction(self.tr("action_set_move_image_down_shortcut"), self)
-        self.set_move_image_down_action.triggered.connect(lambda: self.set_shortcut("move_image_down"))
-        self.shortcuts_menu.addAction(self.set_move_image_down_action)
+        self.finished.emit()
 
 
+class ImageProcessingPremiereWorker(QThread):
+    progress = pyqtSignal(int)
+    finished = pyqtSignal()
+
+    def __init__(self, images, output_folder, common_width, common_height):
+        super().__init__()
+        self.images        = images
+        self.output_folder = output_folder
+        self.common_width  = common_width
+        self.common_height = common_height
+
+    def run(self):
+        premiere_export.process_images(self.images, self.output_folder, self.progress.emit)
+        self.finished.emit()
 
 
-
-        self.show_info_action = QAction(self.tr("action_show_info"), self)
-        self.show_info_action.triggered.connect(self.show_info)
-        self.show_info_action.setShortcut(self.shortcuts.get("info", "Alt+I"))
-        self.info_menu.addAction(self.show_info_action)
-
-
-
-
-        self.set_language_english_action = QAction(self.tr("action_set_language_english"), self)
-        self.set_language_english_action.triggered.connect(lambda: self.set_language("en"))
-        self.language_menu.addAction(self.set_language_english_action)
-
-        self.set_language_hebrew_action = QAction(self.tr("action_set_language_hebrew"), self)
-        self.set_language_hebrew_action.triggered.connect(lambda: self.set_language("he"))
-        self.language_menu.addAction(self.set_language_hebrew_action)
-
-
-
-
-
-
-
-        # ----Start Of Help Menu----
-
-        self.open_help_dialog_action = QAction(self.tr("action_browse_help_topics"), self)
-        self.open_help_dialog_action.triggered.connect(self.open_help_dialog)
-        self.help_menu.addAction(self.open_help_dialog_action)
-    
-
-
-
-
-
-
+# ── Dialogs ───────────────────────────────────────────────────────────────────
 
 class HelpDialog(QDialog):
     def __init__(self, parent=None, language="en"):
         super().__init__(parent)
-        self.setWindowTitle(self.tr("help_topics_title"))
+        self.setWindowTitle("Help Topics")
         self.resize(600, 400)
-
-        self.layout = QVBoxLayout(self)
-
         self.language = language
 
-        self.topic_list = QListWidget()
+        layout = QVBoxLayout(self)
+        self.topic_list  = QListWidget()
         self.info_display = QTextEdit()
         self.info_display.setReadOnly(True)
+        layout.addWidget(self.topic_list)
+        layout.addWidget(self.info_display)
 
-        self.layout.addWidget(self.topic_list)
-        self.layout.addWidget(self.info_display)
-
-        self.help_data = self.load_help_info()
-
+        self.help_data = self._load_help_info()
         for topic in self.help_data:
-            item = QListWidgetItem(topic)
-            self.topic_list.addItem(item)
+            self.topic_list.addItem(QListWidgetItem(topic))
+        self.topic_list.itemClicked.connect(self._display_info)
 
-        self.topic_list.itemClicked.connect(self.display_info)
-
-    def load_help_info(self):
-        help_data = {}
+    def _load_help_info(self) -> dict:
         try:
-            help_file_path = BASEPATH / "Help" / f"Help_Info_{self.language}.txt"
-            with open(help_file_path, 'r', encoding='utf-8') as f:
+            path = BASEPATH / "Help" / f"Help_Info_{self.language}.txt"
+            with open(path, "r", encoding="utf-8") as f:
                 content = f.read()
-                blocks = content.split('topic:')
-                for block in blocks:
-                    if block.strip():
-                        lines = block.strip().split('Info:')
-                        topic = lines[0].strip()
-                        info = lines[1].strip() if len(lines) > 1 else "No additional information."
-                        help_data[topic] = info
+            data = {}
+            for block in content.split("topic:"):
+                if block.strip():
+                    parts = block.strip().split("Info:")
+                    data[parts[0].strip()] = parts[1].strip() if len(parts) > 1 else ""
+            return data
         except Exception as e:
-            help_data = {"Error loading help file": str(e)}
-        return help_data
+            return {"Error loading help file": str(e)}
 
-    def display_info(self, item):
-        topic = item.text()
-        info = self.help_data.get(topic, "No information available.")
-        self.info_display.setText(f"{topic}\n\n{info}")
-
-
-
-
-
-
-
-
-class ImageProcessingWorker(QThread):
-    progress = pyqtSignal(int)  # Signal to update the progress bar
-    finished = pyqtSignal()  # Signal to indicate that processing is finished
-
-    def __init__(self, images, output_folder, common_width, common_height):
-        super().__init__()
-        self.images = images
-        self.output_folder = output_folder
-        self.common_width = common_width
-        self.common_height = common_height
-
-    def run(self):
-        for i in range(len(self.images)):
-            img = self.images[i]['path']
-            rotation = self.images[i]['rotation']
-            text_on_slide = self.images[i]['text']
-            try:
-                original_image = Image.open(img)
-                if original_image.size != (self.common_width, self.common_height):
-                    new_image_path = Image_resizer.process_image(img, self.output_folder, text_on_slide, rotation)
-                    if new_image_path:  # Only update path if the new image was created successfully
-                        self.images[i]['path'] = new_image_path
-                    else:
-                        print(f"Failed to process image: {img}")
-            except Exception as e:
-                print(f"Error opening image {img}: {e}")
-
-            # Emit progress update
-            self.progress.emit(int((i + 1) / len(self.images) * 100))
-
-        # Emit finished signal
-        self.finished.emit()
-
-
-
-
-
-
-class ImageProcessingPremiereWorker(QThread):
-    progress = pyqtSignal(int)  # Signal to update the progress bar
-    finished = pyqtSignal()  # Signal to indicate that processing is finished
-
-    def __init__(self, images, output_folder, common_width, common_height):
-        super().__init__()
-        self.images = images
-        self.output_folder = output_folder
-        self.common_width = common_width
-        self.common_height = common_height
-
-    def run(self):
-        # Define a progress callback function
-        def progress_callback(progress):
-            self.progress.emit(progress)  # Emit the progress to the main thread
-
-
-        # Call the process_images function with the progress callback
-        premiere_export.process_images(self.images, self.output_folder, progress_callback)
-
-        # Emit finished signal
-        self.finished.emit()
+    def _display_info(self, item):
+        self.info_display.setText(f"{item.text()}\n\n{self.help_data.get(item.text(), '')}")
 
 
 class EasyTextWritingDialog(QDialog):
     def __init__(self, images, affected_rows, start_index=0, tr_function=None, parent=None):
         super().__init__(parent)
-        self.tr = tr_function
-        self.setWindowTitle(self.tr("action_easy_text_writing"))
-        self.setGeometry(200, 200, 400, 200)
-        self.images = images
+        self.tr            = tr_function
+        self.images        = images
         self.affected_rows = affected_rows
         self.current_index = start_index
-        
 
+        self.setWindowTitle(self.tr("action_easy_text_writing"))
+        self.setGeometry(200, 200, 400, 200)
 
-        self.layout = QVBoxLayout(self)
-
+        layout = QVBoxLayout(self)
         self.image_label = QLabel()
         self.image_label.setAlignment(Qt.AlignCenter)
-        self.layout.addWidget(self.image_label)
+        layout.addWidget(self.image_label)
 
         self.text_input = QTextEdit()
         self.text_input.setPlaceholderText(self.tr("enter_text_for_image"))
-        self.text_input.setAlignment(Qt.AlignRight)  # Align text to the right
-        self.text_input.setLayoutDirection(Qt.RightToLeft)  # Set layout direction to RTL
-        self.text_input.setTextInteractionFlags(Qt.TextEditorInteraction)
+        self.text_input.setAlignment(Qt.AlignRight)
+        self.text_input.setLayoutDirection(Qt.RightToLeft)
+        self.text_input.setPlainText(self.images[self.current_index].get("text", ""))
         self.text_input.installEventFilter(self)
-        self.text_input.setPlainText(self.images[self.current_index].get('text', ''))
-        self.layout.addWidget(self.text_input)
+        layout.addWidget(self.text_input)
 
-        # Move the cursor to the start of the document (left side for RTL)
-        self.text_input.moveCursor(QTextCursor.Start)  # Use QTextCursor.Start
+        self.text_input.moveCursor(QTextCursor.Start)
 
-        self.next_button = QPushButton(self.tr("next"))
-        self.next_button.clicked.connect(self.next_image)
-        self.layout.addWidget(self.next_button)
-
-        self.close_button = QPushButton(self.tr("close"))
-        self.close_button.clicked.connect(self.close)
-        self.layout.addWidget(self.close_button)
+        next_btn  = QPushButton(self.tr("next"))
+        close_btn = QPushButton(self.tr("close"))
+        next_btn.clicked.connect(self.next_image)
+        close_btn.clicked.connect(self.close)
+        layout.addWidget(next_btn)
+        layout.addWidget(close_btn)
 
         self.update_image()
 
     def update_image(self):
         if 0 <= self.current_index < len(self.images):
-            img_data = self.images[self.current_index]
-            pixmap = QPixmap(img_data['path'])
-            rotation = img_data.get('rotation', 0)
-            if rotation != 0:
-                transform = QTransform()
-                transform.rotate(rotation)
-                pixmap = pixmap.transformed(transform, Qt.SmoothTransformation)
-            self.image_label.setPixmap(pixmap.scaled(300, 200, Qt.KeepAspectRatio))
-            self.text_input.setPlainText(img_data.get('text', ''))
-        else:
-            self.image_label.clear()
-            self.text_input.clear()
+            data  = self.images[self.current_index]
+            px    = QPixmap(data["path"])
+            rot   = data.get("rotation", 0)
+            if rot:
+                t = QTransform()
+                t.rotate(rot)
+                px = px.transformed(t, Qt.SmoothTransformation)
+            self.image_label.setPixmap(px.scaled(300, 200, Qt.KeepAspectRatio))
+            self.text_input.setPlainText(data.get("text", ""))
 
     def next_image(self):
         if 0 <= self.current_index < len(self.images):
             new_text = self.text_input.toPlainText()
-            if self.images[self.current_index]['text'] != new_text:
-                self.images[self.current_index]['text'] = new_text
+            if self.images[self.current_index]["text"] != new_text:
+                self.images[self.current_index]["text"] = new_text
                 if self.current_index not in self.affected_rows:
                     self.affected_rows.append(self.current_index)
-        self.current_index += 1
-        if self.current_index >= len(self.images):
-            self.current_index = 0
+        self.current_index = (self.current_index + 1) % len(self.images)
         self.update_image()
 
     def eventFilter(self, source, event):
@@ -1804,7 +1435,6 @@ class EasyTextWritingDialog(QDialog):
         return super().eventFilter(source, event)
 
 
-
 class InfoDialog(QDialog):
     def __init__(self, images, audio_files, tr_function=None, parent=None):
         super().__init__(parent)
@@ -1812,186 +1442,125 @@ class InfoDialog(QDialog):
         self.setWindowTitle(self.tr("menu_info"))
         self.setGeometry(300, 300, 300, 150)
 
-        self.layout = QVBoxLayout(self)
+        layout = QVBoxLayout(self)
+        dur_with    = sum(img["duration"] for img in images)
+        dur_without = sum(img["duration"] for img in images if not img.get("is_second_image"))
+        audio_dur   = sum(_get_audio_duration(a["path"]) for a in audio_files)
 
-        
+        layout.addWidget(QLabel(self.tr("info_total_images") + f" {len(images)}"))
+        layout.addWidget(QLabel(self.tr("info_duration_with_second") + f" {format_time_hms(dur_with)}"))
+        layout.addWidget(QLabel(self.tr("info_duration_without_second") + f" {format_time_hms(dur_without)}"))
+        layout.addWidget(QLabel(self.tr("info_audio_duration") + f" {format_time_hms(audio_dur)}"))
 
-        # Calculate total durations
-        total_images_duration_with_second = sum(img['duration'] for img in images)
-        total_images_duration_without_second = sum(img['duration'] for img in images if not img.get('is_second_image', False))
-        total_audio_duration = self.calculate_total_audio_duration(audio_files)
-
-        # Format durations as hh:mm:ss
-        total_images_duration_with_second_str = self.format_duration(total_images_duration_with_second)
-        total_images_duration_without_second_str = self.format_duration(total_images_duration_without_second)
-        total_audio_duration_str = self.format_duration(total_audio_duration)
-
-        # Create labels to display the information
-        self.layout.addWidget(QLabel(self.tr("info_total_images") + f" {len(images)}"))
-        self.layout.addWidget(QLabel(self.tr("info_duration_with_second") + f" {total_images_duration_with_second_str}"))
-        self.layout.addWidget(QLabel(self.tr("info_duration_without_second") + f" {total_images_duration_without_second_str}"))
-        self.layout.addWidget(QLabel(self.tr("info_audio_duration") + f" {total_audio_duration_str}"))
-
-
-        # Add a close button
-        close_button = QPushButton(self.tr("close"))
-        close_button.clicked.connect(self.close)
-        self.layout.addWidget(close_button)
-
-    def calculate_total_audio_duration(self, audio_files):
-        total_duration = 0.0
-        for audio in audio_files:
-            audio_path = audio['path']
-            try:
-                cmd = [
-                    "ffprobe",
-                    "-v", "error",
-                    "-show_entries", "format=duration",
-                    "-of", "default=noprint_wrappers=1:nokey=1",
-                    f'"{audio_path}"'
-                ]
-                output = subprocess.check_output(" ".join(cmd), shell=True, universal_newlines=True).strip()
-                total_duration += float(output)
-            except Exception as e:
-                print(f"Error processing file {audio_path}: {e}")
-        return total_duration
-
-    def format_duration(self, seconds):
-        hours = int(seconds // 3600)
-        minutes = int((seconds % 3600) // 60)
-        secs = int(seconds % 60)
-        return f"{hours:02}:{minutes:02}:{secs:02}"
-
-
+        close_btn = QPushButton(self.tr("close"))
+        close_btn.clicked.connect(self.close)
+        layout.addWidget(close_btn)
 
 
 class CustomDelegate(QStyledItemDelegate):
     def paint(self, painter, option, index):
-        # Get the model and check if the row is a secondary image
-        model = index.model()
-        row = index.row()
-        col1_index = model.index(row, 1)  # Column 1 holds the filename and our data
-        is_secondary = col1_index.data(Qt.UserRole)
+        is_secondary = index.model().index(index.row(), 1).data(Qt.UserRole)
         if is_secondary:
             painter.save()
-            painter.fillRect(option.rect, QColor(100, 100, 150))  # Dark blue background
+            painter.fillRect(option.rect, QColor(100, 100, 150))
             painter.restore()
         super().paint(painter, option, index)
-
 
 
 class AudioLibraryDialog(QDialog):
     def __init__(self, tr_function=None, parent=None):
         super().__init__(parent)
-        self.tr = tr_function
-        
+        self.tr    = tr_function
+        self.songs = []
         self.setWindowTitle(self.tr("label_audio_library"))
         self.setGeometry(100, 100, 600, 400)
-        
-        self.songs = []
-        self.load_songs()
-        
-        self.init_ui()
-        
-    
-    def init_ui(self):
-        layout = QVBoxLayout()
-        
-        # Search bar
-        search_layout = QHBoxLayout()
-        self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText(self.tr("search_songs"))
-        self.search_input.textChanged.connect(self.filter_songs)
-        search_layout.addWidget(self.search_input)
-        layout.addLayout(search_layout)
-        
-        # Song list
-        self.song_list = QListWidget()
-        self.populate_song_list()
-        layout.addWidget(self.song_list)
-        
-        # Info panel
-        self.info_label = QLabel(self.tr("song_info_label"))
-        layout.addWidget(self.info_label)
-        
-        # Buttons
-        button_layout = QHBoxLayout()
-        self.add_button = QPushButton(self.tr("add_selected"))
-        self.add_button.clicked.connect(self.add_selected_songs)
-        button_layout.addWidget(self.add_button)
-        
-        close_button = QPushButton(self.tr("close"))
-        close_button.clicked.connect(self.close)
-        button_layout.addWidget(close_button)
-        
-        layout.addLayout(button_layout)
-        self.setLayout(layout)
-        
-        # Connect selection change
-        self.song_list.itemSelectionChanged.connect(self.update_song_info)
-    
-    def load_songs(self):
+        self._load_songs()
+        self._init_ui()
+
+    def _load_songs(self):
         songs_file = BASEPATH / "Songs" / "songs.json"
         try:
-            with open(songs_file, 'r', encoding='utf-8') as f:
+            with open(songs_file, "r", encoding="utf-8") as f:
                 self.songs = json.load(f)
-        except FileNotFoundError:
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            print(f"Songs load error: {e}")
             self.songs = []
-            print("Songs file not found. Creating empty library.")
-        except json.JSONDecodeError:
-            self.songs = []
-            print("Error reading songs file. Check JSON format.")
-    
-    def populate_song_list(self, filter_text=""):
+
+    def _init_ui(self):
+        layout = QVBoxLayout(self)
+
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText(self.tr("search_songs"))
+        self.search_input.textChanged.connect(self._filter_songs)
+        layout.addWidget(self.search_input)
+
+        self.song_list = QListWidget()
+        self._populate(filter_text="")
+        layout.addWidget(self.song_list)
+
+        self.info_label = QLabel(self.tr("song_info_label"))
+        layout.addWidget(self.info_label)
+
+        btn_row = QHBoxLayout()
+        add_btn   = QPushButton(self.tr("add_selected"))
+        close_btn = QPushButton(self.tr("close"))
+        add_btn.clicked.connect(self._add_selected)
+        close_btn.clicked.connect(self.close)
+        btn_row.addWidget(add_btn)
+        btn_row.addWidget(close_btn)
+        layout.addLayout(btn_row)
+
+        self.song_list.itemSelectionChanged.connect(self._update_info)
+
+    def _populate(self, filter_text: str = ""):
         self.song_list.clear()
+        low = filter_text.lower()
         for song in self.songs:
-            if filter_text.lower() in song['name'].lower() or \
-               filter_text.lower() in song['author'].lower() or \
-               filter_text.lower() in song['fits_for'].lower():
+            if (
+                low in song["name"].lower()
+                or low in song["author"].lower()
+                or low in song.get("fits_for", "").lower()
+            ):
                 item = QListWidgetItem(f"{song['name']} - {song['author']}")
-                item.setData(Qt.UserRole, song)  # Store the full song data
+                item.setData(Qt.UserRole, song)
                 self.song_list.addItem(item)
-    
-    def filter_songs(self):
-        filter_text = self.search_input.text()
-        self.populate_song_list(filter_text)
-    
-    def update_song_info(self):
-        selected_items = self.song_list.selectedItems()
-        if selected_items:
-            song = selected_items[0].data(Qt.UserRole)
-            info_text = (
-                f"<b>Name:</b> {song['name']}<br>"
-                f"<b>Author:</b> {song['author']}<br>"
-                f"<b>Duration:</b> {self.format_duration(song['duration'])}<br>"
-                f"<b>Fits for:</b> {song['fits_for']}<br>"
-                f"<b>Path:</b> {Path(song["path"].replace("{BASE_PATH}", str(BASEPATH)))}"
+
+    def _filter_songs(self):
+        self._populate(self.search_input.text())
+
+    def _fmt_dur(self, seconds: float) -> str:
+        m = int(seconds // 60)
+        s = int(seconds % 60)
+        return f"{m}:{s:02d}"
+
+    def _update_info(self):
+        selected = self.song_list.selectedItems()
+        if selected:
+            s = selected[0].data(Qt.UserRole)
+            self.info_label.setText(
+                f"<b>Name:</b> {s['name']}<br>"
+                f"<b>Author:</b> {s['author']}<br>"
+                f"<b>Duration:</b> {self._fmt_dur(s['duration'])}<br>"
+                f"<b>Fits for:</b> {s.get('fits_for', '')}<br>"
+                f"<b>Path:</b> {Path(s['path'].replace('{BASE_PATH}', str(BASEPATH)))}"
             )
-            self.info_label.setText(info_text)
-    
-    def format_duration(self, seconds):
-        minutes = int(seconds // 60)
-        seconds = int(seconds % 60)
-        return f"{minutes}:{seconds:02d}"
-    
-    def add_selected_songs(self):
-        selected_items = self.song_list.selectedItems()
-        for item in selected_items:
+
+    def _add_selected(self):
+        for item in self.song_list.selectedItems():
             song = item.data(Qt.UserRole)
-            # Check if this song is already in the project
-            if not any(audio['path'] == Path(song["path"].replace("{BASE_PATH}", str(BASEPATH))) for audio in self.parent().audio_files):
-                self.parent().audio_files.append({'path': Path(song["path"].replace("{BASE_PATH}", str(BASEPATH)))})
-        
+            path = Path(song["path"].replace("{BASE_PATH}", str(BASEPATH)))
+            if not any(a["path"] == path for a in self.parent().audio_files):
+                self.parent().audio_files.append({"path": path})
         self.parent().update_audio_table()
         self.close()
 
 
-
+# ── Entry Point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setWindowIcon(QIcon("logo.ico"))
-    set_theme(app, theme='dark')
+    set_theme(app, theme="dark")
     window = SlideshowCreator()
     window.create_menu()
     window.setup_connections()
