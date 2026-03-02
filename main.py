@@ -149,16 +149,13 @@ def render_ken_burns_clip(image_path: str, effect: str, duration: float,
                            output_path: str, rotation: int = 0,
                            text: str = "", text_on_kb: bool = True) -> bool:
     """
-    Render a smooth Ken Burns clip to output_path (H.264 mp4, 1920x1080, 25fps).
-
-    text        – overlay text drawn on every frame
-    text_on_kb  – if False, text is composited as a STATIC overlay so it stays
-                  perfectly still while the image pans/zooms beneath it.
+    Render a smooth Ken Burns clip at 1920x1080 25fps using sub-pixel interpolation.
     """
+    import cv2 as _cv2
+    import numpy as _np
+    import subprocess as _sp
     from PIL import Image as _Image, ImageDraw as _Draw, ImageFont as _Font
     from PIL import ExifTags as _ExifTags
-    import subprocess as _sp
-    import numpy as _np
 
     W, H, FPS = 1920, 1080, _KB_FPS
     frames = max(1, int(duration * FPS))
@@ -166,147 +163,177 @@ def render_ken_burns_clip(image_path: str, effect: str, duration: float,
     # ── Load & orient ─────────────────────────────────────────────────────────
     try:
         img = _Image.open(image_path)
+        # Convert to RGBA first — this eliminates the PIL warning about palette
+        # images with transparency, and ensures rotate/crop work on clean data.
+        img = img.convert("RGBA")
         try:
-            exif = img._getexif()
-            if exif:
-                for tag, val in exif.items():
-                    if _ExifTags.TAGS.get(tag) == "Orientation":
-                        if val == 3:   img = img.rotate(180, expand=True)
-                        elif val == 6: img = img.rotate(270, expand=True)
-                        elif val == 8: img = img.rotate(90,  expand=True)
-                        break
-        except Exception:
-            pass
-        if rotation:
-            img = img.rotate(rotation, expand=True)
+            exif = img._getexif() if hasattr(img, "_getexif") else None
+            if exif and _ORIENTATION_TAG:
+                val = exif.get(_ORIENTATION_TAG)
+                if val == 3:   img = img.rotate(180, expand=True)
+                elif val == 6: img = img.rotate(270, expand=True)
+                elif val == 8: img = img.rotate(90,  expand=True)
+        except Exception: pass
+        if rotation: img = img.rotate(rotation, expand=True)
         img = img.convert("RGB")
     except Exception as e:
-        print(f"KB render: cannot open {image_path}: {e}")
+        print(f"KB render error: {e}")
         return False
 
-    # ── Build 130% source canvas ──────────────────────────────────────────────
-    SCALE = 1.30
-    src_w = int(W * SCALE)
-    src_h = int(H * SCALE)
-    img_aspect = img.width / img.height
-    tgt_aspect = src_w / src_h
-    if img_aspect > tgt_aspect:
-        rh = src_h;  rw = int(rh * img_aspect)
-    else:
-        rw = src_w;  rh = int(rw / img_aspect)
-    img = img.resize((rw, rh), _Image.Resampling.LANCZOS)
-    cx = (rw - src_w) // 2;  cy = (rh - src_h) // 2
-    img = img.crop((cx, cy, cx + src_w, cy + src_h))
-    src = _np.array(img)
+    # ── Smoothstep easing ─────────────────────────────────────────────────────
+    def smooth(raw_t):
+        t = max(0.0, min(1.0, raw_t))
+        return t * t * (3.0 - 2.0 * t)
 
-    px = float(src_w - W)
-    py = float(src_h - H)
+    # ── Build high-res source canvas ──────────────────────────────────────────
+    ZOOM = 1.10  # Slightly more room for smoother movement
+    src_w, src_h = int(W * ZOOM), int(H * ZOOM)
+    img_arr = _np.array(img)
+    ih, iw = img_arr.shape[:2]
+    scale_cov = max(src_w / iw, src_h / ih)
+    new_iw, new_ih = int(iw * scale_cov), int(ih * scale_cov)
+    
+    # Use INTER_LANCZOS4 for the initial high-quality scale
+    resized = _cv2.resize(img_arr, (new_iw, new_ih), interpolation=_cv2.INTER_LANCZOS4)
+    cx, cy = (new_iw - src_w) // 2, (new_ih - src_h) // 2
+    src = resized[cy:cy + src_h, cx:cx + src_w].copy()
 
-    # ── Pre-compute ALL rects as floats (smooth — no per-frame rounding) ──────
-    def make_rects():
-        rects = []
-        for f in range(frames):
-            t = f / max(frames - 1, 1)
-            if effect == "zoom_in":
-                sw = src_w + (W - src_w) * t
-                sh = src_h + (H - src_h) * t
-                sx = (src_w - sw) / 2.0;  sy = (src_h - sh) / 2.0
-            elif effect == "zoom_out":
-                sw = W + (src_w - W) * t
-                sh = H + (src_h - H) * t
-                sx = (src_w - sw) / 2.0;  sy = (src_h - sh) / 2.0
-            elif effect == "zoom_in_out":
-                t2 = t * 2.0 if t < 0.5 else 2.0 - t * 2.0
-                sw = src_w + (W - src_w) * t2
-                sh = src_h + (H - src_h) * t2
-                sx = (src_w - sw) / 2.0;  sy = (src_h - sh) / 2.0
-            elif effect == "zoom_out_in":
-                t2 = t * 2.0 if t < 0.5 else 2.0 - t * 2.0
-                sw = W + (src_w - W) * t2
-                sh = H + (src_h - H) * t2
-                sx = (src_w - sw) / 2.0;  sy = (src_h - sh) / 2.0
-            elif effect == "pan_left":
-                sw, sh = float(W), float(H)
-                sx = px * (1.0 - t);  sy = py / 2.0
-            elif effect == "pan_right":
-                sw, sh = float(W), float(H)
-                sx = px * t;  sy = py / 2.0
-            elif effect == "pan_up":
-                sw, sh = float(W), float(H)
-                sx = px / 2.0;  sy = py * (1.0 - t)
-            elif effect == "pan_down":
-                sw, sh = float(W), float(H)
-                sx = px / 2.0;  sy = py * t
-            else:
-                sw, sh = float(W), float(H)
-                sx, sy = px / 2.0, py / 2.0
-            rects.append((sx, sy, sw, sh))
-        return rects
+    # ── Pre-compute float rectangles ─────────────────────────────────────────
+    # pad_x/pad_y = extra pixels available for panning in each axis
+    IS_PAN = effect in ("pan_left", "pan_right", "pan_up", "pan_down", "none")
+    pad_x = src_w - W
+    pad_y = src_h - H
+    rects = []
+    cx_f, cy_f = src_w / 2.0, src_h / 2.0
+    for f in range(frames):
+        t = smooth(f / max(frames - 1, 1))
+        # Default: centered full view
+        sw, sh = float(src_w), float(src_h)
+        sx, sy = 0.0, 0.0
 
-    rects = make_rects()
+        if effect == "zoom_in":
+            sw = src_w - (src_w - W) * t
+            sh = src_h - (src_h - H) * t
+            # Anchor to center — critical to prevent shake
+            sx = (src_w - sw) / 2.0
+            sy = (src_h - sh) / 2.0
+        elif effect == "zoom_out":
+            sw = W + (src_w - W) * t
+            sh = H + (src_h - H) * t
+            # Anchor to center — critical to prevent shake
+            sx = (src_w - sw) / 2.0
+            sy = (src_h - sh) / 2.0
+        elif effect == "pan_left":
+            sw, sh = float(W), float(H)
+            sx = (src_w - W) * (1.0 - t)
+            sy = (src_h - H) / 2.0
+        elif effect == "pan_right":
+            sw, sh = float(W), float(H)
+            sx = (src_w - W) * t
+            sy = (src_h - H) / 2.0
+        elif effect == "pan_up":
+            sw, sh = float(W), float(H)
+            sx = float(pad_x) / 2.0
+            sy = float(pad_y) * (1.0 - t)
+        elif effect == "pan_down":
+            sw, sh = float(W), float(H)
+            sx = float(pad_x) / 2.0
+            sy = float(pad_y) * t
+        else:
+            sw, sh = float(W), float(H)
+            sx = float(pad_x) / 2.0
+            sy = float(pad_y) / 2.0
 
-    # ── Prepare static text overlay (when text_on_kb=False) ──────────────────
-    static_text_overlay = None
+        rects.append((sx, sy, sw, sh))
+
+    # ── Static text overlay (text_on_kb=False) ────────────────────────────────
+    static_overlay_bgr = None
+    static_overlay_mask = None
     if text and text.strip() and not text_on_kb:
         try:
             from bidi.algorithm import get_display as _bidi
             from pathlib import Path as _Path
             _font_path = _Path.home() / "Neria-LTD" / "Eventure" / "Fonts" / "Birzia-Black.otf"
-            try:
-                _font = _Font.truetype(str(_font_path), 85)
-            except Exception:
-                _font = _Font.load_default()
+            try:   _font = _Font.truetype(str(_font_path), 85)
+            except Exception: _font = _Font.load_default()
             overlay = _Image.new("RGBA", (W, H), (0, 0, 0, 0))
             draw = _Draw.Draw(overlay)
             htext = _bidi(text)
-            bbox = draw.textbbox((0, 0), htext, font=_font)
+            bbox  = draw.textbbox((0, 0), htext, font=_font)
             tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
             bg_w, bg_h = tw + 40, th + 20
             bg_x = (W - bg_w) // 2;  bg_y = H - bg_h - 50
-            draw.rounded_rectangle((bg_x, bg_y, bg_x + bg_w, bg_y + bg_h), radius=12, fill="white")
+            draw.rounded_rectangle((bg_x, bg_y, bg_x+bg_w, bg_y+bg_h), radius=12, fill="white")
             draw.text(((W - tw) // 2, bg_y - 4), htext, font=_font, fill="black")
-            static_text_overlay = _np.array(overlay)   # RGBA
+            ov_arr = _np.array(overlay)           # RGBA uint8
+            alpha  = ov_arr[:, :, 3:4].astype(_np.float32) / 255.0
+            # Pre-multiply so blending is a single vectorised op per frame
+            static_overlay_bgr  = ov_arr[:, :, :3].astype(_np.float32)
+            static_overlay_mask = alpha
         except Exception as e:
             print(f"KB text overlay error: {e}")
 
-    # ── Pipe frames into ffmpeg ───────────────────────────────────────────────
+    # ── Pipe frames into a single ffmpeg process ──────────────────────────────
     cmd = [
         "ffmpeg", "-y",
         "-f", "rawvideo", "-vcodec", "rawvideo",
         "-s", f"{W}x{H}", "-pix_fmt", "rgb24", "-r", str(FPS),
         "-i", "pipe:0",
         "-vcodec", "libx264", "-pix_fmt", "yuv420p",
-        "-preset", "fast", "-crf", "20",
+        "-preset", "ultrafast", "-crf", "18",
         "-r", str(FPS), "-movflags", "+faststart",
         output_path,
     ]
     proc = None
     try:
         proc = _sp.Popen(cmd, stdin=_sp.PIPE, stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+
         for f in range(frames):
             sx, sy, sw, sh = rects[f]
-            isx = max(0, min(int(round(sx)), src_w - 1))
-            isy = max(0, min(int(round(sy)), src_h - 1))
-            isw = max(1, min(int(round(sw)), src_w - isx))
-            ish = max(1, min(int(round(sh)), src_h - isy))
 
-            crop = src[isy:isy + ish, isx:isx + isw]
-            pil_frame = _Image.fromarray(crop).resize(
-                (W, H),
-                _Image.Resampling.LANCZOS if isw != W or ish != H else _Image.Resampling.NEAREST
-            )
+            if IS_PAN:
+                # Pan: pure numpy slice on already-integer-aligned coords.
+                # Pan rects always have sw==W and sh==H, so no resize needed.
+                # We still use warpAffine for sub-pixel accuracy on slow pans.
+                scale_x = W / sw   # == 1.0 for pans, kept for uniformity
+                scale_y = H / sh
+                M = _np.array([
+                    [scale_x,    0.0, -sx * scale_x],
+                    [   0.0, scale_y, -sy * scale_y],
+                ], dtype=_np.float64)
+                frame = _cv2.warpAffine(
+                    src, M, (W, H),
+                    flags=_cv2.INTER_LINEAR,
+                    borderMode=_cv2.BORDER_REFLECT_101,
+                )
+            else:
+                # Zoom: use warpAffine with sub-pixel scale+translate.
+                # This is the key fix — no integer rounding, no per-frame
+                # resize() call, no jitter from pixel snapping.
+                scale_x = W / sw
+                scale_y = H / sh
+                M = _np.array([
+                    [scale_x,    0.0, -sx * scale_x],
+                    [   0.0, scale_y, -sy * scale_y],
+                ], dtype=_np.float64)
+                frame = _cv2.warpAffine(
+                    src, M, (W, H),
+                    flags=_cv2.INTER_LINEAR,
+                    borderMode=_cv2.BORDER_REFLECT_101,
+                )
 
-            # Composite static text on top if needed
-            if static_text_overlay is not None:
-                pil_frame = pil_frame.convert("RGBA")
-                text_layer = _Image.fromarray(static_text_overlay, "RGBA")
-                pil_frame = _Image.alpha_composite(pil_frame, text_layer).convert("RGB")
+            # Composite static text overlay if needed
+            if static_overlay_bgr is not None:
+                frame_f = frame.astype(_np.float32)
+                frame_f = frame_f * (1.0 - static_overlay_mask) + static_overlay_bgr * static_overlay_mask
+                frame   = frame_f.clip(0, 255).astype(_np.uint8)
 
-            proc.stdin.write(_np.array(pil_frame).tobytes())
+            proc.stdin.write(frame.tobytes())
 
         proc.stdin.close()
         proc.wait()
         return proc.returncode == 0
+
     except Exception as e:
         print(f"KB render pipe error: {e}")
         if proc:
@@ -1536,10 +1563,11 @@ class ImageProcessingWorker(QThread):
         img_path = self.images[i]["path"]
         rotation = self.images[i]["rotation"]
         text     = self.images[i]["text"]
+        text_on_kb = self.images[i]["text_on_kb"]
         try:
             original = Image.open(img_path)
             if original.size != (self.common_width, self.common_height):
-                new_path = Image_resizer.process_image(img_path, self.output_folder, text, rotation)
+                new_path = Image_resizer.process_image(img_path, self.output_folder, text, rotation, text_on_kb)
                 return i, new_path
         except Exception as e:
             print(f"Error opening image {img_path}: {e}")
@@ -1563,40 +1591,48 @@ class ImageProcessingWorker(QThread):
                 # Phase 1 = first 50% of progress bar
                 self.progress.emit(int(done / total * 50))
 
-        # ── Phase 2: sequential Ken Burns rendering (one ffmpeg at a time) ────
-        # Must be sequential — running many ffmpeg processes in parallel causes
-        # resource exhaustion and corrupted output files.
+        # ── Phase 2: limited-parallel Ken Burns rendering ─────────────────────
+        # 2 workers: enough to overlap disk I/O + encoding; more causes contention.
+        KB_WORKERS = min(2, os.cpu_count() or 1)
         kb_images = [i for i in range(total)
                      if self.images[i].get("ken_burns", "none") != "none"]
         kb_dir = os.path.join(self.output_folder, "kb_clips")
         if kb_images:
             os.makedirs(kb_dir, exist_ok=True)
 
-        for done_kb, i in enumerate(kb_images):
-            img  = self.images[i]
-            effect   = img["ken_burns"]
-            # Use the SAME duration formula as build_ffmpeg_command uses for -t,
-            # so the clip is never shorter than what FFmpeg will request.
-            # Middle clips need duration+transition so xfade can read the overlap.
+        def _render_kb_one(i: int):
+            img = self.images[i]
+            effect = img["ken_burns"]
             if i == 0:
                 clip_duration = img.get("duration", 5)
             elif i == len(self.images) - 1:
                 clip_duration = img.get("duration", 5) + self.images[i - 1].get("transition_duration", 1)
             else:
                 clip_duration = img.get("duration", 5) + img.get("transition_duration", 1)
-            kb_out   = os.path.join(kb_dir, f"kb_{i}_{effect}.mp4").replace("\\", "/")
-            print(f"Rendering Ken Burns clip {done_kb+1}/{len(kb_images)}: {effect} for image {i} ({clip_duration}s)")
+            kb_out = os.path.join(kb_dir, f"kb_{i}_{effect}.mp4").replace("\\", "/")
+            print(f"  KB render start: {effect} for image {i} ({clip_duration}s)")
             success = render_ken_burns_clip(
                 img["path"], effect, clip_duration, kb_out,
                 text=img.get("text", ""),
                 text_on_kb=img.get("text_on_kb", True),
             )
-            if success:
-                self.images[i]["_kb_clip_path"] = kb_out
-            else:
-                print(f"  KB render failed for image {i}, will use still image")
-            # Phase 2 = second 50% of progress bar
-            self.progress.emit(50 + int((done_kb + 1) / max(len(kb_images), 1) * 50))
+            return i, kb_out, success
+
+        done_kb = 0
+        with ThreadPoolExecutor(max_workers=KB_WORKERS) as kb_executor:
+            kb_futures = {kb_executor.submit(_render_kb_one, i): i for i in kb_images}
+            for future in as_completed(kb_futures):
+                done_kb += 1
+                try:
+                    i, kb_out, success = future.result()
+                    if success:
+                        self.images[i]["_kb_clip_path"] = kb_out
+                        print(f"  KB render done {done_kb}/{len(kb_images)}: image {i}")
+                    else:
+                        print(f"  KB render failed for image {i}, will use still image")
+                except Exception as e:
+                    print(f"  KB render exception: {e}")
+                self.progress.emit(50 + int(done_kb / max(len(kb_images), 1) * 50))
 
         self.finished.emit()
 

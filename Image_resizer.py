@@ -84,6 +84,7 @@ def process_image(
     output_folder: str,
     text: str,
     rotation: int,
+    text_on_kb: bool
 ) -> str | None:
     TARGET_W, TARGET_H = 1920, 1080
     font = FONT
@@ -124,7 +125,7 @@ def process_image(
         final.paste(fg, (x_off, y_off))
 
         # ── Text overlay ───────────────────────────────────────────────────
-        if text and text.strip():
+        if text and text.strip() and text_on_kb:
             draw = ImageDraw.Draw(final)
             hebrew_text = get_display(text)
 
