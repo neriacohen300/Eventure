@@ -611,7 +611,7 @@ class SlideshowCreator(QMainWindow):
                     "is_second_image": False,
                     "date": datetime.fromtimestamp(os.path.getmtime(f)).strftime("%Y-%m-%d %H:%M:%S"),
                     "ken_burns": "none",
-                    "text_on_kb": True,
+                    "text_on_kb": False,
                 }
                 for f in files
             ]
@@ -978,11 +978,27 @@ class SlideshowCreator(QMainWindow):
             inputs.append(f'-i "{audio_norm}"')
             audio_streams.append(f"[{audio_index + i}:a]")
 
+        # ── Audio fade-out at the end of the video ────────────────────────────
+        # Total video duration used to anchor the fade start time.
+        total_video_dur = sum(img["duration"] for img in self.images)
+        fade_duration   = 3.0   # seconds of fade-out
+        fade_start      = max(0.0, total_video_dur - fade_duration)
+
         if len(audio_streams) > 1:
-            filters.append(f"{''.join(audio_streams)}concat=n={len(audio_streams)}:v=0:a=1[outa]")
+            # Concatenate all audio tracks, then apply fade-out on the result.
+            filters.append(
+                f"{''.join(audio_streams)}concat=n={len(audio_streams)}:v=0:a=1[outa_raw]"
+            )
+            filters.append(
+                f"[outa_raw]afade=t=out:st={fade_start:.3f}:d={fade_duration:.3f}[outa]"
+            )
             audio_map = "-map [outa]"
         else:
-            audio_map = f"-map {audio_index}:a"
+            # Single audio stream — apply fade-out directly in the filter graph.
+            filters.append(
+                f"[{audio_index}:a]afade=t=out:st={fade_start:.3f}:d={fade_duration:.3f}[outa]"
+            )
+            audio_map = "-map [outa]"
 
         filter_complex = ";".join(filters)
         command = (
