@@ -5,7 +5,8 @@
 <img width="1920" height="600" alt="Eventure-Banner" src="https://github.com/user-attachments/assets/46cd6b6b-c219-401a-abc7-871e3a22c544" />
 
 
-![image](https://github.com/user-attachments/assets/88a35ffb-390a-4785-bee7-a2c2a2bbb0a6)
+<img width="1198" height="828" alt="image" src="https://github.com/user-attachments/assets/c7434902-4783-432c-9842-014e17dba3e5" />
+
 
 
 
