@@ -1,3 +1,7 @@
+![Python](https://img.shields.io/badge/Python-3.10%2B-blue?style=flat&logo=python)
+![PyQt5]([https://img.shields.io/badge/Framework-Flask-lightgrey?style=flat&logo=flask](https://img.shields.io/badge/Framework-PyQt5-lightgrey?style=flat&logo=pyqt5))
+![Status](https://img.shields.io/badge/Status-Active_Development-green)
+
 <img width="1920" height="600" alt="Eventure-Banner" src="https://github.com/user-attachments/assets/46cd6b6b-c219-401a-abc7-871e3a22c544" />
 
 
