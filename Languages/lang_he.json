@@ -102,5 +102,9 @@
     "label_audio_library": "ספריית שירים",
     "song_info_label": "בחר שיר כדי לקרוא פרטים עליו",
     "add_selected": "הוסף נבחרים",
-    "search_songs": "חפש שירים..."
+    "search_songs": "חפש שירים...",
+    "ken_burns": "אפקט \"קן בורנס\"",
+    "text_static": "טקסט סטטי",
+    "set_all_ken": "הגדר את כל אפקטי ה\"קן בורנס\"",
+    "action_import_pptx": "ייבוא קובץ pptx"
 }

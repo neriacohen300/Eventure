@@ -140,12 +140,13 @@ def extract_pptx_content_to_slideshow_file(pptx_file):
                 is_second_image = "True" if len(images) > 1 and i > 0 else "False"
 
                 file.write(
-                    f"{image},5,fade,1,{text if i == 0 else ''},0,{is_second_image},{current_date},,True\n"
+                    f"{image},5,fade,1,{text if i == 0 else ''},0,{is_second_image},{current_date},,False\n"
                 )
 
             print(f"Processed Slide {slide_num}: {pptx_folder} (Images: {len(images)}, Text: {len(text)} characters)")
 
     print(f"Slideshow file saved at: {slideshow_file}")
+    return slideshow_file
 
 
 # Function to choose a .pptx file using a file dialog

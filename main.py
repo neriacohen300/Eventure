@@ -31,6 +31,8 @@ CRITICAL – multiprocessing fix (Windows):
 
 # ── freeze_support MUST come before every other import ───────────────────────
 import multiprocessing
+
+from pptx_export import extract_pptx_content_to_slideshow_file
 multiprocessing.freeze_support()
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -454,8 +456,8 @@ class SlideshowCreator(QMainWindow):
             self.tr("table_header_rotation"),
             self.tr("table_header_second_image"),
             self.tr("table_header_date"),
-            "Ken Burns",
-            "Text Static",
+            self.tr("ken_burns"),
+            self.tr("text_static")
         ])
         self.image_table.setFont(QFont(self.deafult_font, 10, QFont.Bold))
         for col in range(11):
@@ -1127,6 +1129,19 @@ class SlideshowCreator(QMainWindow):
         if file_name:
             self._load_project_from_path(file_name)
 
+    def import_pptx(self):
+        file_name, _ = QFileDialog.getOpenFileName(
+            self, "Select a PowerPoint file", "", "PowerPoint files (*.pptx;*.pptm);;All Files (*)"
+        )
+        
+        if file_name:
+            slideshow_file = extract_pptx_content_to_slideshow_file(file_name)
+            if slideshow_file:
+                self._load_project_from_path(slideshow_file)
+
+        
+
+
     def _load_project_from_path(self, file_name: str):
         """Load a .slideshow file from an explicit path (also called by file association)."""
         try:
@@ -1464,6 +1479,7 @@ class SlideshowCreator(QMainWindow):
 
         self.import_images.setText(self.tr("action_import_images"))
         self.import_audio.setText(self.tr("action_import_audio"))
+        self.import_pptx_action.setText(self.tr("action_import_pptx]"))
         self.load_action.setText(self.tr("action_load_project"))
         self.save_action.setText(self.tr("action_save_project"))
         self.save_as_action.setText(self.tr("action_save_project_as"))
@@ -1481,6 +1497,7 @@ class SlideshowCreator(QMainWindow):
         self.auto_sort_images_by_date_Oldest_action.setText(self.tr("action_auto_sort_oldest_first"))
         self.set_all_images_transition_type_action.setText(self.tr("action_set_all_transition_type"))
         self.set_random_transition_for_each_image_action.setText(self.tr("action_set_random_transition_per_image"))
+        self.set_all_ken_burns_action.setText(self.tr("set_all_ken"))
         self.easy_text_writing_action.setText(self.tr("action_easy_text_writing"))
         self.set_save_shortcut_action.setText(self.tr("action_set_save_shortcut"))
         self.set_save_as_shortcut_action.setText(self.tr("action_set_save_as_shortcut"))
@@ -1505,7 +1522,7 @@ class SlideshowCreator(QMainWindow):
             self.tr("table_header_duration"), self.tr("table_header_transition"),
             self.tr("table_header_transition_length"), self.tr("table_header_text"),
             self.tr("table_header_rotation"), self.tr("table_header_second_image"),
-            self.tr("table_header_date"), "Ken Burns", "Text Static",
+            self.tr("table_header_date"), self.tr("ken_burns") , self.tr("text_static")
         ])
         self.audio_table.setHorizontalHeaderLabels([
             self.tr("table_header_actions"), self.tr("table_header_audio_file"),
@@ -1540,6 +1557,7 @@ class SlideshowCreator(QMainWindow):
 
         self.import_images   = _action("action_import_images",   self.add_images,          self.import_menu,  "import_images")
         self.import_audio    = _action("action_import_audio",    self.add_audio,           self.import_menu,  "import_audio")
+        self.import_pptx_action = _action("action_import_pptx", self.import_pptx,self.import_menu)
         self.load_action     = _action("action_load_project",    self.load_project,        self.file_menu,    "load")
         self.save_action     = _action("action_save_project",    self.save_project,        self.file_menu,    "save")
         self.save_as_action  = _action("action_save_project_as", self.save_project_as,     self.file_menu,    "save_as")
@@ -1560,7 +1578,7 @@ class SlideshowCreator(QMainWindow):
         self.set_all_images_transition_type_action      = _action("action_set_all_transition_type",          self.set_all_images_transition,            self.Transitions_menu)
         self.set_random_transition_for_each_image_action = _action("action_set_random_transition_per_image", self.set_random_transition_for_each_image, self.Transitions_menu)
 
-        self.set_all_ken_burns_action = QAction("Set All Ken Burns Effect", self)
+        self.set_all_ken_burns_action = QAction(self.tr("set_all_ken"), self)
         self.set_all_ken_burns_action.triggered.connect(self._set_all_ken_burns)
         self.Img_menu.addAction(self.set_all_ken_burns_action)
 
