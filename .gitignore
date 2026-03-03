@@ -9,4 +9,4 @@ Load_Music/
 dist/
 build/
 setup/
-main.spec
+*.spec
