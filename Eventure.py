@@ -82,6 +82,17 @@ os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = plugin_path
 BASEPATH = Path.home() / "Neria-LTD" / "Eventure"
 BASEPATH.mkdir(parents=True, exist_ok=True)
 
+# ── Resolve the folder that contains the running app ─────────────────────────
+# Works correctly both when running as a plain .py script AND when bundled
+# with PyInstaller (frozen exe).  PyInstaller sets sys.frozen and unpacks
+# bundled files next to sys.executable, so ffmpeg.exe will be found there.
+if getattr(sys, "frozen", False):
+    # Running as PyInstaller bundle — exe lives in this folder
+    APP_DIR = Path(sys.executable).resolve().parent
+else:
+    # Running as a normal Python script
+    APP_DIR = Path(__file__).resolve().parent
+
 # EXIF orientation tag (looked up once)
 _ORIENTATION_TAG = next(
     (k for k, v in ExifTags.TAGS.items() if v == "Orientation"), None
@@ -140,15 +151,14 @@ def check_for_updates(parent_window, current_version: str):
 
 
 def _ffmpeg_exe() -> str:
-    """Resolve ffmpeg/ffprobe from PATH or the script directory."""
+    """Resolve ffmpeg from PATH, then next to the running app (script or PyInstaller exe)."""
     import shutil as _shutil
-    exe = _shutil.which("ffmpeg") or str(script_dir / "ffmpeg.exe")
-    return exe
+    return _shutil.which("ffmpeg") or str(APP_DIR / "ffmpeg.exe")
 
 def _ffprobe_exe() -> str:
+    """Resolve ffprobe from PATH, then next to the running app (script or PyInstaller exe)."""
     import shutil as _shutil
-    exe = _shutil.which("ffprobe") or str(script_dir / "ffprobe.exe")
-    return exe
+    return _shutil.which("ffprobe") or str(APP_DIR / "ffprobe.exe")
 
 def _get_audio_duration(audio_path: str) -> float:
     """Return the duration of an audio file in seconds using ffprobe."""
@@ -1543,8 +1553,7 @@ class SlideshowCreator(QMainWindow):
         os.makedirs(folder, exist_ok=True)
 
         # Copy style file if it exists (use relative path)
-        script_dir = Path(__file__).resolve().parent
-        style_src  = script_dir / "Premiere_Project" / "טקסט למצגת - עברית.prtextstyle"
+        style_src  = APP_DIR / "Premiere_Project" / "טקסט למצגת - עברית.prtextstyle"
         if style_src.exists():
             shutil.copy(str(style_src), os.path.join(folder, style_src.name))
 
@@ -1573,8 +1582,7 @@ class SlideshowCreator(QMainWindow):
         wb.save(os.path.join(folder, "exported_durations.xlsx"))
 
     def copy_premiere_project_file(self):
-        script_dir = Path(__file__).resolve().parent
-        src  = script_dir / "Premiere_Project" / "Project.prproj"
+        src  = APP_DIR / "Premiere_Project" / "Project.prproj"
         if not src.exists():
             print(f"Premiere project template not found at {src}")
             return
