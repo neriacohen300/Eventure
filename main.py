@@ -31,6 +31,7 @@ CRITICAL – multiprocessing fix (Windows):
 
 # ── freeze_support MUST come before every other import ───────────────────────
 import multiprocessing
+import threading
 
 from pptx_export import extract_pptx_content_to_slideshow_file
 multiprocessing.freeze_support()
@@ -56,6 +57,7 @@ from PyQt5.QtWidgets import (
     QStyle, QTableWidgetItem, QSpinBox, QHeaderView, QTableWidget,
     QLineEdit,
 )
+from PyQt5.QtCore import pyqtSlot
 from PyQt5.QtCore import Qt, QUrl, QSize, QProcess, QTimer, QThread, pyqtSignal, QEvent
 from PyQt5.QtGui import (
     QIcon, QFont, QPixmap, QTextCursor, QCursor, QTransform,
@@ -68,6 +70,8 @@ import openpyxl
 import premiere_export
 
 from EVENTURE_THEMES.theme import set_theme
+
+APP_VERSION = "1.0.2"
 
 
 # ── Environment ──────────────────────────────────────────────────────────────
@@ -83,7 +87,57 @@ _ORIENTATION_TAG = next(
     (k for k, v in ExifTags.TAGS.items() if v == "Orientation"), None
 )
 
+
+def check_for_updates(parent_window, current_version: str):
+    """
+    Checks GitHub releases API in a background thread.
+    If a newer version exists, shows a non-blocking dialog with a download link.
+
+    Replace GITHUB_USER and GITHUB_REPO with your actual values.
+    """
+    GITHUB_USER = "neriacohen300"       # ← change this
+    GITHUB_REPO = "Eventure"      # ← change this
+    API_URL = f"https://api.github.com/repos/{GITHUB_USER}/{GITHUB_REPO}/releases/latest"
+
+    def _fetch():
+        try:
+            import urllib.request, json
+            req = urllib.request.Request(
+                API_URL,
+                headers={"User-Agent": "Eventure-App"},
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read().decode())
+
+            latest_tag  = data.get("tag_name", "").lstrip("v")   # e.g. "1.2.3"
+            release_url = data.get("html_url", "")
+
+            if not latest_tag:
+                return
+
+            # Simple tuple comparison: (1, 2, 3) > (1, 0, 0)
+            def _ver(s):
+                try:    return tuple(int(x) for x in s.split("."))
+                except: return (0,)
+
+            if _ver(latest_tag) > _ver(current_version):
+                # Must update the UI on the main thread via a Qt signal
+                from PyQt5.QtCore import QMetaObject, Qt, Q_ARG
+                QMetaObject.invokeMethod(
+                    parent_window,
+                    "_show_update_dialog",
+                    Qt.QueuedConnection,
+                    Q_ARG(str, latest_tag),
+                    Q_ARG(str, release_url),
+                )
+        except Exception as e:
+            print(f"Update check failed: {e}")   # silent — never block startup
+
+    threading.Thread(target=_fetch, daemon=True).start()
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def _get_audio_duration(audio_path: str) -> float:
     """Return the duration of an audio file in seconds using ffprobe."""
@@ -351,6 +405,24 @@ class _TaskbarProgressStub:
 # ── Main Window ───────────────────────────────────────────────────────────────
 
 class SlideshowCreator(QMainWindow):
+
+
+    @pyqtSlot(str, str)
+    def _show_update_dialog(self, new_version: str, url: str):
+        """Called on the main thread when a newer version is available."""
+        from PyQt5.QtWidgets import QMessageBox
+        msg = QMessageBox(self)
+        msg.setWindowTitle(self.tr("update_available"))
+        msg.setIcon(QMessageBox.Information)
+        msg.setText(
+            f"<b>{self.tr("new_version")} v{new_version}</b><br><br>"
+            f"{self.tr("cur_version")} v{APP_VERSION}.<br><br>"
+            f'<a href="{url}">{self.tr("download")}</a>'
+        )
+        msg.setTextFormat(Qt.RichText)
+        msg.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        msg.setStandardButtons(QMessageBox.Ok)
+        msg.exec_()
 
     def __init__(self):
         super().__init__()
@@ -2102,4 +2174,5 @@ if __name__ == "__main__":
         if arg.endswith(".slideshow") and os.path.exists(arg):
             window._load_project_from_path(arg)
 
+    check_for_updates(window, APP_VERSION)
     sys.exit(app.exec_())

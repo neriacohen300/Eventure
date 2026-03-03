@@ -106,5 +106,9 @@
     "text_static": "Text Static",
     "set_all_ken": "Set All Ken Burns Effect",
     "action_import_pptx": "Import pptx file",
-    "subsequent_line": "Subsequent lines cannot be second image"
+    "subsequent_line": "Subsequent lines cannot be second image",
+    "update_available": "Update Available",
+    "new_version": "A new version of Eventure is available:",
+    "cur_version": "Your are running",
+    "download": "Click here to download the latest version"
 }
