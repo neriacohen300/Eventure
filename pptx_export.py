@@ -137,10 +137,11 @@ def extract_pptx_content_to_slideshow_file(pptx_file):
             
             # Write to the slideshow file
             for i, image in enumerate(images):
-                is_second_image = "True" if len(images) > 1 and i > 0 else "False"
+                # Only the second image (index 1) gets "True"
+                is_second_image = "True" if i == 1 else "False"
 
                 file.write(
-                    f"{image},5,fade,1,{text if i == 0 else ''},0,{is_second_image},{current_date},,False\n"
+                    f"{image},5,fade,1,{text if i == 0 else ''},0,{is_second_image},{current_date},\n"
                 )
 
             print(f"Processed Slide {slide_num}: {pptx_folder} (Images: {len(images)}, Text: {len(text)} characters)")

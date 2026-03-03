@@ -428,8 +428,8 @@ class SlideshowCreator(QMainWindow):
         left_panel = QVBoxLayout()
         self.image_table = QTableWidget()
         self.image_table.setItemDelegate(CustomDelegate())
-        self.image_table.setColumnCount(11)
         self.image_table.setSortingEnabled(False)
+        self.image_table.setColumnCount(10)
         self.image_table.setHorizontalHeaderLabels([
             self.tr("table_header_actions"),
             self.tr("table_header_image"),
@@ -441,10 +441,9 @@ class SlideshowCreator(QMainWindow):
             self.tr("table_header_second_image"),
             self.tr("table_header_date"),
             self.tr("ken_burns"),
-            self.tr("text_static")
         ])
         self.image_table.setFont(QFont(self.deafult_font, 10, QFont.Bold))
-        for col in range(11):
+        for col in range(10):
             self.image_table.horizontalHeader().setSectionResizeMode(
                 col, QHeaderView.ResizeToContents
             )
@@ -596,8 +595,7 @@ class SlideshowCreator(QMainWindow):
                     "rotation": 0,
                     "is_second_image": False,
                     "date": datetime.fromtimestamp(os.path.getmtime(f)).strftime("%Y-%m-%d %H:%M:%S"),
-                    "ken_burns": "none",
-                    "text_on_kb": False,
+                    "ken_burns": "none"
                 }
                 for f in files
             ]
@@ -613,8 +611,8 @@ class SlideshowCreator(QMainWindow):
             QMessageBox.critical(self, self.tr("error"), self.tr("second_image_error"), QMessageBox.Ok)
             self.update_image_row(row)
             return
-        if state == Qt.Checked and self.images[row-1]["is_second_image"] == True:
-            QMessageBox.warning(self, self.tr("eror"), self.tr("subsequent_line"), QMessageBox.Ok)
+        if (state == Qt.Checked and self.images[row-1]["is_second_image"] == True) or (state == Qt.Checked and self.images[row+1]["is_second_image"] == True):
+            QMessageBox.warning(self, self.tr("error"), self.tr("subsequent_line"), QMessageBox.Ok)
             self.update_image_row(row)
             return
         
@@ -685,13 +683,6 @@ class SlideshowCreator(QMainWindow):
         kb_cb.currentTextChanged.connect(lambda text, r=row: self._update_ken_burns(r, text))
         self.image_table.setCellWidget(row, 9, kb_cb)
 
-        text_static_cb = QCheckBox()
-        text_static_cb.setChecked(not img.get("text_on_kb", True))  # checked = static
-        text_static_cb.setToolTip("Keep text static (unaffected by Ken Burns)")
-        text_static_cb.stateChanged.connect(
-            lambda state, r=row: self._update_text_on_kb(r, state != Qt.Checked)
-        )
-        self.image_table.setCellWidget(row, 10, text_static_cb)
 
         # Action buttons
         move_up_btn   = QPushButton("↑")
@@ -1111,8 +1102,8 @@ class SlideshowCreator(QMainWindow):
                 f.write(
                     f"{img['path']},{img.get('duration', 5)},{img.get('transition', 'fade')},"
                     f"{img.get('transition_duration', 1)},{text},{img.get('rotation', 0)},"
-                    f"{img.get('is_second_image', False)},{img.get('date', '')},{img.get('ken_burns', 'none')},"
-                    f"{img.get('text_on_kb', True)}\n"
+                    f"{img.get('is_second_image', False)},{img.get('date', '')},"
+                    f"{img.get('ken_burns', 'none')},{img.get('text_on_kb', True)}\n"
                 )
 
     def save_project(self):
@@ -1166,7 +1157,7 @@ class SlideshowCreator(QMainWindow):
                 if len(parts) < 8:
                     continue
                 # parts: path, dur, transition, trans_dur, text, rotation,
-                #        second_image_path, second_image_rotation, date, ken_burns, text_on_kb
+                #        second_image_path, second_image_rotation, date, ken_burns
                 path         = parts[0]
                 dur          = parts[1]
                 transition   = parts[2]
@@ -1176,7 +1167,6 @@ class SlideshowCreator(QMainWindow):
                 is_second  = parts[6]
                 date         = parts[7] if len(parts) > 7 else ""
                 ken_burns    = parts[8].strip()  if len(parts) > 8  else "none"
-                text_on_kb   = parts[9].strip().lower() != "false" if len(parts) > 9 else True
 
                 self.images.append({
                     "path":                path,
@@ -1187,8 +1177,7 @@ class SlideshowCreator(QMainWindow):
                     "rotation":            int(rotation),
                     "is_second_image":     is_second.strip().lower() == "true",
                     "date":                date,
-                    "ken_burns":           ken_burns,
-                    "text_on_kb":          text_on_kb,
+                    "ken_burns":           ken_burns
                 })
 
             self.update_image_table()
@@ -1296,9 +1285,6 @@ class SlideshowCreator(QMainWindow):
 
         self.update_image_table()
 
-    def _update_text_on_kb(self, row: int, value: bool):
-        if 0 <= row < len(self.images):
-            self.images[row]["text_on_kb"] = value
 
 
     def set_all_images_transition(self):
@@ -1594,7 +1580,7 @@ class SlideshowCreator(QMainWindow):
             self.tr("table_header_duration"), self.tr("table_header_transition"),
             self.tr("table_header_transition_length"), self.tr("table_header_text"),
             self.tr("table_header_rotation"), self.tr("table_header_second_image"),
-            self.tr("table_header_date"), self.tr("ken_burns") , self.tr("text_static")
+            self.tr("table_header_date"), self.tr("ken_burns"),
         ])
         self.audio_table.setHorizontalHeaderLabels([
             self.tr("table_header_actions"), self.tr("table_header_audio_file"),
@@ -1727,7 +1713,6 @@ class ImageProcessingWorker(QThread):
         """Step 1: resize/blur image if needed. Run in parallel (PIL, no ffmpeg).
 
         When there is no Ken Burns effect the KB renderer never runs, so the
-        still image is the only place text can appear — force text_on_kb=True
         regardless of what the checkbox says.
         """
         img_path   = self.images[i]["path"]
@@ -1785,10 +1770,12 @@ class ImageProcessingWorker(QThread):
                 clip_duration = img.get("duration", 5) + img.get("transition_duration", 1)
             kb_out = os.path.join(kb_dir, f"kb_{i}_{effect}.mp4").replace("\\", "/")
             print(f"  KB render start: {effect} for image {i} ({clip_duration}s)")
+            has_kb     = self.images[i].get("ken_burns", "none") != "none"
+            text_on_static = not has_kb
             success = render_ken_burns_clip(
                 img["path"], effect, clip_duration, kb_out,
                 text=img.get("text", ""),
-                text_on_kb=img.get("text_on_kb", True),
+                text_on_kb=text_on_static,
             )
             return i, kb_out, success
 
