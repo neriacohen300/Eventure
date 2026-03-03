@@ -1,4 +1,5 @@
 {
+    "language_name": "English",   
     "window_title": "Eventure",
     "output_file": "output.mp4",
     "menu_file": "File",
@@ -114,5 +115,7 @@
     "just_know": "Just so You Know...",
     "no_secondery": "The current export format only supports the primary image. All of the secondery images will be ignored and set as a regular image.",
     "random_ken": "Set Random Ken Burns Per Image",
-    "smart_ken": "Set Smart Ken Burns (Auto)"
+    "smart_ken": "Set Smart Ken Burns (Auto)",
+    "dialog_set_ken_burns_title": "Set Ken Burns Effect",
+    "dialog_set_ken_burns_label": "Select effect for all images:"
 }

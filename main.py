@@ -152,6 +152,7 @@ def _get_audio_duration(audio_path: str) -> float:
             capture_output=True,
             text=True,
             timeout=10,
+            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
         )
         return float(result.stdout.strip())
     except Exception as e:
@@ -378,7 +379,13 @@ def render_ken_burns_clip(image_path: str, effect: str, duration: float,
     ]
     proc = None
     try:
-        proc = _sp.Popen(cmd, stdin=_sp.PIPE, stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+        proc = _sp.Popen(
+            cmd,
+            stdin=_sp.PIPE,
+            stdout=_sp.DEVNULL,
+            stderr=_sp.DEVNULL,
+            creationflags=_sp.CREATE_NO_WINDOW if hasattr(_sp, "CREATE_NO_WINDOW") else 0,
+        )
         proc.stdin.write(frame_buffer.tobytes())  # single syscall instead of N writes
         proc.stdin.close()
         proc.wait()
