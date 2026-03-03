@@ -71,7 +71,7 @@ import premiere_export
 
 from EVENTURE_THEMES.theme import set_theme
 
-APP_VERSION = "1.0.3"
+APP_VERSION = "1.0.4"
 
 
 # ── Environment ──────────────────────────────────────────────────────────────
@@ -859,9 +859,19 @@ class SlideshowCreator(QMainWindow):
         dialog.setIntValue(cur_row + 1)
         if dialog.exec_() == QDialog.Accepted:
             new_pos = dialog.intValue() - 1
+            if new_pos == cur_row:
+                return
             img = self.images.pop(cur_row)
             self.images.insert(new_pos, img)
-            self.update_image_table()
+            # Only repopulate the rows that actually shifted — much faster than
+            # rebuilding the entire table for large slideshows.
+            lo, hi = min(cur_row, new_pos), max(cur_row, new_pos)
+            self.image_table.blockSignals(True)
+            self.image_table.setUpdatesEnabled(False)
+            for r in range(lo, hi + 1):
+                self._populate_row(r, self.images[r])
+            self.image_table.setUpdatesEnabled(True)
+            self.image_table.blockSignals(False)
             self.image_table.setCurrentCell(new_pos, 1)
 
     def update_image_progress(self, value: int):
