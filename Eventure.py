@@ -71,7 +71,7 @@ import premiere_export
 
 from EVENTURE_THEMES.theme import set_theme
 
-APP_VERSION = "1.0.2"
+APP_VERSION = "1.0.3"
 
 
 # ── Environment ──────────────────────────────────────────────────────────────
@@ -139,12 +139,23 @@ def check_for_updates(parent_window, current_version: str):
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
+def _ffmpeg_exe() -> str:
+    """Resolve ffmpeg/ffprobe from PATH or the script directory."""
+    import shutil as _shutil
+    exe = _shutil.which("ffmpeg") or str(script_dir / "ffmpeg.exe")
+    return exe
+
+def _ffprobe_exe() -> str:
+    import shutil as _shutil
+    exe = _shutil.which("ffprobe") or str(script_dir / "ffprobe.exe")
+    return exe
+
 def _get_audio_duration(audio_path: str) -> float:
     """Return the duration of an audio file in seconds using ffprobe."""
     try:
         result = subprocess.run(
             [
-                "ffprobe", "-v", "error",
+                _ffprobe_exe(), "-v", "error",
                 "-show_entries", "format=duration",
                 "-of", "default=noprint_wrappers=1:nokey=1",
                 audio_path,
@@ -366,7 +377,7 @@ def render_ken_burns_clip(image_path: str, effect: str, duration: float,
 
     # ── Pipe entire buffer into ffmpeg in one write ───────────────────────────
     cmd = [
-        "ffmpeg", "-y",
+        _ffmpeg_exe(), "-y",
         "-f", "rawvideo", "-vcodec", "rawvideo",
         "-s", f"{W}x{H}", "-pix_fmt", "rgb24", "-r", str(FPS),
         "-i", "pipe:0",
@@ -847,6 +858,15 @@ class SlideshowCreator(QMainWindow):
         self.image_progress_bar.setValue(value)
         self.taskbar_progress.setValue(value)
 
+    def _warn_corrupted_image(self, path: str):
+        name = os.path.basename(path)
+        QMessageBox.warning(
+            self,
+            "Corrupted Image",
+            f"The following image appears to be corrupted and will be skipped:\n\n{name}",
+            QMessageBox.Ok,
+        )
+
     def _store_temp_dirs(self, dirs: list):
         """Slot: remember temp dirs emitted by the worker so we can delete them later."""
         self._pending_temp_dirs = dirs
@@ -958,7 +978,35 @@ class SlideshowCreator(QMainWindow):
         command = self.build_ffmpeg_command()
         print("Exporting with command:", command)
 
+        # Locate ffmpeg — QProcess on Windows does NOT inherit the full system
+        # PATH, so we resolve the executable to an absolute path ourselves.
+        import shutil as _shutil
+        import shlex  as _shlex
+        # 1) Check system PATH, 2) fall back to script folder
+        ffmpeg_exe = _ffmpeg_exe()
+        import os as _os
+        if not _os.path.isfile(ffmpeg_exe):
+            ffmpeg_exe = None
+        if not ffmpeg_exe:
+            QMessageBox.critical(
+                self, "FFmpeg not found",
+                "ffmpeg could not be found on your PATH or in the script folder.\n"
+                "Please place ffmpeg.exe next to Eventure.py or add it to your PATH.",
+                QMessageBox.Ok,
+            )
+            return
+        print("ffmpeg resolved to:", ffmpeg_exe)
+
+        # Split into program + args list; strip quotes shlex leaves on tokens.
+        raw_args = _shlex.split(command, posix=False)
+        args = [a.strip('"') for a in raw_args[1:]]
+
         self.process = QProcess(self)
+
+        # Pass the full current environment so ffmpeg can find its libraries.
+        from PyQt5.QtCore import QProcessEnvironment
+        self.process.setProcessEnvironment(QProcessEnvironment.systemEnvironment())
+
         self.process.readyReadStandardError.connect(self.update_progress)
         self.process.finished.connect(self.export_finished)
 
@@ -966,7 +1014,13 @@ class SlideshowCreator(QMainWindow):
         self.progress_bar.setValue(0)
         self.taskbar_progress.show()
         self.taskbar_progress.setValue(0)
-        self.process.start(command)
+
+        self.process.start(ffmpeg_exe, args)
+        print("QProcess state after start:", self.process.state())
+        if self.process.state() == 0:
+            err = self.process.errorString()
+            QMessageBox.critical(self, "Export failed",
+                                 f"Failed to launch ffmpeg:\n{err}", QMessageBox.Ok)
 
     def export_slideshow(self):
         if not self.images or not self.audio_files:
@@ -997,6 +1051,7 @@ class SlideshowCreator(QMainWindow):
         self.image_worker.progress.connect(self.update_image_progress)
         self.image_worker.cleanup_dirs.connect(self._store_temp_dirs)
         self.image_worker.finished.connect(self.on_image_processing_finished)
+        self.image_worker.corrupted_image.connect(self._warn_corrupted_image)
         self.image_worker.start()
 
     def export_finished(self):
@@ -1012,6 +1067,15 @@ class SlideshowCreator(QMainWindow):
         self.taskbar_progress.hide()
         # Remove A_Blur and kb_clips now that the final .mp4 is written.
         self._cleanup_temp_dirs()
+        # Delete the temporary filter_complex script file if one was created.
+        fc = getattr(self, "_fc_script_path", None)
+        if fc:
+            try:
+                import os as _os
+                _os.remove(fc)
+            except OSError:
+                pass
+            self._fc_script_path = None
 
     def build_ffmpeg_command(self) -> str:
         inputs, filters = [], []
@@ -1082,12 +1146,26 @@ class SlideshowCreator(QMainWindow):
             audio_map = "-map [outa]"
 
         filter_complex = ";".join(filters)
+
+        # ── Write filter_complex to a temp script file ────────────────────────
+        # Windows has a 32 767-char command-line limit.  With many images the
+        # filter_complex alone exceeds this.  ffmpeg's -filter_complex_script
+        # reads it from a file instead, keeping the command line short.
+        import tempfile as _tempfile
+        fc_file = _tempfile.NamedTemporaryFile(
+            mode="w", suffix=".txt", delete=False, encoding="utf-8"
+        )
+        fc_file.write(filter_complex)
+        fc_file.close()
+        self._fc_script_path = fc_file.name   # remember so we can delete it later
+
+        output_norm = str(self.output_file).replace(chr(92), "/")
         command = (
             f'ffmpeg -y {" ".join(inputs)} '
-            f'-filter_complex "{filter_complex}" '
+            f'-filter_complex_script "{fc_file.name}" '
             f'-map {final_stream} {audio_map} '
             f'-c:a aac -c:v libx264 -pix_fmt yuv420p -preset ultrafast -movflags +faststart -shortest '
-            f'"{str(self.output_file).replace(chr(92), "/")}"'
+            f'"{output_norm}"'
         )
 
         if self.backup_state:
@@ -1778,8 +1856,9 @@ class ImageProcessingWorker(QThread):
     For CPU-bound PIL work a ProcessPoolExecutor would be even faster,
     but threads avoid pickle/spawn overhead for small-to-medium batches.
     """
-    progress = pyqtSignal(int)
-    finished = pyqtSignal()
+    progress        = pyqtSignal(int)
+    finished        = pyqtSignal()
+    corrupted_image = pyqtSignal(str)   # emits path of any image that fails to open
     # Emitted after all work is done; carries the list of temp dirs to delete.
     cleanup_dirs = pyqtSignal(list)
 
@@ -1805,11 +1884,14 @@ class ImageProcessingWorker(QThread):
         text_on_static = not has_kb
         try:
             original = Image.open(img_path)
+            original.verify()          # catches truncated / corrupt files
+            original = Image.open(img_path)   # re-open after verify() closes it
             if original.size != (self.common_width, self.common_height):
                 new_path = Image_resizer.process_image(img_path, self.output_folder, text, rotation, text_on_static)
                 return i, new_path
         except Exception as e:
-            print(f"Error opening image {img_path}: {e}")
+            print(f"Corrupted image {img_path}: {e}")
+            self.corrupted_image.emit(img_path)
         return i, None
 
     def run(self):

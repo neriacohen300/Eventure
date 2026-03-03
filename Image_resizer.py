@@ -7,14 +7,21 @@ Key fixes:
   • Locked/in-use files (WinError 1224) are skipped gracefully instead of crashing
   • Font is loaded lazily inside _get_font() so workers never touch the filesystem
     on import
+  • GIF files now supported — converted to RGB after load (fixes "wrong mode" error)
+  • EXIF correction no longer crashes on GIF/PNG/WebP (uses hasattr check)
+  • Corrupted JPEG SOS warnings suppressed via warnings filter
 """
 
 import os
 import shutil
+import warnings
 from pathlib import Path
 
 from bidi.algorithm import get_display
 from PIL import Image, ImageFilter, ImageDraw, ImageFont, ExifTags
+
+# ── Suppress noisy but non-fatal PIL warnings (e.g. corrupt JPEG SOS) ─────────
+warnings.filterwarnings("ignore", category=UserWarning, module="PIL")
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
@@ -90,15 +97,17 @@ def load_image_respecting_exif(path: str) -> Image.Image | None:
     try:
         image = Image.open(path)
         try:
-            exif = image._getexif()
-            if exif and _ORIENTATION_TAG:
-                val = exif.get(_ORIENTATION_TAG)
-                if val == 3:
-                    image = image.rotate(180, expand=True)
-                elif val == 6:
-                    image = image.rotate(270, expand=True)
-                elif val == 8:
-                    image = image.rotate(90, expand=True)
+            # Only JPEG images have _getexif(); GIF, PNG, WebP etc. do not
+            if hasattr(image, "_getexif"):
+                exif = image._getexif()
+                if exif and _ORIENTATION_TAG:
+                    val = exif.get(_ORIENTATION_TAG)
+                    if val == 3:
+                        image = image.rotate(180, expand=True)
+                    elif val == 6:
+                        image = image.rotate(270, expand=True)
+                    elif val == 8:
+                        image = image.rotate(90, expand=True)
         except Exception as ex:
             print(f"EXIF correction failed: {ex}")
         return image
@@ -135,6 +144,12 @@ def process_image(
         original = load_image_respecting_exif(image_path)
         if original is None:
             raise ValueError("Could not load image with EXIF correction.")
+
+        # ── Normalise mode to RGB ─────────────────────────────────────────────
+        # GIFs open in palette mode "P"; some PNGs are "RGBA" or "L".
+        # Everything downstream expects plain "RGB".
+        if original.mode != "RGB":
+            original = original.convert("RGB")
 
         if rotation:
             original = original.rotate(rotation, expand=True)
@@ -194,7 +209,11 @@ def process_image(
 
         # ── Save ──────────────────────────────────────────────────────────────
         os.makedirs(output_folder, exist_ok=True)
-        output_path = os.path.join(output_folder, os.path.basename(image_path))
+        # GIFs are saved as JPEG since the output is a still RGB frame
+        base_name = os.path.basename(image_path)
+        if base_name.lower().endswith(".gif"):
+            base_name = os.path.splitext(base_name)[0] + ".jpg"
+        output_path = os.path.join(output_folder, base_name)
         final.save(output_path, quality=92, optimize=True)
         return output_path
 
