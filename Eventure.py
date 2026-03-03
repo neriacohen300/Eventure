@@ -122,6 +122,7 @@ def check_for_updates(parent_window, current_version: str):
 
             latest_tag  = data.get("tag_name", "").lstrip("v")   # e.g. "1.2.3"
             release_url = data.get("html_url", "")
+            changelog   = data.get("body", "").strip()           # release notes
 
             if not latest_tag:
                 return
@@ -140,6 +141,7 @@ def check_for_updates(parent_window, current_version: str):
                     Qt.QueuedConnection,
                     Q_ARG(str, latest_tag),
                     Q_ARG(str, release_url),
+                    Q_ARG(str, changelog),
                 )
         except Exception as e:
             print(f"Update check failed: {e}")   # silent — never block startup
@@ -436,21 +438,47 @@ class SlideshowCreator(QMainWindow):
 
 
     @pyqtSlot(str, str)
-    def _show_update_dialog(self, new_version: str, url: str):
+    @pyqtSlot(str, str, str)
+    def _show_update_dialog(self, new_version: str, url: str, changelog: str = ""):
         """Called on the main thread when a newer version is available."""
-        from PyQt5.QtWidgets import QMessageBox
-        msg = QMessageBox(self)
-        msg.setWindowTitle(self.tr("update_available"))
-        msg.setIcon(QMessageBox.Information)
-        msg.setText(
-            f"<b>{self.tr("new_version")} v{new_version}</b><br><br>"
-            f"{self.tr("cur_version")} v{APP_VERSION}.<br><br>"
-            f'<a href="{url}">{self.tr("download")}</a>'
+        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QTextEdit, QPushButton, QHBoxLayout
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(self.tr("update_available"))
+        dlg.setMinimumWidth(480)
+        layout = QVBoxLayout(dlg)
+        layout.setSpacing(10)
+
+        header = QLabel(
+            f"<b>{self.tr('new_version')} v{new_version}</b><br>"
+            f"{self.tr('cur_version')} v{APP_VERSION}"
         )
-        msg.setTextFormat(Qt.RichText)
-        msg.setTextInteractionFlags(Qt.TextBrowserInteraction)
-        msg.setStandardButtons(QMessageBox.Ok)
-        msg.exec_()
+        header.setTextFormat(Qt.RichText)
+        layout.addWidget(header)
+
+        if changelog:
+            notes_label = QLabel("<b>What's new:</b>")
+            layout.addWidget(notes_label)
+            notes = QTextEdit()
+            notes.setReadOnly(True)
+            notes.setPlainText(changelog)
+            notes.setFixedHeight(200)
+            layout.addWidget(notes)
+
+        link = QLabel(f'<a href="{url}">{self.tr("download")}</a>')
+        link.setTextFormat(Qt.RichText)
+        link.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        link.setOpenExternalLinks(True)
+        layout.addWidget(link)
+
+        btn_row = QHBoxLayout()
+        close_btn = QPushButton(self.tr("close"))
+        close_btn.clicked.connect(dlg.accept)
+        btn_row.addStretch()
+        btn_row.addWidget(close_btn)
+        layout.addLayout(btn_row)
+
+        dlg.exec_()
 
     def __init__(self):
         super().__init__()
