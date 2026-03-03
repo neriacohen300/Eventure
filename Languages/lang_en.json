@@ -105,5 +105,6 @@
     "ken_burns": "Ken Burns",
     "text_static": "Text Static",
     "set_all_ken": "Set All Ken Burns Effect",
-    "action_import_pptx": "Import pptx file"
+    "action_import_pptx": "Import pptx file",
+    "subsequent_line": "Subsequent lines cannot be second image"
 }

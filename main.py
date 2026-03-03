@@ -613,10 +613,17 @@ class SlideshowCreator(QMainWindow):
             QMessageBox.critical(self, self.tr("error"), self.tr("second_image_error"), QMessageBox.Ok)
             self.update_image_row(row)
             return
-        self.images[row]["is_second_image"] = state == Qt.Checked
+        if state == Qt.Checked and self.images[row-1]["is_second_image"] == True:
+            QMessageBox.warning(self, self.tr("eror"), self.tr("subsequent_line"), QMessageBox.Ok)
+            self.update_image_row(row)
+            return
+        
+        is_checked = (state == Qt.Checked)
+        self.images[row]["is_second_image"] = is_checked
         item = self.image_table.item(row, 1)
         if item:
-            item.setData(Qt.UserRole, state == Qt.Checked)
+            item.setData(Qt.UserRole, is_checked)
+            
         self.update_image_row(row)
 
     def update_image_table(self):
@@ -892,8 +899,6 @@ class SlideshowCreator(QMainWindow):
         self.process.start(command)
 
     def export_slideshow(self):
-        if not self.validate_transitions():
-            return
         if not self.images or not self.audio_files:
             QMessageBox.critical(self, self.tr("error"), self.tr("error_no_audio"), QMessageBox.Ok)
             return
@@ -1216,6 +1221,81 @@ class SlideshowCreator(QMainWindow):
                 img["ken_burns"] = effect
             self.update_image_table()
 
+    def _set_random_ken_burns_per_image(self):
+        """Assign a random Ken Burns effect to every image independently."""
+        KB_OPTIONS = ["zoom_in", "zoom_out",
+                      "pan_left", "pan_right", "pan_up", "pan_down"]
+        for img in self.images:
+            img["ken_burns"] = random.choice(KB_OPTIONS)
+        self.update_image_table()
+
+    def _set_smart_ken_burns(self):
+        """
+        Assign Ken Burns effects using a cinematic continuity algorithm.
+
+        Rules:
+          1. Motion continuity — the next effect should feel like it picks up
+             where the last one left off:
+               zoom_in  → zoom_out  (camera reverses, starts at the zoomed-in frame)
+               zoom_out → zoom_in   (same logic in reverse)
+               pan_left → pan_right (reversal feels natural)
+               pan_right→ pan_left
+               pan_up   → pan_down
+               pan_down → pan_up
+          2. Variety — after two reversals in a row, force a category switch
+             (zoom ↔ pan) to break the monotony.
+          3. Occasional wildcards (≈ 20 %) — insert a pan between two zooms or
+             vice-versa to keep the sequence interesting.
+          4. Second images (PiP) are skipped.
+        """
+        # Continuity map: what naturally follows each effect
+        REVERSAL = {
+            "zoom_in":   "zoom_out",
+            "zoom_out":  "zoom_in",
+            "pan_left":  "pan_right",
+            "pan_right": "pan_left",
+            "pan_up":    "pan_down",
+            "pan_down":  "pan_up",
+        }
+        ZOOM_EFFECTS = ["zoom_in",  "zoom_out"]
+        PAN_EFFECTS  = ["pan_left", "pan_right", "pan_up", "pan_down"]
+
+        def _opposite_category(effect: str) -> list:
+            return PAN_EFFECTS if effect in ZOOM_EFFECTS else ZOOM_EFFECTS
+
+        def _same_category(effect: str) -> list:
+            pool = ZOOM_EFFECTS if effect in ZOOM_EFFECTS else PAN_EFFECTS
+            return [e for e in pool if e != effect]
+
+        prev_effect   = None
+        reversal_streak = 0   # how many consecutive reversals we've done
+
+        for img in self.images:
+            if img.get("is_second_image", False):
+                continue   # PiP slides don't need a KB assignment
+
+            if prev_effect is None:
+                # First image: pick randomly from all effects
+                chosen = random.choice(ZOOM_EFFECTS + PAN_EFFECTS)
+            else:
+                # 20 % wildcard: jump to the opposite category
+                if random.random() < 0.20:
+                    chosen = random.choice(_opposite_category(prev_effect))
+                    reversal_streak = 0
+                # After 2+ reversals in a row: force a category switch
+                elif reversal_streak >= 2:
+                    chosen = random.choice(_opposite_category(prev_effect))
+                    reversal_streak = 0
+                else:
+                    # Normal continuity: use the reversal
+                    chosen = REVERSAL[prev_effect]
+                    reversal_streak += 1
+
+            img["ken_burns"] = chosen
+            prev_effect = chosen
+
+        self.update_image_table()
+
     def _update_text_on_kb(self, row: int, value: bool):
         if 0 <= row < len(self.images):
             self.images[row]["text_on_kb"] = value
@@ -1246,16 +1326,6 @@ class SlideshowCreator(QMainWindow):
         for img in self.images:
             img["duration"] = new_dur
         self.update_image_table()
-
-    def validate_transitions(self) -> bool:
-        for img in self.images:
-            if img["transition_duration"] >= img["duration"]:
-                QMessageBox.warning(
-                    self, "Invalid Transition Duration",
-                    self.tr("error_invalid_transition", path=img["path"]),
-                )
-                return False
-        return True
 
     # ── Premiere Export ───────────────────────────────────────────────────────
 
@@ -1584,6 +1654,14 @@ class SlideshowCreator(QMainWindow):
         self.set_all_ken_burns_action.triggered.connect(self._set_all_ken_burns)
         self.Img_menu.addAction(self.set_all_ken_burns_action)
 
+        self.set_random_ken_burns_action = QAction("Set Random Ken Burns Per Image", self)
+        self.set_random_ken_burns_action.triggered.connect(self._set_random_ken_burns_per_image)
+        self.Img_menu.addAction(self.set_random_ken_burns_action)
+
+        self.set_smart_ken_burns_action = QAction("Set Smart Ken Burns (Auto)", self)
+        self.set_smart_ken_burns_action.triggered.connect(self._set_smart_ken_burns)
+        self.Img_menu.addAction(self.set_smart_ken_burns_action)
+
         self.easy_text_writing_action = _action("action_easy_text_writing", self.open_easy_text_writing, self.Text_menu, "easy_text")
 
         for key, label in [
@@ -1656,13 +1734,11 @@ class ImageProcessingWorker(QThread):
         rotation   = self.images[i]["rotation"]
         text       = self.images[i]["text"]
         has_kb     = self.images[i].get("ken_burns", "none") != "none"
-        # If no KB effect: text must go on the still image, always.
-        # If KB effect:    respect the user's text_on_kb checkbox.
-        text_on_kb = self.images[i]["text_on_kb"] if has_kb else True
+        text_on_static = not has_kb
         try:
             original = Image.open(img_path)
             if original.size != (self.common_width, self.common_height):
-                new_path = Image_resizer.process_image(img_path, self.output_folder, text, rotation, text_on_kb)
+                new_path = Image_resizer.process_image(img_path, self.output_folder, text, rotation, text_on_static)
                 return i, new_path
         except Exception as e:
             print(f"Error opening image {img_path}: {e}")
@@ -1763,19 +1839,21 @@ class ImageProcessingPremiereWorker(QThread):
             if img.get("is_second_image"):
                 fg = os.path.join(img_folder, f"img{i}_2nd_of_img{i-1}.png")
                 slide_list.append({
-                    "bg_path":  None,
-                    "fg_path":  fg if os.path.exists(fg) else None,
-                    "duration": img.get("duration", 5.0),
-                    "text":     img.get("text", ""),
+                    "bg_path":        None,
+                    "fg_path":        fg if os.path.exists(fg) else None,
+                    "duration":       img.get("duration", 5.0),
+                    "text":           img.get("text", ""),
+                    "is_second_image": True,
                 })
             else:
                 bg = os.path.join(bg_folder, f"background_img{i}.jpg")
                 fg = os.path.join(img_folder, f"img{i}.png")
                 slide_list.append({
-                    "bg_path":  bg if os.path.exists(bg) else None,
-                    "fg_path":  fg if os.path.exists(fg) else None,
-                    "duration": img.get("duration", 5.0),
-                    "text":     img.get("text", ""),
+                    "bg_path":        bg if os.path.exists(bg) else None,
+                    "fg_path":        fg if os.path.exists(fg) else None,
+                    "duration":       img.get("duration", 5.0),
+                    "text":           img.get("text", ""),
+                    "is_second_image": False,
                 })
 
         # ── Step 3: generate the Premiere XML timeline ────────────────────────

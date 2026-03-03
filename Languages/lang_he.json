@@ -106,5 +106,6 @@
     "ken_burns": "אפקט \"קן בורנס\"",
     "text_static": "טקסט סטטי",
     "set_all_ken": "הגדר את כל אפקטי ה\"קן בורנס\"",
-    "action_import_pptx": "ייבוא קובץ pptx"
+    "action_import_pptx": "ייבוא קובץ pptx",
+    "subsequent_line": "שורות עוקבות לא יכולות להיות מוגדרות כתמונה שנייה"
 }

@@ -328,17 +328,24 @@ def generate_premiere_xml(
 
     slide_list items:
         {
-          "bg_path":  str,          # path to background JPEG
-          "fg_path":  str,          # path to foreground PNG
-          "duration": float,        # optional per-slide duration in seconds
-          "text":     str,          # optional (not used in video, for reference)
+          "bg_path":      str,    # path to background JPEG (None for second images)
+          "fg_path":      str,    # path to foreground PNG
+          "duration":     float,  # per-slide duration in seconds
+          "text":         str,    # optional (for reference)
+          "is_second_image": bool # if True, overlaid as PiP on the previous slide (V3)
         }
+
+    Second images are placed on V3 at the same timeline position as their
+    parent slide so they appear as a picture-in-picture overlay.
 
     Returns the path to the saved .xml file.
     """
     seq_id  = "seq-" + uuid.uuid4().hex[:8]
+
+    # Only primary (non-PiP) slides count toward total sequence duration
+    primary_slides = [s for s in slide_list if not s.get("is_second_image", False)]
     seq_dur = sum(
-        _frames(s.get("duration", default_duration_sec)) for s in slide_list
+        _frames(s.get("duration", default_duration_sec)) for s in primary_slides
     )
 
     # ── Root ──────────────────────────────────────────────────────────────────
@@ -370,41 +377,109 @@ def generate_premiere_xml(
     ET.SubElement(sample_chars, "pixelaspectratio").text = "square"
     ET.SubElement(sample_chars, "fielddominance").text   = "none"
 
-    # V1 = backgrounds, V2 = foregrounds
-    track_bg = ET.SubElement(video, "track")
-    track_fg = ET.SubElement(video, "track")
+    # V1 = backgrounds, V2 = foregrounds, V3 = PiP second images
+    track_bg  = ET.SubElement(video, "track")   # V1
+    track_fg  = ET.SubElement(video, "track")   # V2
+    track_pip = ET.SubElement(video, "track")   # V3 – second images (PiP)
 
-    cursor = 0  # timeline cursor in frames
+    cursor       = 0   # timeline cursor in frames (primary slides only)
+    prev_cursor  = 0   # cursor before the last primary slide (for PiP placement)
+
+    # We need to iterate slide_list in order; keep track of the parent slide's
+    # start frame so PiP images can be placed at the same position.
+    last_primary_start = 0
 
     for i, slide in enumerate(slide_list):
-        dur = _frames(slide.get("duration", default_duration_sec))
-        kb  = _random_ken_burns_params()
+        is_pip = slide.get("is_second_image", False)
+        dur    = _frames(slide.get("duration", default_duration_sec))
+        kb     = _random_ken_burns_params()
 
-        # Background clip (V1) – no Ken Burns, just static (or mild zoom)
-        if slide.get("bg_path"):
-            bg_clip = _build_video_clip(
-                clip_id     = _make_clip_id(),
-                file_path   = slide["bg_path"],
-                start       = cursor,
-                duration    = dur,
-                track_index = 1,
-                ken_burns   = None,
-            )
-            track_bg.append(bg_clip)
+        if is_pip:
+            # ── PiP slide: goes on V3 at the same start as its parent ─────────
+            # In Premiere's FCP7 XML, position is in pixels offset from the
+            # frame centre (960, 540).  For a true side-by-side layout:
+            #   • Primary image (V2) will be repositioned to the LEFT half.
+            #   • PiP image (V3) sits in the RIGHT half.
+            # Each half is 960 px wide.  At scale=45 a 1920-wide frame fits
+            # exactly in 864 px, which comfortably fills a 960-wide cell.
+            # We use scale=47 so there's a small breathing margin.
+            #
+            # FCP7 cenx/ceny are offsets from the frame centre (in pixels,
+            # positive = right / down).
+            #   Left  centre = frame_centre_x - cell_w/2 = 960 - 480 = 480 → cenx = -480
+            #   Right centre = frame_centre_x + cell_w/2 = 960 + 480 = 480 → cenx = +480
+            pip_start = last_primary_start
+            if slide.get("fg_path"):
+                pip_clip = _build_video_clip(
+                    clip_id     = _make_clip_id(),
+                    file_path   = slide["fg_path"],
+                    start       = pip_start,
+                    duration    = dur,
+                    track_index = 3,
+                    ken_burns   = {
+                        # Static: scale to 47 %, positioned in right half
+                        "scale_start": 47,  "scale_end": 47,
+                        "x_start":     480, "x_end":    480,   # right half
+                        "y_start":     0,   "y_end":    0,
+                    },
+                )
+                track_pip.append(pip_clip)
 
-        # Foreground clip (V2) – Ken Burns effect
-        if slide.get("fg_path"):
-            fg_clip = _build_video_clip(
-                clip_id     = _make_clip_id(),
-                file_path   = slide["fg_path"],
-                start       = cursor,
-                duration    = dur,
-                track_index = 2,
-                ken_burns   = kb,
-            )
-            track_fg.append(fg_clip)
+            # Also reposition the V2 primary foreground for this slide to the
+            # LEFT half by patching the last-appended fg clip's ken_burns params.
+            # We do this by replacing the last fg clip with a repositioned version.
+            if track_fg:
+                # Remove the last fg clip (the parent primary slide just added)
+                last_fg = track_fg[-1]
+                track_fg.remove(last_fg)
+                # Re-add it with left-half positioning
+                parent_slide  = slide_list[i - 1]   # the slide just before this PiP
+                parent_dur_fr = _frames(parent_slide.get("duration", default_duration_sec))
+                if parent_slide.get("fg_path"):
+                    left_clip = _build_video_clip(
+                        clip_id     = _make_clip_id(),
+                        file_path   = parent_slide["fg_path"],
+                        start       = last_primary_start,
+                        duration    = parent_dur_fr,
+                        track_index = 2,
+                        ken_burns   = {
+                            # Static: scale to 47 %, positioned in left half
+                            "scale_start": 47,  "scale_end": 47,
+                            "x_start":    -480, "x_end":   -480,   # left half
+                            "y_start":     0,   "y_end":    0,
+                        },
+                    )
+                    track_fg.append(left_clip)
+            # PiP slides do not advance the cursor
+        else:
+            # ── Primary slide ─────────────────────────────────────────────────
+            last_primary_start = cursor
 
-        cursor += dur
+            # Background clip (V1) – static
+            if slide.get("bg_path"):
+                bg_clip = _build_video_clip(
+                    clip_id     = _make_clip_id(),
+                    file_path   = slide["bg_path"],
+                    start       = cursor,
+                    duration    = dur,
+                    track_index = 1,
+                    ken_burns   = None,
+                )
+                track_bg.append(bg_clip)
+
+            # Foreground clip (V2) – Ken Burns effect
+            if slide.get("fg_path"):
+                fg_clip = _build_video_clip(
+                    clip_id     = _make_clip_id(),
+                    file_path   = slide["fg_path"],
+                    start       = cursor,
+                    duration    = dur,
+                    track_index = 2,
+                    ken_burns   = kb,
+                )
+                track_fg.append(fg_clip)
+
+            cursor += dur
 
     # ── Audio track (background music) ────────────────────────────────────────
     audio = ET.SubElement(media, "audio")
