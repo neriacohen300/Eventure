@@ -163,6 +163,11 @@ def render_ken_burns_clip(image_path: str, effect: str, duration: float,
                            text: str = "", text_on_kb: bool = True) -> bool:
     """
     Render a smooth Ken Burns clip at 1920x1080 25fps using sub-pixel interpolation.
+
+    Speed improvements vs original:
+      - All frames pre-built into a contiguous numpy buffer → single pipe write (no per-frame syscall)
+      - CRF 28 (was 18) for intermediate clips — re-encoded in final pass anyway
+      - -tune fastdecode + -g 25 for faster ffmpeg encode
     """
     import cv2 as _cv2
     import numpy as _np
@@ -176,8 +181,6 @@ def render_ken_burns_clip(image_path: str, effect: str, duration: float,
     # ── Load & orient ─────────────────────────────────────────────────────────
     try:
         img = _Image.open(image_path)
-        # Convert to RGBA first — this eliminates the PIL warning about palette
-        # images with transparency, and ensures rotate/crop work on clean data.
         img = img.convert("RGBA")
         try:
             exif = img._getexif() if hasattr(img, "_getexif") else None
@@ -186,8 +189,10 @@ def render_ken_burns_clip(image_path: str, effect: str, duration: float,
                 if val == 3:   img = img.rotate(180, expand=True)
                 elif val == 6: img = img.rotate(270, expand=True)
                 elif val == 8: img = img.rotate(90,  expand=True)
-        except Exception: pass
-        if rotation: img = img.rotate(rotation, expand=True)
+        except Exception:
+            pass
+        if rotation:
+            img = img.rotate(rotation, expand=True)
         img = img.convert("RGB")
     except Exception as e:
         print(f"KB render error: {e}")
@@ -199,44 +204,37 @@ def render_ken_burns_clip(image_path: str, effect: str, duration: float,
         return t * t * (3.0 - 2.0 * t)
 
     # ── Build high-res source canvas ──────────────────────────────────────────
-    ZOOM = 1.10  # Slightly more room for smoother movement
+    ZOOM = 1.10
     src_w, src_h = int(W * ZOOM), int(H * ZOOM)
     img_arr = _np.array(img)
     ih, iw = img_arr.shape[:2]
     scale_cov = max(src_w / iw, src_h / ih)
     new_iw, new_ih = int(iw * scale_cov), int(ih * scale_cov)
-    
-    # Use INTER_LANCZOS4 for the initial high-quality scale
+
     resized = _cv2.resize(img_arr, (new_iw, new_ih), interpolation=_cv2.INTER_LANCZOS4)
     cx, cy = (new_iw - src_w) // 2, (new_ih - src_h) // 2
     src = resized[cy:cy + src_h, cx:cx + src_w].copy()
 
     # ── Pre-compute float rectangles ─────────────────────────────────────────
-    # pad_x/pad_y = extra pixels available for panning in each axis
     IS_PAN = effect in ("pan_left", "pan_right", "pan_up", "pan_down", "none")
     pad_x = src_w - W
     pad_y = src_h - H
     rects = []
-    cx_f, cy_f = src_w / 2.0, src_h / 2.0
     for f in range(frames):
         t = smooth(f / max(frames - 1, 1))
-        # Default: centered full view
         sw, sh = float(src_w), float(src_h)
         sx, sy = 0.0, 0.0
 
         if effect == "zoom_in":
             sw = src_w - (src_w - W) * t
             sh = src_h - (src_h - H) * t
-            # Anchor to center — critical to prevent shake
             sx = (src_w - sw) / 2.0
             sy = (src_h - sh) / 2.0
         elif effect == "zoom_out":
             sw = W + (src_w - W) * t
             sh = H + (src_h - H) * t
-            # Anchor to center — critical to prevent shake
             sx = (src_w - sw) / 2.0
             sy = (src_h - sh) / 2.0
-
         elif effect == "pan_left":
             sw, sh = float(W), float(H)
             sx = (src_w - W) * (1.0 - t)
@@ -279,75 +277,58 @@ def render_ken_burns_clip(image_path: str, effect: str, duration: float,
             bg_x = (W - bg_w) // 2;  bg_y = H - bg_h - 50
             draw.rounded_rectangle((bg_x, bg_y, bg_x+bg_w, bg_y+bg_h), radius=12, fill="white")
             draw.text(((W - tw) // 2, bg_y - 4), htext, font=_font, fill="black")
-            ov_arr = _np.array(overlay)           # RGBA uint8
+            ov_arr = _np.array(overlay)
             alpha  = ov_arr[:, :, 3:4].astype(_np.float32) / 255.0
-            # Pre-multiply so blending is a single vectorised op per frame
             static_overlay_bgr  = ov_arr[:, :, :3].astype(_np.float32)
             static_overlay_mask = alpha
         except Exception as e:
             print(f"KB text overlay error: {e}")
 
-    # ── Pipe frames into a single ffmpeg process ──────────────────────────────
+    # ── Pre-build all frames into a contiguous buffer ─────────────────────────
+    # One numpy allocation → one pipe write → eliminates per-frame syscall overhead
+    frame_buffer = _np.empty((frames, H, W, 3), dtype=_np.uint8)
+
+    for f in range(frames):
+        sx, sy, sw, sh = rects[f]
+        scale_x = W / sw
+        scale_y = H / sh
+        M = _np.array([
+            [scale_x,  0.0, -sx * scale_x],
+            [0.0,  scale_y, -sy * scale_y],
+        ], dtype=_np.float64)
+        frame = _cv2.warpAffine(
+            src, M, (W, H),
+            flags=_cv2.INTER_LINEAR,
+            borderMode=_cv2.BORDER_REFLECT_101,
+        )
+        if static_overlay_bgr is not None:
+            frame = (
+                frame.astype(_np.float32) * (1.0 - static_overlay_mask)
+                + static_overlay_bgr * static_overlay_mask
+            ).clip(0, 255).astype(_np.uint8)
+
+        frame_buffer[f] = frame
+
+    # ── Pipe entire buffer into ffmpeg in one write ───────────────────────────
     cmd = [
         "ffmpeg", "-y",
         "-f", "rawvideo", "-vcodec", "rawvideo",
         "-s", f"{W}x{H}", "-pix_fmt", "rgb24", "-r", str(FPS),
         "-i", "pipe:0",
         "-vcodec", "libx264", "-pix_fmt", "yuv420p",
-        "-preset", "ultrafast", "-crf", "18",
+        "-preset", "ultrafast", "-crf", "28",
+        "-tune", "fastdecode",
+        "-g", "25",
         "-r", str(FPS), "-movflags", "+faststart",
         output_path,
     ]
     proc = None
     try:
         proc = _sp.Popen(cmd, stdin=_sp.PIPE, stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
-
-        for f in range(frames):
-            sx, sy, sw, sh = rects[f]
-
-            if IS_PAN:
-                # Pan: pure numpy slice on already-integer-aligned coords.
-                # Pan rects always have sw==W and sh==H, so no resize needed.
-                # We still use warpAffine for sub-pixel accuracy on slow pans.
-                scale_x = W / sw   # == 1.0 for pans, kept for uniformity
-                scale_y = H / sh
-                M = _np.array([
-                    [scale_x,    0.0, -sx * scale_x],
-                    [   0.0, scale_y, -sy * scale_y],
-                ], dtype=_np.float64)
-                frame = _cv2.warpAffine(
-                    src, M, (W, H),
-                    flags=_cv2.INTER_LINEAR,
-                    borderMode=_cv2.BORDER_REFLECT_101,
-                )
-            else:
-                # Zoom: use warpAffine with sub-pixel scale+translate.
-                # This is the key fix — no integer rounding, no per-frame
-                # resize() call, no jitter from pixel snapping.
-                scale_x = W / sw
-                scale_y = H / sh
-                M = _np.array([
-                    [scale_x,    0.0, -sx * scale_x],
-                    [   0.0, scale_y, -sy * scale_y],
-                ], dtype=_np.float64)
-                frame = _cv2.warpAffine(
-                    src, M, (W, H),
-                    flags=_cv2.INTER_LINEAR,
-                    borderMode=_cv2.BORDER_REFLECT_101,
-                )
-
-            # Composite static text overlay if needed
-            if static_overlay_bgr is not None:
-                frame_f = frame.astype(_np.float32)
-                frame_f = frame_f * (1.0 - static_overlay_mask) + static_overlay_bgr * static_overlay_mask
-                frame   = frame_f.clip(0, 255).astype(_np.uint8)
-
-            proc.stdin.write(frame.tobytes())
-
+        proc.stdin.write(frame_buffer.tobytes())  # single syscall instead of N writes
         proc.stdin.close()
         proc.wait()
         return proc.returncode == 0
-
     except Exception as e:
         print(f"KB render pipe error: {e}")
         if proc:
@@ -419,6 +400,8 @@ class SlideshowCreator(QMainWindow):
         self.premiere_project_folder = ""
         self.loaded_project  = ""
 
+        self._pending_temp_dirs: list[str] = []   # filled by worker, deleted after export
+
         self.shortcuts = {
             "save":              "Ctrl+S",
             "save_as":           "Ctrl+Shift+S",
@@ -446,6 +429,7 @@ class SlideshowCreator(QMainWindow):
         self.image_table = QTableWidget()
         self.image_table.setItemDelegate(CustomDelegate())
         self.image_table.setColumnCount(11)
+        self.image_table.setSortingEnabled(False)
         self.image_table.setHorizontalHeaderLabels([
             self.tr("table_header_actions"),
             self.tr("table_header_image"),
@@ -644,7 +628,7 @@ class SlideshowCreator(QMainWindow):
         for row, img in enumerate(self.images):
             self._populate_row(row, img)
 
-        self.image_table.setSortingEnabled(True)
+        self.image_table.setSortingEnabled(False)
         self.image_table.setUpdatesEnabled(True)
         self.image_table.blockSignals(False)
 
@@ -727,7 +711,7 @@ class SlideshowCreator(QMainWindow):
             self.update_image_row(row - 1)
             self.image_table.setCurrentCell(row - 1, 1)
             self.update_preview_with_row(row - 1)
-        self.image_table.setSortingEnabled(True)
+        self.image_table.setSortingEnabled(False)
 
     def move_image_down(self):
         self.image_table.setSortingEnabled(False)
@@ -738,7 +722,7 @@ class SlideshowCreator(QMainWindow):
             self.update_image_row(row + 1)
             self.image_table.setCurrentCell(row + 1, 1)
             self.update_preview_with_row(row + 1)
-        self.image_table.setSortingEnabled(True)
+        self.image_table.setSortingEnabled(False)
 
     def update_image_row(self, row: int):
         if 0 <= row < len(self.images):
@@ -758,7 +742,7 @@ class SlideshowCreator(QMainWindow):
                 new_row = max(0, row - 1)
                 self.image_table.setCurrentCell(new_row, 1)
                 self.update_preview_with_row(new_row)
-        self.image_table.setSortingEnabled(True)
+        self.image_table.setSortingEnabled(False)
 
     def set_random_images_order(self):
         random.shuffle(self.images)
@@ -785,6 +769,21 @@ class SlideshowCreator(QMainWindow):
     def update_image_progress(self, value: int):
         self.image_progress_bar.setValue(value)
         self.taskbar_progress.setValue(value)
+
+    def _store_temp_dirs(self, dirs: list):
+        """Slot: remember temp dirs emitted by the worker so we can delete them later."""
+        self._pending_temp_dirs = dirs
+
+    def _cleanup_temp_dirs(self):
+        """Delete all temporary folders (A_Blur + kb_clips) after the final export."""
+        for d in self._pending_temp_dirs:
+            if d and os.path.isdir(d):
+                try:
+                    shutil.rmtree(d, ignore_errors=True)
+                    print(f"Cleaned up temp folder: {d}")
+                except Exception as e:
+                    print(f"Could not remove temp folder {d}: {e}")
+        self._pending_temp_dirs = []
 
     def on_image_processing_finished(self):
         self.image_progress_bar.setVisible(False)
@@ -919,6 +918,7 @@ class SlideshowCreator(QMainWindow):
 
         self.image_worker = ImageProcessingWorker(self.images, output_folder, self.common_width, self.common_height)
         self.image_worker.progress.connect(self.update_image_progress)
+        self.image_worker.cleanup_dirs.connect(self._store_temp_dirs)
         self.image_worker.finished.connect(self.on_image_processing_finished)
         self.image_worker.start()
 
@@ -933,6 +933,8 @@ class SlideshowCreator(QMainWindow):
         self.progress_bar.setVisible(False)
         self.taskbar_progress.reset()
         self.taskbar_progress.hide()
+        # Remove A_Blur and kb_clips now that the final .mp4 is written.
+        self._cleanup_temp_dirs()
 
     def build_ffmpeg_command(self) -> str:
         inputs, filters = [], []
@@ -1631,6 +1633,8 @@ class ImageProcessingWorker(QThread):
     """
     progress = pyqtSignal(int)
     finished = pyqtSignal()
+    # Emitted after all work is done; carries the list of temp dirs to delete.
+    cleanup_dirs = pyqtSignal(list)
 
     def __init__(self, images, output_folder, common_width, common_height):
         super().__init__()
@@ -1638,13 +1642,23 @@ class ImageProcessingWorker(QThread):
         self.output_folder = output_folder
         self.common_width  = common_width
         self.common_height = common_height
+        # Temp directories created during this export (populated in run()).
+        self._temp_dirs: list[str] = []
 
     def _resize_one(self, i: int) -> tuple[int, str | None]:
-        """Step 1: resize/blur image if needed. Run in parallel (PIL, no ffmpeg)."""
-        img_path = self.images[i]["path"]
-        rotation = self.images[i]["rotation"]
-        text     = self.images[i]["text"]
-        text_on_kb = self.images[i]["text_on_kb"]
+        """Step 1: resize/blur image if needed. Run in parallel (PIL, no ffmpeg).
+
+        When there is no Ken Burns effect the KB renderer never runs, so the
+        still image is the only place text can appear — force text_on_kb=True
+        regardless of what the checkbox says.
+        """
+        img_path   = self.images[i]["path"]
+        rotation   = self.images[i]["rotation"]
+        text       = self.images[i]["text"]
+        has_kb     = self.images[i].get("ken_burns", "none") != "none"
+        # If no KB effect: text must go on the still image, always.
+        # If KB effect:    respect the user's text_on_kb checkbox.
+        text_on_kb = self.images[i]["text_on_kb"] if has_kb else True
         try:
             original = Image.open(img_path)
             if original.size != (self.common_width, self.common_height):
@@ -1681,6 +1695,9 @@ class ImageProcessingWorker(QThread):
         if kb_images:
             os.makedirs(kb_dir, exist_ok=True)
 
+        # Track both temp folders so the main thread can delete them later.
+        self._temp_dirs = [self.output_folder, kb_dir]
+
         def _render_kb_one(i: int):
             img = self.images[i]
             effect = img["ken_burns"]
@@ -1715,6 +1732,7 @@ class ImageProcessingWorker(QThread):
                     print(f"  KB render exception: {e}")
                 self.progress.emit(50 + int(done_kb / max(len(kb_images), 1) * 50))
 
+        self.cleanup_dirs.emit(self._temp_dirs)
         self.finished.emit()
 
 
