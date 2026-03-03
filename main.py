@@ -965,6 +965,8 @@ class SlideshowCreator(QMainWindow):
         if not self.images or not self.audio_files:
             QMessageBox.critical(self, self.tr("error"), self.tr("error_no_audio"), QMessageBox.Ok)
             return
+        QMessageBox.warning(self, self.tr("just_know"), self.tr("no_secondery"), QMessageBox.Ok)
+
 
         file_path, _ = QFileDialog.getSaveFileName(
             self, "Save Slideshow", "", "Video Files (*.mp4);;All Files (*)"
@@ -1609,7 +1611,7 @@ class SlideshowCreator(QMainWindow):
 
         self.import_images.setText(self.tr("action_import_images"))
         self.import_audio.setText(self.tr("action_import_audio"))
-        self.import_pptx_action.setText(self.tr("action_import_pptx]"))
+        self.import_pptx_action.setText(self.tr("action_import_pptx"))
         self.load_action.setText(self.tr("action_load_project"))
         self.save_action.setText(self.tr("action_save_project"))
         self.save_as_action.setText(self.tr("action_save_project_as"))
@@ -1628,6 +1630,8 @@ class SlideshowCreator(QMainWindow):
         self.set_all_images_transition_type_action.setText(self.tr("action_set_all_transition_type"))
         self.set_random_transition_for_each_image_action.setText(self.tr("action_set_random_transition_per_image"))
         self.set_all_ken_burns_action.setText(self.tr("set_all_ken"))
+        self.set_random_ken_burns_action.setText(self.tr("random_ken"))
+        self.set_smart_ken_burns_action.setText(self.tr("smart_ken"))
         self.easy_text_writing_action.setText(self.tr("action_easy_text_writing"))
         self.set_save_shortcut_action.setText(self.tr("action_set_save_shortcut"))
         self.set_save_as_shortcut_action.setText(self.tr("action_set_save_as_shortcut"))
@@ -1712,11 +1716,11 @@ class SlideshowCreator(QMainWindow):
         self.set_all_ken_burns_action.triggered.connect(self._set_all_ken_burns)
         self.Img_menu.addAction(self.set_all_ken_burns_action)
 
-        self.set_random_ken_burns_action = QAction("Set Random Ken Burns Per Image", self)
+        self.set_random_ken_burns_action = QAction(self.tr("random_ken"), self)
         self.set_random_ken_burns_action.triggered.connect(self._set_random_ken_burns_per_image)
         self.Img_menu.addAction(self.set_random_ken_burns_action)
 
-        self.set_smart_ken_burns_action = QAction("Set Smart Ken Burns (Auto)", self)
+        self.set_smart_ken_burns_action = QAction(self.tr("smart_ken"), self)
         self.set_smart_ken_burns_action.triggered.connect(self._set_smart_ken_burns)
         self.Img_menu.addAction(self.set_smart_ken_burns_action)
 

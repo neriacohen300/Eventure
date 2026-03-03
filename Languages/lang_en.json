@@ -110,5 +110,9 @@
     "update_available": "Update Available",
     "new_version": "A new version of Eventure is available:",
     "cur_version": "Your are running",
-    "download": "Click here to download the latest version"
+    "download": "Click here to download the latest version",
+    "just_know": "Just so You Know...",
+    "no_secondery": "The current export format only supports the primary image. All of the secondery images will be ignored and set as a regular image.",
+    "random_ken": "Set Random Ken Burns Per Image",
+    "smart_ken": "Set Smart Ken Burns (Auto)"
 }
