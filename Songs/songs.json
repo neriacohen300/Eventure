@@ -4,7 +4,8 @@
             "author": "Alicia Keys",
             "duration": 232,
             "fits_for": "empowerment, opening sequence, awards ceremony",
-            "path": "{BASE_PATH}/Songs/AudioFiles/Alicia Keys - Girl On Fire.mp3"
+            "path": "{BASE_PATH}/Songs/AudioFiles/Alicia Keys - Girl On Fire.mp3",
+            "github_path": "AudioFiles/Alicia Keys - Girl On Fire.mp3"
         },
         {
             "name": "The Nights",
