@@ -150,5 +150,13 @@
         "fits_for": "wedding, proposal, inspirational segment",
         "path": "{BASE_PATH}/Songs/AudioFiles/עקיבא - יש בך הכל.mp3",
         "github_path": "AudioFiles/עקיבא - יש בך הכל.mp3"
+    },
+    {
+        "name": "Don't Stop Me Now",
+        "author": "Queen",
+        "duration": 212,
+        "fits_for": "high-energy montage, celebration, party, upbeat credits",
+        "path": "{BASE_PATH}/Songs/AudioFiles/Queen - Don't Stop Me Now.mp3",
+        "github_path": "AudioFiles/Queen - Don't Stop Me Now.mp3"
     }
 ]

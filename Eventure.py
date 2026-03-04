@@ -58,111 +58,6 @@ GITHUB_AUDIO_BASE   = f"https://raw.githubusercontent.com/{GITHUB_AUDIO_USER}/{G
 GITHUB_AUDIO_INDEX  = f"{GITHUB_AUDIO_BASE}/songs.json"
 
 # ── GPU Detection ──────────────────────────────────────────────────────────────
-def _detect_gpu_encoder() -> tuple[str, str]:
-    """
-    RTX-safe GPU encoder detection.
-
-    ROOT CAUSE of "Invalid argument (-22)" on ALL encoders:
-      ffmpeg cannot write to '-f null -' (stdout pipe) when the process is
-      launched with CREATE_NO_WINDOW on Windows — stdout is fully closed.
-      Fix: write the test output to a real temp file, then delete it.
-    """
-    import shutil as _shutil
-    import subprocess as _sub
-    import tempfile as _tmp
-    import os as _os
-
-    _NO_WIN = {"creationflags": _sub.CREATE_NO_WINDOW} if hasattr(_sub, "CREATE_NO_WINDOW") else {}
-    ffmpeg = _shutil.which("ffmpeg") or str(APP_DIR / "ffmpeg.exe")
-
-    log_lines = [f"ffmpeg path: {ffmpeg}"]
-
-    # Step 1 — which encoders are compiled in?
-    compiled = set()
-    try:
-        r = _sub.run([ffmpeg, "-encoders"], capture_output=True, timeout=10, **_NO_WIN)
-        out = r.stdout.decode("utf-8", errors="ignore") + r.stderr.decode("utf-8", errors="ignore")
-        for line in out.splitlines():
-            for codec in ("h264_nvenc", "h264_amf", "h264_qsv", "h264_videotoolbox"):
-                if codec in line:
-                    compiled.add(codec)
-        log_lines.append(f"Compiled encoders found: {compiled}")
-    except Exception as e:
-        log_lines.append(f"ERROR listing encoders: {e}")
-
-    # Step 2 — test each encoder writing to a REAL temp file (not -f null -)
-    # "-f null -" fails with exit 4294967274 (EINVAL) when stdout is closed
-    # under CREATE_NO_WINDOW.  Writing to an actual .mp4 in %TEMP% always works.
-    candidates = []
-    if "h264_nvenc" in compiled:
-        candidates.append((
-            "h264_nvenc", "NVIDIA NVENC (RTX)",
-            ["-vf", "format=yuv420p", "-vcodec", "h264_nvenc",
-             "-preset", "p1", "-rc", "constqp", "-qp", "28"]
-        ))
-    if "h264_amf" in compiled:
-        candidates.append((
-            "h264_amf", "AMD AMF",
-            ["-vf", "format=yuv420p", "-vcodec", "h264_amf"]
-        ))
-    if "h264_qsv" in compiled:
-        candidates.append((
-            "h264_qsv", "Intel QSV",
-            ["-vf", "format=nv12", "-vcodec", "h264_qsv"]
-        ))
-    if "h264_videotoolbox" in compiled:
-        candidates.append((
-            "h264_videotoolbox", "Apple VideoToolbox",
-            ["-vf", "format=yuv420p", "-vcodec", "h264_videotoolbox"]
-        ))
-
-    for codec, label, encode_args in candidates:
-        tmp_out = None
-        try:
-            # Write to a real temp mp4 — avoids the EINVAL stdout bug
-            fd, tmp_out = _tmp.mkstemp(suffix=".mp4")
-            _os.close(fd)
-            cmd = (
-                [ffmpeg, "-y", "-f", "lavfi", "-i", "color=black:s=128x72:r=1:d=0.5",
-                 "-frames:v", "1"]
-                + encode_args
-                + [tmp_out]
-            )
-            log_lines.append(f"Testing {codec}: {' '.join(cmd)}")
-            r = _sub.run(cmd, capture_output=True, timeout=15, **_NO_WIN)
-            stderr_txt = r.stderr.decode("utf-8", errors="ignore")
-            log_lines.append(f"  exit={r.returncode}  stderr_tail={stderr_txt[-300:]!r}")
-            if r.returncode == 0 and _os.path.getsize(tmp_out) > 0:
-                log_lines.append(f"  -> SUCCESS: {label}")
-                _write_gpu_log(log_lines)
-                return codec, label
-            log_lines.append("  -> FAILED")
-        except Exception as e:
-            log_lines.append(f"  -> EXCEPTION: {e}")
-        finally:
-            if tmp_out:
-                try: _os.unlink(tmp_out)
-                except Exception: pass
-
-    log_lines.append("-> Falling back to CPU libx264")
-    _write_gpu_log(log_lines)
-    return "libx264", "CPU (libx264)"
-def _write_gpu_log(lines: list):
-    """Write GPU detection log to temp dir for debugging."""
-    try:
-        import tempfile, os
-        path = os.path.join(tempfile.gettempdir(), "eventure_gpu_detect.log")
-        with open(path, "w", encoding="utf-8") as f:
-            f.write("\n".join(lines))
-    except Exception:
-        pass
-_GPU_ENCODER: tuple[str, str] | None = None   # cached after first call
-
-def get_gpu_encoder() -> tuple[str, str]:
-    global _GPU_ENCODER
-    if _GPU_ENCODER is None:
-        _GPU_ENCODER = _detect_gpu_encoder()
-    return _GPU_ENCODER
 
 plugin_path = os.path.join(os.path.dirname(sys.executable), "Library", "plugins", "platforms")
 os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = plugin_path
@@ -840,27 +735,8 @@ def render_ken_burns_clip(image_path, effect, duration, output_path, rotation=0,
                      + static_overlay_bgr * static_overlay_mask).clip(0, 255).astype(_np.uint8)
         frame_buffer[f] = frame
 
-    gpu_codec, _ = get_gpu_encoder()
-    if gpu_codec == "libx264":
-        vcodec_kb    = ["-vcodec", "libx264", "-pix_fmt", "yuv420p", "-preset", "ultrafast", "-crf", "28"]
-        extra_kb     = ["-tune", "fastdecode"]
-    elif gpu_codec == "h264_nvenc":
-        vcodec_kb    = ["-vcodec", "h264_nvenc", "-pix_fmt", "yuv420p",
-                        "-preset", "p4", "-tune", "hq",
-                        "-rc", "vbr", "-cq", "28", "-b:v", "0",
-                        "-maxrate", "20M", "-bufsize", "40M"]
-        extra_kb     = []
-    elif gpu_codec == "h264_amf":
-        vcodec_kb    = ["-vcodec", "h264_amf", "-pix_fmt", "yuv420p",
-                        "-quality", "balanced", "-rc", "cqp", "-qp_i", "28", "-qp_p", "28"]
-        extra_kb     = []
-    elif gpu_codec == "h264_qsv":
-        vcodec_kb    = ["-vcodec", "h264_qsv", "-pix_fmt", "nv12",
-                        "-preset", "medium", "-global_quality", "28"]
-        extra_kb     = []
-    else:
-        vcodec_kb    = ["-vcodec", gpu_codec, "-pix_fmt", "yuv420p"]
-        extra_kb     = []
+    vcodec_kb = ["-vcodec", "libx264", "-pix_fmt", "yuv420p", "-preset", "ultrafast", "-crf", "28"]
+    extra_kb  = ["-tune", "fastdecode"]
 
     cmd = [
         _ffmpeg_exe(), "-y",
@@ -2272,29 +2148,6 @@ class SlideshowCreator(QMainWindow):
         tb_layout.addStretch()
 
         # GPU status badge (shows which encoder will be used)
-        self._gpu_badge = QPushButton("⏳ Detecting GPU…")
-        self._gpu_badge.setStyleSheet(
-            f"color: {COLORS['text_muted']}; font-size: 10px; "
-            f"background: {COLORS['bg_card']}; border: 1px solid {COLORS['border']}; "
-            f"border-radius: 4px; padding: 2px 8px; text-align: left;"
-        )
-        self._gpu_badge.setToolTip("Click to see GPU detection details")
-        self._gpu_badge.clicked.connect(self._show_gpu_info)
-        tb_layout.addWidget(self._gpu_badge)
-        # Detect GPU in background — force re-detect so log is always fresh
-        def _gpu_detect():
-            global _GPU_ENCODER
-            _GPU_ENCODER = None          # clear cache so we always get a fresh result
-            codec, label = get_gpu_encoder()
-            color = COLORS['success'] if codec != 'libx264' else COLORS['text_muted']
-            icon  = "⚡" if codec != 'libx264' else "🖥"
-            self._gpu_badge.setText(f"{icon} {label}")
-            self._gpu_badge.setStyleSheet(
-                f"color: {color}; font-size: 10px; "
-                f"background: {COLORS['bg_card']}; border: 1px solid {COLORS['border']}; "
-                f"border-radius: 4px; padding: 2px 8px; text-align: left;"
-            )
-        threading.Thread(target=_gpu_detect, daemon=True).start()
 
         # Language switch
         lang_lbl = QLabel("Language:")
@@ -2924,23 +2777,7 @@ class SlideshowCreator(QMainWindow):
         self._fc_script_path = fc_file.name
 
         output_norm = str(self.output_file).replace(chr(92), "/")
-        gpu_codec, gpu_label = get_gpu_encoder()
-        # GPU encoders need different quality flags
-        # RTX 40/50 series NVENC uses -preset p4/p5 (quality/speed balance),
-        # NOT the old "ultrafast/fast" presets which were CPU-only.
-        if gpu_codec == "libx264":
-            vcodec_args = "-c:v libx264 -preset ultrafast -crf 23"
-        elif gpu_codec == "h264_nvenc":
-            # p4 = balanced quality/speed on Turing+; CQ 26 = visually lossless
-            vcodec_args = "-c:v h264_nvenc -preset p4 -tune hq -rc vbr -cq 26 -b:v 0 -maxrate 20M -bufsize 40M -pix_fmt yuv420p"
-        elif gpu_codec == "h264_amf":
-            vcodec_args = "-c:v h264_amf -quality balanced -rc cqp -qp_i 26 -qp_p 26 -pix_fmt yuv420p"
-        elif gpu_codec == "h264_qsv":
-            vcodec_args = "-c:v h264_qsv -preset medium -global_quality 26 -pix_fmt nv12"
-        else:
-            vcodec_args = f"-c:v {gpu_codec} -pix_fmt yuv420p"
-
-        print(f"[Export] Using encoder: {gpu_label} ({gpu_codec})")
+        vcodec_args = "-c:v libx264 -preset ultrafast -crf 23"
         command = (
             f'ffmpeg -y {" ".join(inputs)} '
             f'-filter_complex_script "{fc_file.name}" '
@@ -3764,77 +3601,6 @@ class SlideshowCreator(QMainWindow):
                 self.shortcuts[action] = shortcut
                 self.save_shortcuts()
                 self.update_shortcuts()
-
-    def _show_gpu_info(self):
-        """Show GPU detection log in a dialog so the user can diagnose issues."""
-        import tempfile, os
-        log_path = os.path.join(tempfile.gettempdir(), "eventure_gpu_detect.log")
-        try:
-            with open(log_path, "r", encoding="utf-8") as f:
-                log_text = f.read()
-        except FileNotFoundError:
-            log_text = "Log not found — GPU detection has not run yet.\nRestart the app to trigger detection."
-        except Exception as e:
-            log_text = f"Could not read log: {e}"
-
-        dlg = QDialog(self)
-        dlg.setWindowTitle("GPU Detection Log")
-        dlg.setMinimumSize(640, 400)
-        layout = QVBoxLayout(dlg)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(10)
-
-        title = QLabel("GPU Detection Details")
-        title.setStyleSheet(f"font-size: 14px; font-weight: bold; color: {COLORS['text_primary']};")
-        layout.addWidget(title)
-
-        hint = QLabel(
-            "If your RTX card shows as CPU, the log below explains why.\n"
-            "Common fix: update your NVIDIA driver to the latest Game Ready Driver."
-        )
-        hint.setWordWrap(True)
-        hint.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 11px;")
-        layout.addWidget(hint)
-
-        txt = QPlainTextEdit()
-        txt.setReadOnly(True)
-        txt.setPlainText(log_text)
-        txt.setStyleSheet(
-            f"background: {COLORS['bg_dark']}; color: {COLORS['text_primary']}; "
-            f"font-family: Consolas, monospace; font-size: 10px; "
-            f"border: 1px solid {COLORS['border']}; border-radius: 4px;"
-        )
-        layout.addWidget(txt)
-
-        btn_row = QHBoxLayout()
-        force_btn = QPushButton("⚡ Force NVENC (ignore detection)")
-        force_btn.setStyleSheet(
-            f"background: {COLORS['accent']}; color: white; border-radius: 4px; padding: 6px 14px; font-size: 11px;"
-        )
-        def _force_nvenc():
-            global _GPU_ENCODER
-            _GPU_ENCODER = ("h264_nvenc", "NVIDIA NVENC (RTX) [forced]")
-            self._gpu_badge.setText("⚡ NVIDIA NVENC (RTX) [forced]")
-            self._gpu_badge.setStyleSheet(
-                f"color: {COLORS['success']}; font-size: 10px; "
-                f"background: {COLORS['bg_card']}; border: 1px solid {COLORS['border']}; "
-                f"border-radius: 4px; padding: 2px 8px; text-align: left;"
-            )
-            dlg.accept()
-        force_btn.clicked.connect(_force_nvenc)
-
-        close_btn = QPushButton("Close")
-        close_btn.setStyleSheet(
-            f"background: {COLORS['bg_card']}; color: {COLORS['text_primary']}; "
-            f"border: 1px solid {COLORS['border']}; border-radius: 4px; padding: 6px 14px; font-size: 11px;"
-        )
-        close_btn.clicked.connect(dlg.accept)
-
-        btn_row.addWidget(force_btn)
-        btn_row.addStretch()
-        btn_row.addWidget(close_btn)
-        layout.addLayout(btn_row)
-        dlg.exec_()
 
     def _open_font_picker(self):
         """Open the font picker dialog and apply the chosen font to text overlays."""
