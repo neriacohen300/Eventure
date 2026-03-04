@@ -37,7 +37,7 @@ from PyQt5.QtGui import (
     QColor, QBrush, QImage, QPalette, QPainter, QLinearGradient,
     QFontDatabase, QPen, QPainterPath,
 )
-from PIL import Image, ExifTags
+from PIL import Image, ExifTags, ImageDraw, ImageFont
 from openpyxl import Workbook
 import openpyxl
 
@@ -620,65 +620,63 @@ def render_ken_burns_clip(image_path, effect, duration, output_path, rotation=0,
         print(f"KB render error: {e}")
         return False
 
+    # ── Algorithm ─────────────────────────────────────────────────────────────
+    # 1. Scale image to COVER W x H (no letterbox/pillarbox).
+    # 2. Ken Burns = animate a sub-rect of that cover canvas.
+    #    zoom_in: rect starts at W*ZOOM x H*ZOOM, shrinks to W x H (zooms in).
+    #    zoom_out: rect grows from W x H to W*ZOOM x H*ZOOM (zooms out).
+    #    pan_*: shift the W x H window across the canvas.
+    # This works identically for landscape, portrait, and cropped images.
+
     def smooth(raw_t):
         t = max(0.0, min(1.0, raw_t))
         return t * t * (3.0 - 2.0 * t)
 
     ZOOM = 1.10
     img_arr = _np.array(img)
-    full_ih, full_iw = img_arr.shape[:2]
+    ih, iw  = img_arr.shape[:2]
 
-    # ── If a crop is defined, compute the crop window in full-image pixels ────
-    # We do NOT crop the array. Instead we restrict all pan/zoom rects to stay
-    # inside the crop region, which preserves image resolution for KB rendering.
-    if crop:
-        crop_x = int(crop[0] * full_iw)
-        crop_y = int(crop[1] * full_ih)
-        crop_w = max(1, int(crop[2] * full_iw))
-        crop_h = max(1, int(crop[3] * full_ih))
-        crop_x = max(0, min(crop_x, full_iw - crop_w))
-        crop_y = max(0, min(crop_y, full_ih - crop_h))
-        # Work in the cropped coordinate space
-        iw, ih = crop_w, crop_h
-        ox, oy = crop_x, crop_y   # offsets into full image
-    else:
-        iw, ih = full_iw, full_ih
-        ox, oy = 0, 0
+    # Cover-scale to W*ZOOM x H*ZOOM so every animated rect fits without clamping
+    scale_cover = max(W * ZOOM / iw, H * ZOOM / ih)
+    cov_w = int(round(iw * scale_cover))
+    cov_h = int(round(ih * scale_cover))
+    canvas = _cv2.resize(img_arr, (cov_w, cov_h), interpolation=_cv2.INTER_LANCZOS4)
 
-    # Scale the crop region up to cover W*ZOOM × H*ZOOM
-    src_w, src_h = int(W * ZOOM), int(H * ZOOM)
-    scale_cov = max(src_w / iw, src_h / ih)
-    new_iw, new_ih = int(iw * scale_cov), int(ih * scale_cov)
+    # Pan travel = 8% of the shorter output dimension
+    travel = min(W, H) * 0.08
 
-    # Extract & resize only the crop region (avoids huge upscale of full image)
-    region = img_arr[oy:oy + ih, ox:ox + iw]
-    resized = _cv2.resize(region, (new_iw, new_ih), interpolation=_cv2.INTER_LANCZOS4)
-    cx, cy = (new_iw - src_w) // 2, (new_ih - src_h) // 2
-    src = resized[cy:cy + src_h, cx:cx + src_w].copy()
-
-    pad_x = src_w - W
-    pad_y = src_h - H
     rects = []
     for f in range(frames):
         t = smooth(f / max(frames - 1, 1))
-        sw, sh = float(src_w), float(src_h)
-        sx, sy = 0.0, 0.0
+        sw, sh = float(W), float(H)
+        sx = (cov_w - W) / 2.0
+        sy = (cov_h - H) / 2.0
+
         if effect == "zoom_in":
-            sw = src_w - (src_w - W) * t; sh = src_h - (src_h - H) * t
-            sx = (src_w - sw) / 2.0; sy = (src_h - sh) / 2.0
+            z = ZOOM - (ZOOM - 1.0) * t        # ZOOM → 1.0
+            sw, sh = W * z, H * z
+            sx = (cov_w - sw) / 2.0
+            sy = (cov_h - sh) / 2.0
         elif effect == "zoom_out":
-            sw = W + (src_w - W) * t; sh = H + (src_h - H) * t
-            sx = (src_w - sw) / 2.0; sy = (src_h - sh) / 2.0
+            z = 1.0 + (ZOOM - 1.0) * t         # 1.0 → ZOOM
+            sw, sh = W * z, H * z
+            sx = (cov_w - sw) / 2.0
+            sy = (cov_h - sh) / 2.0
         elif effect == "pan_left":
-            sw, sh = float(W), float(H); sx = (src_w - W) * (1.0 - t); sy = (src_h - H) / 2.0
+            sx = (cov_w - W) / 2.0 + travel * (1.0 - 2.0 * t)
+            sy = (cov_h - H) / 2.0
         elif effect == "pan_right":
-            sw, sh = float(W), float(H); sx = (src_w - W) * t; sy = (src_h - H) / 2.0
+            sx = (cov_w - W) / 2.0 - travel * (1.0 - 2.0 * t)
+            sy = (cov_h - H) / 2.0
         elif effect == "pan_up":
-            sw, sh = float(W), float(H); sx = float(pad_x) / 2.0; sy = float(pad_y) * (1.0 - t)
+            sx = (cov_w - W) / 2.0
+            sy = (cov_h - H) / 2.0 + travel * (1.0 - 2.0 * t)
         elif effect == "pan_down":
-            sw, sh = float(W), float(H); sx = float(pad_x) / 2.0; sy = float(pad_y) * t
-        else:
-            sw, sh = float(W), float(H); sx = float(pad_x) / 2.0; sy = float(pad_y) / 2.0
+            sx = (cov_w - W) / 2.0
+            sy = (cov_h - H) / 2.0 - travel * (1.0 - 2.0 * t)
+
+        sx = max(0.0, min(float(cov_w) - sw, sx))
+        sy = max(0.0, min(float(cov_h) - sh, sy))
         rects.append((sx, sy, sw, sh))
 
     static_overlay_bgr = None
@@ -709,11 +707,16 @@ def render_ken_burns_clip(image_path, effect, duration, output_path, rotation=0,
     frame_buffer = _np.empty((frames, H, W, 3), dtype=_np.uint8)
     for f in range(frames):
         sx, sy, sw, sh = rects[f]
-        scale_x = W / sw; scale_y = H / sh
-        M = _np.array([[scale_x, 0.0, -sx * scale_x], [0.0, scale_y, -sy * scale_y]], dtype=_np.float64)
-        frame = _cv2.warpAffine(src, M, (W, H), flags=_cv2.INTER_LINEAR, borderMode=_cv2.BORDER_REFLECT_101)
+        scale_x = W / sw
+        scale_y = H / sh
+        M = _np.array([[scale_x, 0.0, -sx * scale_x],
+                       [0.0, scale_y, -sy * scale_y]], dtype=_np.float64)
+        frame = _cv2.warpAffine(canvas, M, (W, H),
+                                flags=_cv2.INTER_LINEAR,
+                                borderMode=_cv2.BORDER_REFLECT_101)
         if static_overlay_bgr is not None:
-            frame = (frame.astype(_np.float32) * (1.0 - static_overlay_mask) + static_overlay_bgr * static_overlay_mask).clip(0, 255).astype(_np.uint8)
+            frame = (frame.astype(_np.float32) * (1.0 - static_overlay_mask)
+                     + static_overlay_bgr * static_overlay_mask).clip(0, 255).astype(_np.uint8)
         frame_buffer[f] = frame
 
     cmd = [
@@ -2024,6 +2027,16 @@ class SlideshowCreator(QMainWindow):
         export_title = _make_section_label("Export")
         right_layout.addWidget(export_title)
 
+        preview_btn = _styled_btn("▶  Preview Slideshow", "primary")
+        preview_btn.clicked.connect(self.open_preview_dialog)
+        preview_btn.setFixedHeight(36)
+        preview_btn.setStyleSheet(
+            f"QPushButton {{ background: {COLORS['purple']}; color: #fff; "
+            f"border: none; border-radius: 6px; font-weight: 700; font-size: 13px; }}"
+            f"QPushButton:hover {{ background: #8a5ef5; }}"
+        )
+        right_layout.addWidget(preview_btn)
+
         export_btn = _styled_btn("▶  Export Slideshow", "primary")
         export_btn.clicked.connect(self.export_slideshow)
         export_btn.setFixedHeight(36)
@@ -2100,6 +2113,9 @@ class SlideshowCreator(QMainWindow):
         sep2 = QFrame(); sep2.setFrameShape(QFrame.VLine)
         sep2.setStyleSheet(f"color: {COLORS['border']}; max-width: 1px;")
 
+        btn_preview = _tb_btn("▶  Preview", "Preview the full slideshow with audio (no export needed)")
+        btn_preview.clicked.connect(self.open_preview_dialog)
+
         btn_info    = _tb_btn("ℹ Info")
         btn_info.clicked.connect(self.show_info)
         btn_clear   = _tb_btn("✕  Clear")
@@ -2107,7 +2123,7 @@ class SlideshowCreator(QMainWindow):
 
         for w in [btn_open, btn_save, btn_saveas, sep1,
                   btn_pptx, btn_sort_new, btn_sort_old, btn_random, btn_batch_dur,
-                  sep2, btn_info, btn_clear]:
+                  sep2, btn_preview, btn_info, btn_clear]:
             tb_layout.addWidget(w)
 
         tb_layout.addStretch()
@@ -3463,6 +3479,20 @@ class SlideshowCreator(QMainWindow):
         name = os.path.basename(self.premiere_project_folder) + ".prproj"
         shutil.copy(str(src), os.path.join(dst_folder, name))
 
+    # ── Slideshow Preview ─────────────────────────────────────────────────────
+
+    def open_preview_dialog(self):
+        if not self.images:
+            QMessageBox.information(self, "Preview",
+                "Add some images first before previewing the slideshow.")
+            return
+        dlg = SlideshowPreviewDialog(
+            images=self.images,
+            audio_files=self.audio_files,
+            parent=self,
+        )
+        dlg.exec_()
+
     # ── Crop ──────────────────────────────────────────────────────────────────
 
     def open_crop_dialog(self, row: int):
@@ -3878,6 +3908,831 @@ class ImageProcessingPremiereWorker(QThread):
         except Exception as e:
             print(f"XML generation error: {e}")
         self.finished.emit()
+
+
+
+# ── Slideshow Preview ─────────────────────────────────────────────────────────
+
+class _FrameRenderer:
+    """
+    Pure-PIL/numpy renderer that produces a single preview frame.
+    Works in a background thread – no Qt objects created here.
+    Resolution is 960×540 (half 1080p) for real-time performance.
+    """
+    W, H = 960, 540
+    ZOOM = 1.10
+
+    def __init__(self, images: list):
+        self.images = images
+        self._img_cache: dict = {}   # path → numpy array (H, W, 3)
+
+    # ── image loading ────────────────────────────────────────────────────────
+
+    def _load(self, img_data: dict):
+        """Load, EXIF-correct, crop and rotate; return numpy uint8 RGB array."""
+        key = (img_data["path"], img_data.get("rotation", 0),
+               str(img_data.get("crop")))
+        if key in self._img_cache:
+            return self._img_cache[key]
+
+        try:
+            import numpy as np
+            pil = Image.open(img_data["path"])
+            # EXIF
+            try:
+                if hasattr(pil, "_getexif"):
+                    exif = pil._getexif()
+                    if exif and _ORIENTATION_TAG:
+                        v = exif.get(_ORIENTATION_TAG)
+                        if v == 3:   pil = pil.rotate(180, expand=True)
+                        elif v == 6: pil = pil.rotate(270, expand=True)
+                        elif v == 8: pil = pil.rotate(90,  expand=True)
+            except Exception:
+                pass
+            rot = img_data.get("rotation", 0)
+            if rot:
+                pil = pil.rotate(rot, expand=True)
+            crop = img_data.get("crop")
+            if crop:
+                iw, ih = pil.size
+                cx = max(0, int(crop[0]*iw)); cy = max(0, int(crop[1]*ih))
+                cw = max(1, min(int(crop[2]*iw), iw-cx))
+                ch = max(1, min(int(crop[3]*ih), ih-cy))
+                pil = pil.crop((cx, cy, cx+cw, cy+ch))
+            pil = pil.convert("RGB")
+            arr = np.array(pil)
+            # keep cache small
+            if len(self._img_cache) > 30:
+                self._img_cache.pop(next(iter(self._img_cache)))
+            self._img_cache[key] = arr
+            return arr
+        except Exception as e:
+            import numpy as np
+            print(f"Preview load error: {e}")
+            return np.zeros((self.H, self.W, 3), dtype=np.uint8)
+
+    # ── static frame (no KB) ─────────────────────────────────────────────────
+
+    def render_static(self, img_data: dict, text_override: str | None = None) -> "np.ndarray":
+        import numpy as np
+        import cv2
+
+        arr = self._load(img_data)
+        ih, iw = arr.shape[:2]
+        W, H = self.W, self.H
+
+        # aspect-fit
+        if iw/ih > W/H:
+            fw, fh = W, int(W * ih / iw)
+        else:
+            fh, fw = H, int(H * iw / ih)
+
+        fitted = cv2.resize(arr, (fw, fh), interpolation=cv2.INTER_LINEAR)
+
+        # blurred background
+        bg = cv2.resize(arr, (W, H), interpolation=cv2.INTER_LINEAR)
+        bg = cv2.GaussianBlur(bg, (0, 0), 15)
+
+        frame = bg.copy()
+        fg_w, fg_h = int(fw*0.9), int(fh*0.9)
+        fg = cv2.resize(fitted, (fg_w, fg_h), interpolation=cv2.INTER_LINEAR)
+        ox, oy = (W-fg_w)//2, (H-fg_h)//2
+        frame[oy:oy+fg_h, ox:ox+fg_w] = fg
+
+        # text
+        text = text_override if text_override is not None else img_data.get("text", "")
+        if text and text.strip():
+            frame = self._draw_text(frame, text)
+
+        return frame
+
+    # ── Ken Burns frame ──────────────────────────────────────────────────────
+
+    def render_kb_frame(self, img_data: dict, t: float) -> "np.ndarray":
+        """t = 0.0 … 1.0 within the slide duration."""
+        import numpy as np
+        import cv2
+
+        arr = self._load(img_data)
+        ih, iw = arr.shape[:2]
+        W, H   = self.W, self.H
+        effect = img_data.get("ken_burns", "zoom_in")
+        ZOOM   = self.ZOOM
+
+        def smooth(x):
+            x = max(0.0, min(1.0, x))
+            return x*x*(3.0-2.0*x)
+        t = smooth(t)
+
+        # ── Build the same blurred-background composite as render_static ──────
+        # 1. aspect-fit the image (same letterbox logic as static)
+        if iw / ih > W / H:
+            fw, fh = W, int(W * ih / iw)
+        else:
+            fh, fw = H, int(H * iw / ih)
+
+        fitted = cv2.resize(arr, (fw, fh), interpolation=cv2.INTER_LINEAR)
+
+        # 2. blurred full-frame background
+        bg = cv2.resize(arr, (W, H), interpolation=cv2.INTER_LINEAR)
+        bg = cv2.GaussianBlur(bg, (0, 0), 15)
+
+        # 3. composite: blurred bg + 90%-scaled foreground centred
+        composite = bg.copy()
+        fg_w, fg_h = int(fw * 0.9), int(fh * 0.9)
+        fg = cv2.resize(fitted, (fg_w, fg_h), interpolation=cv2.INTER_LINEAR)
+        ox, oy = (W - fg_w) // 2, (H - fg_h) // 2
+        composite[oy:oy + fg_h, ox:ox + fg_w] = fg
+
+        # ── Apply Ken Burns zoom/pan on top of the full composite ─────────────
+        # Scale the composite canvas to W*ZOOM x H*ZOOM so the animated crop
+        # window never spills outside the image.
+        cov_w = int(round(W * ZOOM))
+        cov_h = int(round(H * ZOOM))
+        canvas = cv2.resize(composite, (cov_w, cov_h), interpolation=cv2.INTER_LINEAR)
+
+        # Pan travel = 8% of short edge
+        travel = min(W, H) * 0.08
+
+        sw, sh = float(W), float(H)
+        sx = (cov_w - W) / 2.0
+        sy = (cov_h - H) / 2.0
+
+        if effect == "zoom_in":
+            z = ZOOM - (ZOOM - 1.0) * t        # ZOOM → 1.0
+            sw, sh = W * z, H * z
+            sx = (cov_w - sw) / 2.0
+            sy = (cov_h - sh) / 2.0
+        elif effect == "zoom_out":
+            z = 1.0 + (ZOOM - 1.0) * t         # 1.0 → ZOOM
+            sw, sh = W * z, H * z
+            sx = (cov_w - sw) / 2.0
+            sy = (cov_h - sh) / 2.0
+        elif effect == "pan_left":
+            sx = (cov_w - W) / 2.0 + travel * (1.0 - 2.0 * t)
+            sy = (cov_h - H) / 2.0
+        elif effect == "pan_right":
+            sx = (cov_w - W) / 2.0 - travel * (1.0 - 2.0 * t)
+            sy = (cov_h - H) / 2.0
+        elif effect == "pan_up":
+            sx = (cov_w - W) / 2.0
+            sy = (cov_h - H) / 2.0 + travel * (1.0 - 2.0 * t)
+        elif effect == "pan_down":
+            sx = (cov_w - W) / 2.0
+            sy = (cov_h - H) / 2.0 - travel * (1.0 - 2.0 * t)
+
+        sx = max(0.0, min(float(cov_w) - sw, sx))
+        sy = max(0.0, min(float(cov_h) - sh, sy))
+
+        scale_x, scale_y = W / sw, H / sh
+        M = np.array([[scale_x, 0, -sx * scale_x],
+                      [0, scale_y, -sy * scale_y]], dtype=np.float64)
+        frame = cv2.warpAffine(canvas, M, (W, H),
+                               flags=cv2.INTER_LINEAR,
+                               borderMode=cv2.BORDER_REFLECT_101)
+        text = img_data.get("text", "")
+        if text and text.strip():
+            frame = self._draw_text(frame, text)
+        return frame
+
+    # ── transition blend ─────────────────────────────────────────────────────
+
+    def render_transition(self, frame_a: "np.ndarray", frame_b: "np.ndarray",
+                          t: float, transition: str) -> "np.ndarray":
+        import numpy as np
+        t = max(0.0, min(1.0, t))
+        if transition in ("fade", "fadeblack", "fadewhite"):
+            return (frame_a.astype(np.float32)*(1-t) +
+                    frame_b.astype(np.float32)*t).clip(0,255).astype(np.uint8)
+        elif transition == "wipeleft":
+            cut = int(self.W * t)
+            out = frame_a.copy()
+            out[:, :cut] = frame_b[:, :cut]
+            return out
+        elif transition == "wiperight":
+            cut = int(self.W * (1-t))
+            out = frame_b.copy()
+            out[:, cut:] = frame_a[:, cut:]
+            return out
+        elif transition == "wipeup":
+            cut = int(self.H * t)
+            out = frame_a.copy()
+            out[:cut, :] = frame_b[:cut, :]
+            return out
+        elif transition == "wipedown":
+            cut = int(self.H * (1-t))
+            out = frame_b.copy()
+            out[cut:, :] = frame_a[cut:, :]
+            return out
+        else:  # dissolve / anything else → fade
+            return (frame_a.astype(np.float32)*(1-t) +
+                    frame_b.astype(np.float32)*t).clip(0,255).astype(np.uint8)
+
+    # ── text overlay ─────────────────────────────────────────────────────────
+
+    def _draw_text(self, frame_arr: "np.ndarray", text: str) -> "np.ndarray":
+        try:
+            import numpy as np
+            from bidi.algorithm import get_display as _bidi
+            pil = Image.fromarray(frame_arr)
+            draw = ImageDraw.Draw(pil)
+            try:
+                font_path = BASEPATH / "Fonts" / "Birzia-Black.otf"
+                font = ImageFont.truetype(str(font_path), 42)
+            except Exception:
+                font = ImageFont.load_default()
+            hebrew = _bidi(text)
+            bbox = draw.textbbox((0,0), hebrew, font=font)
+            tw, th = bbox[2]-bbox[0], bbox[3]-bbox[1]
+            bg_w, bg_h = tw+30, th+16
+            bg_x = (self.W-bg_w)//2
+            bg_y = self.H - bg_h - 30
+            draw.rounded_rectangle((bg_x, bg_y, bg_x+bg_w, bg_y+bg_h),
+                                   radius=8, fill="white")
+            draw.text(((self.W-tw)//2, bg_y-2), hebrew, font=font, fill="black")
+            return np.array(pil)
+        except Exception:
+            return frame_arr
+
+    # ── main entry point ─────────────────────────────────────────────────────
+
+    def get_frame(self, global_t: float) -> "np.ndarray":
+        """
+        Compute which slide + transition we're in and render the frame.
+        global_t is time in seconds from the start.
+        """
+        if not self.images:
+            import numpy as np
+            return np.zeros((self.H, self.W, 3), dtype=np.uint8)
+
+        # Build a timeline of [start_sec, end_sec] per slide (accounting for transitions)
+        cursor = 0.0
+        for i, img in enumerate(self.images):
+            dur = float(img.get("duration", 5))
+            td  = float(img.get("transition_duration", 1)) if i < len(self.images)-1 else 0.0
+            slide_end = cursor + dur
+
+            if global_t < slide_end or i == len(self.images)-1:
+                t_in = global_t - cursor  # time within this slide
+                t_norm = max(0.0, min(1.0, t_in / dur))
+
+                # Are we in the outgoing transition of this slide?
+                trans_start = dur - td
+                if td > 0 and t_in >= trans_start and i < len(self.images)-1:
+                    t_trans = (t_in - trans_start) / td
+                    fa = self._render_slide(img, t_in, dur)
+                    fb = self._render_slide(self.images[i+1], 0.0,
+                                            float(self.images[i+1].get("duration", 5)))
+                    transition = img.get("transition", "fade")
+                    return self.render_transition(fa, fb, t_trans, transition)
+
+                return self._render_slide(img, t_in, dur)
+
+            cursor = slide_end
+
+        import numpy as np
+        return np.zeros((self.H, self.W, 3), dtype=np.uint8)
+
+    def _render_slide(self, img_data: dict, t_in: float, dur: float) -> "np.ndarray":
+        effect = img_data.get("ken_burns", "none")
+        if effect and effect != "none":
+            t_norm = max(0.0, min(1.0, t_in / max(dur, 0.001)))
+            return self.render_kb_frame(img_data, t_norm)
+        else:
+            return self.render_static(img_data)
+
+    @property
+    def total_duration(self) -> float:
+        return sum(float(img.get("duration", 5)) for img in self.images)
+
+
+class _PreviewRenderThread(QThread):
+    """
+    Background thread that pre-renders frames around the current playhead.
+    Signals frame_ready with (global_t_ms, QImage).
+    """
+    frame_ready = pyqtSignal(float, object)  # (t_seconds, QImage)
+
+    def __init__(self, renderer: _FrameRenderer, parent=None):
+        super().__init__(parent)
+        self._renderer = renderer
+        self._queue: list = []
+        self._lock = __import__("threading").Lock()
+        self._stop = False
+        self._cond = __import__("threading").Condition(self._lock)
+
+    def request_frame(self, t: float):
+        with self._cond:
+            # Drop stale requests, keep only latest
+            self._queue = [t]
+            self._cond.notify()
+
+    def stop(self):
+        with self._cond:
+            self._stop = True
+            self._cond.notify()
+
+    def run(self):
+        import numpy as np
+        while True:
+            with self._cond:
+                while not self._queue and not self._stop:
+                    self._cond.wait(timeout=0.1)
+                if self._stop:
+                    break
+                t = self._queue.pop(0) if self._queue else None
+
+            if t is None:
+                continue
+            try:
+                arr = self._renderer.get_frame(t)
+                h, w = arr.shape[:2]
+                qimg = QImage(arr.tobytes(), w, h, w*3, QImage.Format_RGB888).copy()
+                self.frame_ready.emit(t, qimg)
+            except Exception as e:
+                print(f"Preview render error: {e}")
+
+
+class SlideshowPreviewDialog(QDialog):
+    """
+    Full-window slideshow preview with seek, play/pause, audio and time display.
+    Opens instantly — no export required.
+    """
+
+    FPS    = 25
+    W, H   = 960, 540
+    FRAME_MS = int(1000 / FPS)
+
+    def __init__(self, images: list, audio_files: list, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("▶  Slideshow Preview")
+        self.setMinimumSize(1050, 720)
+        self.resize(1100, 760)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowMaximizeButtonHint)
+        self.setStyleSheet(f"background: {COLORS['bg_deep']}; color: {COLORS['text_primary']};")
+
+        self._images      = images
+        self._audio_files = audio_files
+        self._renderer    = _FrameRenderer(images)
+        self._total_dur   = self._renderer.total_duration
+
+        # State
+        self._playing      = False
+        self._current_t    = 0.0          # playhead in seconds
+        self._current_qimg: QImage | None = None
+        self._audio_proc: QProcess | None = None
+        self._audio_offset = 0.0          # what second audio started from
+
+        self._build_ui()
+
+        # Background render thread
+        self._render_thread = _PreviewRenderThread(self._renderer, self)
+        self._render_thread.frame_ready.connect(self._on_frame_ready)
+        self._render_thread.start()
+
+        # Playback timer
+        self._timer = QTimer(self)
+        self._timer.setInterval(self.FRAME_MS)
+        self._timer.timeout.connect(self._tick)
+
+        # Render first frame
+        self._seek(0.0, start_audio=False)
+
+    # ── UI construction ──────────────────────────────────────────────────────
+
+    def _build_ui(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # ── Canvas ────────────────────────────────────────────────────────────
+        self._canvas = QLabel()
+        self._canvas.setAlignment(Qt.AlignCenter)
+        self._canvas.setStyleSheet(f"background: #000;")
+        self._canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        root.addWidget(self._canvas, 1)
+
+        # ── Slide indicator strip ─────────────────────────────────────────────
+        self._slide_label = QLabel("Slide 1 / 1")
+        self._slide_label.setAlignment(Qt.AlignCenter)
+        self._slide_label.setStyleSheet(
+            f"color: {COLORS['text_muted']}; font-size: 11px; "
+            f"background: {COLORS['bg_deep']}; padding: 3px;"
+        )
+        root.addWidget(self._slide_label)
+
+        # ── Timeline scrubber ─────────────────────────────────────────────────
+        scrub_row = QHBoxLayout()
+        scrub_row.setContentsMargins(16, 4, 16, 2)
+        scrub_row.setSpacing(10)
+
+        self._time_label = QLabel("00:00:00")
+        self._time_label.setStyleSheet(
+            f"color: {COLORS['accent']}; font-size: 12px; font-weight: 700; "
+            f"font-family: 'Consolas', monospace; min-width: 68px;"
+        )
+        self._dur_label = QLabel(f"/ {format_time_hms(self._total_dur)}")
+        self._dur_label.setStyleSheet(
+            f"color: {COLORS['text_muted']}; font-size: 12px; min-width: 68px;"
+        )
+
+        self._scrubber = QSlider(Qt.Horizontal)
+        self._scrubber.setRange(0, max(1, int(self._total_dur * 100)))
+        self._scrubber.setValue(0)
+        self._scrubber.setStyleSheet(f"""
+            QSlider::groove:horizontal {{
+                height: 6px; background: {COLORS['bg_hover']};
+                border-radius: 3px;
+            }}
+            QSlider::sub-page:horizontal {{
+                background: {COLORS['accent']}; border-radius: 3px;
+            }}
+            QSlider::handle:horizontal {{
+                background: #fff; border: 2px solid {COLORS['accent']};
+                width: 14px; height: 14px; margin: -5px 0; border-radius: 7px;
+            }}
+        """)
+        self._scrubber.sliderMoved.connect(self._on_scrub)
+        self._scrubber.sliderPressed.connect(self._on_scrub_start)
+        self._scrubber.sliderReleased.connect(self._on_scrub_end)
+        self._scrubbing = False
+
+        scrub_row.addWidget(self._time_label)
+        scrub_row.addWidget(self._dur_label)
+        scrub_row.addWidget(self._scrubber, 1)
+        root.addLayout(scrub_row)
+
+        # ── Slide markers on timeline ─────────────────────────────────────────
+        self._marker_bar = _SlideMarkerBar(self._images, self._total_dur)
+        self._marker_bar.seek_to.connect(lambda t: self._seek(t))
+        root.addWidget(self._marker_bar)
+
+        # ── Transport controls ────────────────────────────────────────────────
+        ctrl = QHBoxLayout()
+        ctrl.setContentsMargins(16, 6, 16, 12)
+        ctrl.setSpacing(10)
+
+        def _ctrl_btn(text, tip="", accent=False):
+            b = QPushButton(text)
+            b.setFixedSize(42, 36)
+            color = COLORS["accent"] if accent else COLORS["text_secondary"]
+            b.setStyleSheet(
+                f"QPushButton {{ background: {COLORS['bg_card']}; color: {color}; "
+                f"border: 1px solid {COLORS['border']}; border-radius: 6px; "
+                f"font-size: 15px; font-weight: 700; }}"
+                f"QPushButton:hover {{ background: {COLORS['bg_hover']}; }}"
+            )
+            if tip: b.setToolTip(tip)
+            return b
+
+        self._btn_prev  = _ctrl_btn("⏮", "Previous slide")
+        self._btn_back  = _ctrl_btn("◀◀", "Back 5 s")
+        self._btn_play  = _ctrl_btn("▶", "Play / Pause  (Space)", accent=True)
+        self._btn_fwd   = _ctrl_btn("▶▶", "Forward 5 s")
+        self._btn_next  = _ctrl_btn("⏭", "Next slide")
+
+        self._btn_play.setFixedSize(52, 40)
+
+        self._btn_prev.clicked.connect(self._prev_slide)
+        self._btn_back.clicked.connect(lambda: self._seek(max(0, self._current_t - 5)))
+        self._btn_play.clicked.connect(self._toggle_play)
+        self._btn_fwd.clicked.connect(lambda: self._seek(min(self._total_dur, self._current_t + 5)))
+        self._btn_next.clicked.connect(self._next_slide)
+
+        # Speed selector
+        speed_lbl = QLabel("Speed:")
+        speed_lbl.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 11px;")
+        self._speed_box = QComboBox()
+        self._speed_box.addItems(["0.5×", "1×", "1.5×", "2×"])
+        self._speed_box.setCurrentIndex(1)
+        self._speed_box.setFixedWidth(68)
+        self._speed_box.setStyleSheet(f"background: {COLORS['bg_card']}; color: {COLORS['text_primary']}; border-radius: 4px;")
+        self._speed_box.currentIndexChanged.connect(self._on_speed_change)
+        self._speed = 1.0
+
+        close_btn = QPushButton("✕  Close")
+        close_btn.setFixedHeight(36)
+        close_btn.setStyleSheet(
+            f"QPushButton {{ background: {COLORS['bg_card']}; color: {COLORS['text_muted']}; "
+            f"border: 1px solid {COLORS['border']}; border-radius: 6px; padding: 0 16px; }}"
+            f"QPushButton:hover {{ background: {COLORS['danger']}; color: #fff; }}"
+        )
+        close_btn.clicked.connect(self.close)
+
+        ctrl.addWidget(self._btn_prev)
+        ctrl.addWidget(self._btn_back)
+        ctrl.addWidget(self._btn_play)
+        ctrl.addWidget(self._btn_fwd)
+        ctrl.addWidget(self._btn_next)
+        ctrl.addSpacing(16)
+        ctrl.addWidget(speed_lbl)
+        ctrl.addWidget(self._speed_box)
+        ctrl.addStretch()
+        ctrl.addWidget(close_btn)
+        root.addLayout(ctrl)
+
+    # ── Keyboard shortcut ─────────────────────────────────────────────────────
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Space:
+            self._toggle_play()
+        elif event.key() == Qt.Key_Left:
+            self._seek(max(0, self._current_t - 5))
+        elif event.key() == Qt.Key_Right:
+            self._seek(min(self._total_dur, self._current_t + 5))
+        elif event.key() == Qt.Key_Escape:
+            self.close()
+        else:
+            super().keyPressEvent(event)
+
+    # ── Playback ─────────────────────────────────────────────────────────────
+
+    def _toggle_play(self):
+        if self._playing:
+            self._pause()
+        else:
+            self._play()
+
+    def _play(self):
+        if self._current_t >= self._total_dur:
+            self._seek(0.0, start_audio=False)
+        self._playing = True
+        self._btn_play.setText("⏸")
+        self._playback_start_wall = __import__("time").perf_counter()
+        self._playback_start_t    = self._current_t
+        self._start_audio(self._current_t)
+        self._timer.start()
+
+    def _pause(self):
+        self._playing = False
+        self._btn_play.setText("▶")
+        self._timer.stop()
+        self._stop_audio()
+
+    def _tick(self):
+        import time
+        elapsed = (time.perf_counter() - self._playback_start_wall) * self._speed
+        t = self._playback_start_t + elapsed
+        if t >= self._total_dur:
+            t = self._total_dur
+            self._pause()
+        self._current_t = t
+        self._update_ui_position(t)
+        self._render_thread.request_frame(t)
+
+    # ── Seeking ───────────────────────────────────────────────────────────────
+
+    def _seek(self, t: float, start_audio: bool = True):
+        was_playing = self._playing
+        if self._playing:
+            self._pause()
+        t = max(0.0, min(self._total_dur, t))
+        self._current_t = t
+        self._update_ui_position(t)
+        # Render synchronously for instant feedback (cheap at half-res)
+        try:
+            import numpy as np
+            arr = self._renderer.get_frame(t)
+            h, w = arr.shape[:2]
+            self._current_qimg = QImage(arr.tobytes(), w, h, w*3,
+                                        QImage.Format_RGB888).copy()
+            self._paint_frame()
+        except Exception as e:
+            print(f"Seek render error: {e}")
+
+        if was_playing and start_audio:
+            self._play()
+        elif start_audio and not was_playing:
+            pass  # keep paused
+
+    def _update_ui_position(self, t: float):
+        # scrubber (block signals to avoid recursive seek)
+        self._scrubber.blockSignals(True)
+        self._scrubber.setValue(int(t * 100))
+        self._scrubber.blockSignals(False)
+        self._time_label.setText(format_time_hms(t))
+        self._marker_bar.set_playhead(t)
+        # slide indicator
+        idx, _ = self._slide_at(t)
+        self._slide_label.setText(f"Slide {idx+1} / {len(self._images)}"
+                                   + (f"  —  {os.path.basename(self._images[idx]['path'])}"
+                                      if self._images else ""))
+
+    def _slide_at(self, t: float) -> tuple:
+        """Return (slide_index, t_within_slide)."""
+        cursor = 0.0
+        for i, img in enumerate(self._images):
+            dur = float(img.get("duration", 5))
+            if t < cursor + dur or i == len(self._images) - 1:
+                return i, t - cursor
+            cursor += dur
+        return 0, 0.0
+
+    def _slide_start(self, idx: int) -> float:
+        return sum(float(img.get("duration", 5)) for img in self._images[:idx])
+
+    def _prev_slide(self):
+        idx, t_in = self._slide_at(self._current_t)
+        if t_in > 0.5:
+            self._seek(self._slide_start(idx))
+        else:
+            self._seek(self._slide_start(max(0, idx-1)))
+
+    def _next_slide(self):
+        idx, _ = self._slide_at(self._current_t)
+        self._seek(self._slide_start(min(len(self._images)-1, idx+1)))
+
+    # ── Scrubber ──────────────────────────────────────────────────────────────
+
+    def _on_scrub_start(self):
+        self._scrubbing = True
+        if self._playing:
+            self._pause()
+
+    def _on_scrub(self, value: int):
+        t = value / 100.0
+        self._current_t = t
+        self._update_ui_position(t)
+        self._render_thread.request_frame(t)
+
+    def _on_scrub_end(self):
+        self._scrubbing = False
+        t = self._scrubber.value() / 100.0
+        self._seek(t, start_audio=False)
+
+    # ── Speed ─────────────────────────────────────────────────────────────────
+
+    def _on_speed_change(self, idx: int):
+        speeds = [0.5, 1.0, 1.5, 2.0]
+        self._speed = speeds[idx]
+        if self._playing:
+            # Restart timing reference
+            self._playback_start_wall = __import__("time").perf_counter()
+            self._playback_start_t    = self._current_t
+
+    # ── Frame rendering ───────────────────────────────────────────────────────
+
+    def _on_frame_ready(self, t: float, qimg: QImage):
+        # Only paint if this frame is still relevant (within 200ms of playhead)
+        if abs(t - self._current_t) < 0.2 or self._playing:
+            self._current_qimg = qimg
+            self._paint_frame()
+
+    def _paint_frame(self):
+        if self._current_qimg is None:
+            return
+        cw, ch = self._canvas.width(), self._canvas.height()
+        pix = QPixmap.fromImage(self._current_qimg).scaled(
+            cw, ch, Qt.KeepAspectRatio, Qt.SmoothTransformation
+        )
+        self._canvas.setPixmap(pix)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._paint_frame()
+
+    # ── Audio via ffmpeg pipe → system audio ─────────────────────────────────
+
+    def _start_audio(self, offset: float):
+        """Play audio starting from *offset* seconds using QMediaPlayer.
+        All audio files are played in sequence; offset is applied across the
+        concatenated timeline so seeking mid-playlist works correctly.
+        """
+        self._stop_audio()
+        if not self._audio_files:
+            return
+        try:
+            from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
+
+            paths = [a["path"] for a in self._audio_files
+                     if os.path.exists(str(a.get("path", "")))]
+            if not paths:
+                return
+
+            # Pre-compute per-file durations so we can find which file
+            # contains the requested offset.
+            durations = [_get_audio_duration(p) for p in paths]
+
+            # Walk the playlist to find which file the offset falls in.
+            remaining = offset
+            start_index = 0
+            file_offset = 0.0
+            for i, dur in enumerate(durations):
+                if remaining < dur or i == len(durations) - 1:
+                    start_index = i
+                    file_offset = remaining
+                    break
+                remaining -= dur
+
+            self._audio_paths    = paths
+            self._audio_durations = durations
+            self._audio_index    = start_index
+            self._audio_offset   = offset
+
+            self._audio_proc = QMediaPlayer(self)
+            self._audio_proc.mediaStatusChanged.connect(self._on_audio_status)
+            url = QUrl.fromLocalFile(str(paths[start_index]))
+            self._audio_proc.setMedia(QMediaContent(url))
+            self._audio_proc.setPosition(int(file_offset * 1000))
+            self._audio_proc.setPlaybackRate(self._speed)
+            self._audio_proc.play()
+        except Exception as e:
+            print(f"Audio preview not available: {e}")
+            self._audio_proc = None
+
+    def _on_audio_status(self, status):
+        """Advance to the next audio file when the current one ends."""
+        try:
+            from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
+            if status != QMediaPlayer.EndOfMedia:
+                return
+            if not hasattr(self, "_audio_paths") or self._audio_proc is None:
+                return
+            self._audio_index += 1
+            if self._audio_index >= len(self._audio_paths):
+                return  # all songs done
+            next_path = self._audio_paths[self._audio_index]
+            url = QUrl.fromLocalFile(str(next_path))
+            self._audio_proc.setMedia(QMediaContent(url))
+            self._audio_proc.setPosition(0)
+            self._audio_proc.setPlaybackRate(self._speed)
+            self._audio_proc.play()
+        except Exception as e:
+            print(f"Audio advance error: {e}")
+
+    def _stop_audio(self):
+        if self._audio_proc is not None:
+            try:
+                self._audio_proc.stop()
+            except Exception:
+                pass
+            self._audio_proc = None
+
+    # ── Cleanup ───────────────────────────────────────────────────────────────
+
+    def closeEvent(self, event):
+        self._timer.stop()
+        self._stop_audio()
+        self._render_thread.stop()
+        self._render_thread.wait(2000)
+        super().closeEvent(event)
+
+
+class _SlideMarkerBar(QWidget):
+    """
+    Thin bar below the scrubber showing slide boundaries and the current
+    playhead. Click anywhere to seek.
+    """
+    seek_to = pyqtSignal(float)
+
+    def __init__(self, images: list, total_dur: float, parent=None):
+        super().__init__(parent)
+        self._images    = images
+        self._total_dur = max(total_dur, 1.0)
+        self._playhead  = 0.0
+        self.setFixedHeight(18)
+        self.setCursor(Qt.PointingHandCursor)
+        # Pre-compute slide start times
+        self._starts: list[float] = []
+        t = 0.0
+        for img in images:
+            self._starts.append(t)
+            t += float(img.get("duration", 5))
+
+    def set_playhead(self, t: float):
+        self._playhead = t
+        self.update()
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.fillRect(self.rect(), QColor(COLORS["bg_deep"]))
+        W = self.width()
+
+        # slide regions alternating tint
+        for i, st in enumerate(self._starts):
+            x1 = int(st / self._total_dur * W)
+            end = self._starts[i+1] if i+1 < len(self._starts) else self._total_dur
+            x2 = int(end / self._total_dur * W)
+            color = QColor(COLORS["bg_card"]) if i % 2 == 0 else QColor(COLORS["bg_hover"])
+            p.fillRect(x1, 0, x2-x1, self.height(), color)
+            # tick mark
+            p.setPen(QPen(QColor(COLORS["border_light"]), 1))
+            p.drawLine(x1, 0, x1, self.height())
+
+        # playhead
+        px = int(self._playhead / self._total_dur * W)
+        p.setPen(QPen(QColor(COLORS["accent"]), 2))
+        p.drawLine(px, 0, px, self.height())
+        p.end()
+
+    def mousePressEvent(self, event):
+        t = event.x() / max(self.width(), 1) * self._total_dur
+        self.seek_to.emit(max(0.0, min(self._total_dur, t)))
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() & Qt.LeftButton:
+            t = event.x() / max(self.width(), 1) * self._total_dur
+            self.seek_to.emit(max(0.0, min(self._total_dur, t)))
 
 
 # ── Crop Dialog ───────────────────────────────────────────────────────────────
