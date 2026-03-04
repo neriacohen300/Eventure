@@ -198,5 +198,29 @@
     "fits_for": "",
     "path": "{BASE_PATH}/Songs/AudioFiles/עילי בוטנר - מכתב לאחי.mp3",
     "github_path": "AudioFiles/עילי בוטנר - מכתב לאחי.mp3"
+  },
+  {
+    "name":"ילד של אבא",
+    "author": "מוקי",
+    "duration": 245,
+    "fits_for": "",
+    "path": "{BASE_PATH}/Songs/AudioFiles/מוקי - ילד של אבא.mp3",
+    "github_path": "AudioFiles/מוקי - ילד של אבא.mp3"
+  },
+  {
+    "name":"מלך העולם",
+    "author": "שלמה ארצי",
+    "duration": 163,
+    "fits_for": "",
+    "path": "{BASE_PATH}/Songs/AudioFiles/שלמה ארצי - מלך העולם.mp3",
+    "github_path": "AudioFiles/שלמה ארצי - מלך העולם.mp3"
+  },
+  {
+    "name":"יוצא לאור",
+    "author": "אהוד בנאי",
+    "duration": 266,
+    "fits_for": "",
+    "path": "{BASE_PATH}/Songs/AudioFiles/אהוד בנאי - יוצא לאור.mp3",
+    "github_path": "AudioFiles/אהוד בנאי - יוצא לאור.mp3"
   }
 ]
