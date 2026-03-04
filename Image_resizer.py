@@ -136,6 +136,7 @@ def process_image(
     text: str,
     rotation: int,
     text_on_kb: bool,
+    crop: tuple | None = None,
 ) -> str | None:
     TARGET_W, TARGET_H = 1920, 1080
     font = _get_font()   # lazy-loaded, safe in workers
@@ -146,13 +147,25 @@ def process_image(
             raise ValueError("Could not load image with EXIF correction.")
 
         # ── Normalise mode to RGB ─────────────────────────────────────────────
-        # GIFs open in palette mode "P"; some PNGs are "RGBA" or "L".
-        # Everything downstream expects plain "RGB".
         if original.mode != "RGB":
             original = original.convert("RGB")
 
         if rotation:
             original = original.rotate(rotation, expand=True)
+
+        # ── Apply crop (normalised 0-1 coords relative to post-rotation size) ─
+        if crop:
+            iw, ih = original.size
+            cx = int(crop[0] * iw)
+            cy = int(crop[1] * ih)
+            cw = max(1, int(crop[2] * iw))
+            ch = max(1, int(crop[3] * ih))
+            # Clamp to image bounds
+            cx = max(0, min(cx, iw - 1))
+            cy = max(0, min(cy, ih - 1))
+            cw = min(cw, iw - cx)
+            ch = min(ch, ih - cy)
+            original = original.crop((cx, cy, cx + cw, cy + ch))
 
         # ── Fit into 1920×1080 ────────────────────────────────────────────────
         orig_aspect = original.width / original.height

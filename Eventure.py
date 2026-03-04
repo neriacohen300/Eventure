@@ -28,14 +28,14 @@ from PyQt5.QtWidgets import (
     QStyledItemDelegate, QPushButton, QLabel, QFileDialog, QSlider,
     QStyle, QTableWidgetItem, QSpinBox, QHeaderView, QTableWidget,
     QLineEdit, QFrame, QScrollArea, QSizePolicy, QToolBar, QStatusBar,
-    QSplitter, QGridLayout, QToolButton, QMenu,
+    QSplitter, QGridLayout, QToolButton, QMenu, QRadioButton, QButtonGroup,
 )
 from PyQt5.QtCore import pyqtSlot
-from PyQt5.QtCore import Qt, QUrl, QSize, QProcess, QTimer, QThread, pyqtSignal, QEvent
+from PyQt5.QtCore import Qt, QUrl, QSize, QProcess, QTimer, QThread, pyqtSignal, QEvent, QPoint, QRect
 from PyQt5.QtGui import (
     QIcon, QFont, QPixmap, QTextCursor, QCursor, QTransform,
     QColor, QBrush, QImage, QPalette, QPainter, QLinearGradient,
-    QFontDatabase,
+    QFontDatabase, QPen, QPainterPath,
 )
 from PIL import Image, ExifTags
 from openpyxl import Workbook
@@ -591,7 +591,7 @@ def _copy_resource_folders(script_dir: Path, resources: list) -> None:
 
 _KB_FPS = 25
 
-def render_ken_burns_clip(image_path, effect, duration, output_path, rotation=0, text="", text_on_kb=True):
+def render_ken_burns_clip(image_path, effect, duration, output_path, rotation=0, text="", text_on_kb=True, crop=None):
     import cv2 as _cv2
     import numpy as _np
     import subprocess as _sp
@@ -625,12 +625,34 @@ def render_ken_burns_clip(image_path, effect, duration, output_path, rotation=0,
         return t * t * (3.0 - 2.0 * t)
 
     ZOOM = 1.10
-    src_w, src_h = int(W * ZOOM), int(H * ZOOM)
     img_arr = _np.array(img)
-    ih, iw = img_arr.shape[:2]
+    full_ih, full_iw = img_arr.shape[:2]
+
+    # ── If a crop is defined, compute the crop window in full-image pixels ────
+    # We do NOT crop the array. Instead we restrict all pan/zoom rects to stay
+    # inside the crop region, which preserves image resolution for KB rendering.
+    if crop:
+        crop_x = int(crop[0] * full_iw)
+        crop_y = int(crop[1] * full_ih)
+        crop_w = max(1, int(crop[2] * full_iw))
+        crop_h = max(1, int(crop[3] * full_ih))
+        crop_x = max(0, min(crop_x, full_iw - crop_w))
+        crop_y = max(0, min(crop_y, full_ih - crop_h))
+        # Work in the cropped coordinate space
+        iw, ih = crop_w, crop_h
+        ox, oy = crop_x, crop_y   # offsets into full image
+    else:
+        iw, ih = full_iw, full_ih
+        ox, oy = 0, 0
+
+    # Scale the crop region up to cover W*ZOOM × H*ZOOM
+    src_w, src_h = int(W * ZOOM), int(H * ZOOM)
     scale_cov = max(src_w / iw, src_h / ih)
     new_iw, new_ih = int(iw * scale_cov), int(ih * scale_cov)
-    resized = _cv2.resize(img_arr, (new_iw, new_ih), interpolation=_cv2.INTER_LANCZOS4)
+
+    # Extract & resize only the crop region (avoids huge upscale of full image)
+    region = img_arr[oy:oy + ih, ox:ox + iw]
+    resized = _cv2.resize(region, (new_iw, new_ih), interpolation=_cv2.INTER_LANCZOS4)
     cx, cy = (new_iw - src_w) // 2, (new_ih - src_h) // 2
     src = resized[cy:cy + src_h, cx:cx + src_w].copy()
 
@@ -1075,7 +1097,6 @@ class _FilmstripCanvas(QWidget):
         p.end()
 
     def _draw_card(self, p: QPainter, idx: int, x: int, y: int, dragging: bool):
-        from PyQt5.QtGui import QPainterPath
         img       = self.images[idx]
         is_second = img.get("is_second_image", False)
         is_sel    = (idx == self._selected_idx and not dragging)
@@ -1462,7 +1483,6 @@ class _WrappingFilmstripCanvas(QWidget):
                 continue
             cx, cy = self._card_pos(i)
             self._draw_card(p, i, cx, cy, dragging=False)
-
         # Drop indicator: blue line between cards
         if self._drag_idx >= 0 and 0 <= self._drop_idx <= len(self.images):
             real_di = self._drop_idx
@@ -1495,7 +1515,6 @@ class _WrappingFilmstripCanvas(QWidget):
         p.end()
 
     def _draw_card(self, p: QPainter, idx: int, x: int, y: int, dragging: bool):
-        from PyQt5.QtGui import QPainterPath
         img       = self.images[idx]
         is_second = img.get("is_second_image", False)
         is_sel    = (idx == self._selected_idx and not dragging)
@@ -2075,6 +2094,9 @@ class SlideshowCreator(QMainWindow):
         btn_random   = _tb_btn("⤡ Shuffle")
         btn_random.clicked.connect(self.set_random_images_order)
 
+        btn_batch_dur = _tb_btn("⏱ Fit to Audio", "Auto-set slide durations to match audio length")
+        btn_batch_dur.clicked.connect(self.auto_calc_image_duration)
+
         sep2 = QFrame(); sep2.setFrameShape(QFrame.VLine)
         sep2.setStyleSheet(f"color: {COLORS['border']}; max-width: 1px;")
 
@@ -2084,7 +2106,7 @@ class SlideshowCreator(QMainWindow):
         btn_clear.clicked.connect(self.clear_project)
 
         for w in [btn_open, btn_save, btn_saveas, sep1,
-                  btn_pptx, btn_sort_new, btn_sort_old, btn_random,
+                  btn_pptx, btn_sort_new, btn_sort_old, btn_random, btn_batch_dur,
                   sep2, btn_info, btn_clear]:
             tb_layout.addWidget(w)
 
@@ -2122,7 +2144,7 @@ class SlideshowCreator(QMainWindow):
         row = item.row()
         if col == 2:
             try:
-                val = int(item.text())
+                val = round(float(item.text()), 1)
                 if val < 2 or val > 600:
                     raise ValueError(self.tr("duration_out_of_range_error"))
                 self.images[row]["duration"] = val
@@ -2130,7 +2152,8 @@ class SlideshowCreator(QMainWindow):
                     self.images[row]["transition_duration"] = val - 1
                     self.update_image_table()
             except ValueError:
-                item.setText(str(self.images[row]["duration"]))
+                cur = self.images[row]["duration"]
+                item.setText(str(int(cur)) if float(cur) == int(float(cur)) else f"{float(cur):.1f}")
         elif col == 5:
             self.images[row]["text"] = item.text()
         elif col == 6:
@@ -2301,7 +2324,9 @@ class SlideshowCreator(QMainWindow):
         filename_item.setData(Qt.UserRole, img.get("is_second_image", False))
         filename_item.setFlags(filename_item.flags() & ~Qt.ItemIsEditable)
 
-        duration_item = QTableWidgetItem(str(img.get("duration", 5)))
+        dur_val = img.get("duration", 5)
+        dur_display = str(int(dur_val)) if float(dur_val) == int(float(dur_val)) else f"{float(dur_val):.1f}"
+        duration_item = QTableWidgetItem(dur_display)
 
         transition_cb = QComboBox()
         transition_cb.addItems(self.transitions_types)
@@ -2347,16 +2372,40 @@ class SlideshowCreator(QMainWindow):
         up_btn.setProperty("action", "icon")
         dn_btn.setProperty("action", "icon")
         del_btn.setProperty("action", "icon")
+
+        # Crop button — stands out visually; glows orange when a crop is active
+        crop_btn = QPushButton("✂ Crop")
+        crop_btn.setFixedHeight(22)
+        if img.get("crop"):
+            crop_btn.setStyleSheet(
+                f"QPushButton {{ background: {COLORS['warning']}; color: #1a1a1a; "
+                f"border: none; border-radius: 4px; padding: 2px 7px; "
+                f"font-size: 11px; font-weight: 700; }}"
+                f"QPushButton:hover {{ background: #ffc53d; }}"
+            )
+            crop_btn.setToolTip("Edit crop  (crop active)")
+        else:
+            crop_btn.setStyleSheet(
+                f"QPushButton {{ background: {COLORS['bg_hover']}; color: {COLORS['text_secondary']}; "
+                f"border: 1px solid {COLORS['border_light']}; border-radius: 4px; "
+                f"padding: 2px 7px; font-size: 11px; font-weight: 600; }}"
+                f"QPushButton:hover {{ background: {COLORS['accent_dim']}; color: {COLORS['accent']}; "
+                f"border-color: {COLORS['accent']}; }}"
+            )
+            crop_btn.setToolTip("Crop image")
+
         del_btn.setStyleSheet(f"QPushButton {{ color: {COLORS['danger']}; background: transparent; border: none; padding: 3px 6px; border-radius: 4px; }}"
                               f"QPushButton:hover {{ background: rgba(247,90,90,0.15); }}")
         up_btn.clicked.connect(self.move_image_up)
         dn_btn.clicked.connect(self.move_image_down)
         del_btn.clicked.connect(self.delete_image)
+        crop_btn.clicked.connect(lambda _, r=row: self.open_crop_dialog(r))
 
         btn_widget = QWidget()
         btn_layout = QHBoxLayout(btn_widget)
         btn_layout.addWidget(up_btn)
         btn_layout.addWidget(dn_btn)
+        btn_layout.addWidget(crop_btn)
         btn_layout.addWidget(del_btn)
         btn_layout.setContentsMargins(4, 0, 4, 0)
         btn_layout.setSpacing(2)
@@ -2724,7 +2773,7 @@ class SlideshowCreator(QMainWindow):
 
     # ── Preview ───────────────────────────────────────────────────────────────
 
-    def _load_pixmap(self, path: str) -> QPixmap:
+    def _load_pixmap(self, path: str, crop: tuple | None = None) -> QPixmap:
         try:
             img = Image.open(path)
             try:
@@ -2736,6 +2785,13 @@ class SlideshowCreator(QMainWindow):
                     elif val == 8: img = img.rotate(90,  expand=True)
             except Exception:
                 pass
+            if crop:
+                iw, ih = img.size
+                cx = max(0, int(crop[0] * iw))
+                cy = max(0, int(crop[1] * ih))
+                cw = max(1, min(int(crop[2] * iw), iw - cx))
+                ch = max(1, min(int(crop[3] * ih), ih - cy))
+                img = img.crop((cx, cy, cx + cw, cy + ch))
             img  = img.convert("RGBA")
             data = img.tobytes("raw", "RGBA")
             qimg = QImage(data, img.width, img.height, QImage.Format_RGBA8888)
@@ -2754,7 +2810,7 @@ class SlideshowCreator(QMainWindow):
     def update_preview_with_row(self, row: int):
         if 0 <= row < len(self.images):
             img_data = self.images[row]
-            pixmap   = self._load_pixmap(img_data["path"])
+            pixmap   = self._load_pixmap(img_data["path"], crop=img_data.get("crop"))
             if not pixmap.isNull():
                 rotation = img_data.get("rotation", 0)
                 if rotation:
@@ -2793,12 +2849,97 @@ class SlideshowCreator(QMainWindow):
                 f.write(f"{audio['path']}\n")
             for img in self.images:
                 text = img.get("text", "").replace("\n", "\\n")
+                crop = img.get("crop")
+                crop_str = f"{crop[0]:.6f}|{crop[1]:.6f}|{crop[2]:.6f}|{crop[3]:.6f}" if crop else "none"
                 f.write(
                     f"{img['path']},{img.get('duration', 5)},{img.get('transition', 'fade')},"
                     f"{img.get('transition_duration', 1)},{text},{img.get('rotation', 0)},"
                     f"{img.get('is_second_image', False)},{img.get('date', '')},"
-                    f"{img.get('ken_burns', 'none')},{img.get('text_on_kb', True)}\n"
+                    f"{img.get('ken_burns', 'none')},{img.get('text_on_kb', True)},"
+                    f"{crop_str}\n"
                 )
+
+    # ── Recent Files ──────────────────────────────────────────────────────────
+
+    _RECENT_MAX  = 10
+    _RECENT_FILE = BASEPATH / "recent_projects.json"
+
+    def _load_recent(self) -> list:
+        try:
+            with open(self._RECENT_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            # Filter out paths that no longer exist on disk
+            return [p for p in data if isinstance(p, str) and os.path.exists(p)]
+        except (FileNotFoundError, json.JSONDecodeError):
+            return []
+
+    def _save_recent(self, recent: list) -> None:
+        try:
+            with open(self._RECENT_FILE, "w", encoding="utf-8") as f:
+                json.dump(recent[:self._RECENT_MAX], f, ensure_ascii=False, indent=2)
+        except OSError as e:
+            print(f"Could not save recent projects list: {e}")
+
+    def _push_recent(self, path: str) -> None:
+        """Add *path* to the top of the recent list and persist it."""
+        recent = self._load_recent()
+        try:
+            recent.remove(path)
+        except ValueError:
+            pass
+        recent.insert(0, path)
+        self._save_recent(recent)
+        self._rebuild_recent_menu()
+
+    def _rebuild_recent_menu(self) -> None:
+        """Repopulate the Recent Projects submenu from disk."""
+        if not hasattr(self, "recent_menu"):
+            return
+        self.recent_menu.clear()
+        recent = self._load_recent()
+        if not recent:
+            empty_action = QAction("(no recent projects)", self)
+            empty_action.setEnabled(False)
+            self.recent_menu.addAction(empty_action)
+            return
+        for path in recent:
+            name = os.path.basename(path)
+            display = f"{name}  —  {os.path.dirname(path)}"
+            action = QAction(display, self)
+            action.setData(path)
+            action.triggered.connect(lambda checked, p=path: self._open_recent(p))
+            self.recent_menu.addAction(action)
+        self.recent_menu.addSeparator()
+        clear_action = QAction("Clear Recent Projects", self)
+        clear_action.triggered.connect(self._clear_recent)
+        self.recent_menu.addAction(clear_action)
+
+    def _open_recent(self, path: str) -> None:
+        if not os.path.exists(path):
+            QMessageBox.warning(
+                self, "File Not Found",
+                f"The project file no longer exists:\n{path}\n\nIt will be removed from the recent list."
+            )
+            recent = self._load_recent()
+            try:
+                recent.remove(path)
+            except ValueError:
+                pass
+            self._save_recent(recent)
+            self._rebuild_recent_menu()
+            return
+        self._run_in_thread(
+            target=lambda: self._parse_project_file(path),
+            on_success=lambda result: self._apply_loaded_project(result, path),
+            on_error=lambda e: QMessageBox.critical(
+                self, self.tr("error"), f"Failed to load project:\n{e}"
+            ),
+            status_msg=f"Loading {os.path.basename(path)}…",
+        )
+
+    def _clear_recent(self) -> None:
+        self._save_recent([])
+        self._rebuild_recent_menu()
 
     def save_project(self):
         if self.loaded_project:
@@ -2813,22 +2954,161 @@ class SlideshowCreator(QMainWindow):
         if file_name:
             self._write_project_file(file_name)
             self.loaded_project = file_name
+            self._push_recent(file_name)
 
     def load_project(self):
         file_name, _ = QFileDialog.getOpenFileName(
             self, "Load Project", "", "Project Files (*.slideshow);;All Files (*)"
         )
-        if file_name:
-            self._load_project_from_path(file_name)
+        if not file_name:
+            return
+        self._run_in_thread(
+            target=lambda: self._parse_project_file(file_name),
+            on_success=lambda result: self._apply_loaded_project(result, file_name),
+            on_error=lambda e: QMessageBox.critical(
+                self, self.tr("error"), f"Failed to load project:\n{e}"
+            ),
+            status_msg=f"Loading {os.path.basename(file_name)}…",
+        )
 
     def import_pptx(self):
         file_name, _ = QFileDialog.getOpenFileName(
             self, "Select a PowerPoint file", "", "PowerPoint files (*.pptx;*.pptm);;All Files (*)"
         )
-        if file_name:
-            slideshow_file = extract_pptx_content_to_slideshow_file(file_name)
-            if slideshow_file:
-                self._load_project_from_path(slideshow_file)
+        if not file_name:
+            return
+        self._run_in_thread(
+            target=lambda: extract_pptx_content_to_slideshow_file(file_name),
+            on_success=lambda slideshow_file: (
+                self._load_project_from_path(slideshow_file) if slideshow_file else None
+            ),
+            on_error=lambda e: QMessageBox.critical(
+                self, self.tr("error"), f"Failed to import PPTX:\n{e}"
+            ),
+            status_msg=f"Importing {os.path.basename(file_name)}…",
+        )
+
+    # ── Threaded task runner ──────────────────────────────────────────────────
+
+    def _run_in_thread(self, target, on_success, on_error, status_msg="Working…"):
+        """
+        Run *target* on a background QThread.
+        When it finishes, call *on_success(result)* or *on_error(exception)*
+        back on the main thread.  Shows a non-blocking status message while busy.
+        """
+        # Show busy indicator in the status bar
+        self.statusBar().showMessage(f"  ⏳  {status_msg}")
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+
+        class _Worker(QThread):
+            done    = pyqtSignal(object)   # carries the return value
+            failed  = pyqtSignal(Exception)
+
+            def __init__(self, fn):
+                super().__init__()
+                self._fn = fn
+
+            def run(self):
+                try:
+                    self.done.emit(self._fn())
+                except Exception as exc:
+                    self.failed.emit(exc)
+
+        worker = _Worker(target)
+
+        def _on_done(result):
+            QApplication.restoreOverrideCursor()
+            self.statusBar().clearMessage()
+            try:
+                on_success(result)
+            except Exception as exc:
+                on_error(exc)
+            # Keep the worker alive until this slot returns
+            worker.deleteLater()
+
+        def _on_failed(exc):
+            QApplication.restoreOverrideCursor()
+            self.statusBar().clearMessage()
+            on_error(exc)
+            worker.deleteLater()
+
+        worker.done.connect(_on_done)
+        worker.failed.connect(_on_failed)
+
+        # Store reference so GC doesn't collect the thread before it finishes
+        if not hasattr(self, "_bg_workers"):
+            self._bg_workers = []
+        self._bg_workers.append(worker)
+        worker.finished.connect(lambda: self._bg_workers.remove(worker) if worker in self._bg_workers else None)
+
+        worker.start()
+
+    # ── Project parse (runs in background thread) ─────────────────────────────
+
+    @staticmethod
+    def _parse_crop(s: str) -> tuple | None:
+        """Parse a crop string like '0.1|0.05|0.8|0.9' → tuple, or None."""
+        if not s or s.strip().lower() in ("none", ""):
+            return None
+        try:
+            vals = [float(v) for v in s.strip().split("|")]
+            if len(vals) == 4:
+                return tuple(vals)
+        except ValueError:
+            pass
+        return None
+
+    def _parse_project_file(self, file_name: str) -> dict:
+        """
+        Parse a .slideshow file entirely off the UI thread.
+        Returns a dict with 'audio_files' and 'images' keys.
+        Raises on any error — the caller's on_error handler will show the dialog.
+        """
+        with open(file_name, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        count = int(lines[0].strip())
+        if len(lines) < count + 1:
+            raise ValueError("Project file is truncated.")
+        audio_files = [{"path": lines[i + 1].strip()} for i in range(count)]
+        images = []
+        for line in lines[count + 1:]:
+            parts = line.strip().split(",")
+            if len(parts) < 8:
+                continue
+            path        = parts[0]
+            dur         = parts[1]
+            transition  = parts[2]
+            trans_dur   = parts[3]
+            text        = parts[4]
+            rotation    = parts[5]
+            is_second   = parts[6]
+            date        = parts[7] if len(parts) > 7 else ""
+            ken_burns   = parts[8].strip() if len(parts) > 8 else "none"
+            crop        = self._parse_crop(parts[10]) if len(parts) > 10 else None
+            images.append({
+                "path":                path,
+                "duration":            float(dur),
+                "transition":          transition,
+                "transition_duration": self.default_transition_duration,
+                "text":                text.replace("\\n", "\n"),
+                "rotation":            int(rotation),
+                "is_second_image":     is_second.strip().lower() == "true",
+                "date":                date,
+                "ken_burns":           ken_burns,
+                "crop":                crop,
+            })
+        return {"audio_files": audio_files, "images": images}
+
+    def _apply_loaded_project(self, parsed: dict, file_name: str):
+        """
+        Apply a parsed project result to the UI.  Must run on the main thread.
+        """
+        self.audio_files = parsed["audio_files"]
+        self.images      = parsed["images"]
+        self.update_image_table()
+        self.update_audio_table()
+        self.loaded_project = file_name
+        self._push_recent(file_name)
 
     def _load_project_from_path(self, file_name: str):
         try:
@@ -2852,16 +3132,18 @@ class SlideshowCreator(QMainWindow):
                 is_second    = parts[6]
                 date         = parts[7] if len(parts) > 7 else ""
                 ken_burns    = parts[8].strip() if len(parts) > 8 else "none"
+                crop         = self._parse_crop(parts[10]) if len(parts) > 10 else None
                 self.images.append({
                     "path":                path,
-                    "duration":            int(dur),
+                    "duration":            float(dur),
                     "transition":          transition,
                     "transition_duration": self.default_transition_duration,
                     "text":                text.replace("\\n", "\n"),
                     "rotation":            int(rotation),
                     "is_second_image":     is_second.strip().lower() == "true",
                     "date":                date,
-                    "ken_burns":           ken_burns
+                    "ken_burns":           ken_burns,
+                    "crop":                crop,
                 })
             self.update_image_table()
             self.update_audio_table()
@@ -2948,14 +3230,139 @@ class SlideshowCreator(QMainWindow):
         self.update_image_table()
 
     def auto_calc_image_duration(self):
+        """
+        Smart batch-duration dialog.
+        Shows total audio, total slides, and a live preview of
+        the per-slide duration before committing anything.
+        """
+        if not self.images:
+            QMessageBox.warning(self, self.tr("error_no_images_title"), self.tr("error_no_images"))
+            return
+
         total_audio = self._total_audio_duration()
-        n = len(self.images)
+        n_all       = len(self.images)
+        n_primary   = sum(1 for img in self.images if not img.get("is_second_image"))
+
+        # ── Dialog ────────────────────────────────────────────────────────────
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Batch Duration from Audio")
+        dlg.setMinimumWidth(380)
+        layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(14)
+
+        # Title
+        title_lbl = QLabel("⏱  Batch Duration from Audio")
+        title_lbl.setStyleSheet(
+            f"font-size: 15px; font-weight: 700; color: {COLORS['text_primary']};"
+        )
+        layout.addWidget(title_lbl)
+        layout.addWidget(_make_divider())
+
+        # Info rows
+        def _info(label, value):
+            row = QHBoxLayout()
+            l = QLabel(label)
+            l.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
+            v = QLabel(value)
+            v.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 13px; font-weight: 600;")
+            v.setAlignment(Qt.AlignRight)
+            row.addWidget(l); row.addStretch(); row.addWidget(v)
+            layout.addLayout(row)
+
+        _info("Total audio duration:", format_time_hms(total_audio))
+        _info("Total slides:", str(n_all))
+        _info("Primary slides (excl. second-image):", str(n_primary))
+        layout.addWidget(_make_divider())
+
+        # Scope radio
+        scope_lbl = QLabel("Apply to:")
+        scope_lbl.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
+        layout.addWidget(scope_lbl)
+
+        rb_all     = QRadioButton(f"All {n_all} slides equally")
+        rb_primary = QRadioButton(f"Primary slides only ({n_primary} slides, skip second-image)")
+        rb_all.setChecked(True)
+        for rb in (rb_all, rb_primary):
+            rb.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 12px;")
+        layout.addWidget(rb_all)
+        layout.addWidget(rb_primary)
+        layout.addWidget(_make_divider())
+
+        # Tail reserve spinner
+        tail_row = QHBoxLayout()
+        tail_lbl = QLabel("Reserve at end (seconds):")
+        tail_lbl.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
+        tail_spin = QSpinBox()
+        tail_spin.setRange(0, 30)
+        tail_spin.setValue(2)
+        tail_spin.setFixedWidth(70)
+        tail_row.addWidget(tail_lbl); tail_row.addStretch(); tail_row.addWidget(tail_spin)
+        layout.addLayout(tail_row)
+
+        # Live preview label
+        preview_lbl = QLabel()
+        preview_lbl.setStyleSheet(
+            f"background: {COLORS['bg_card']}; border: 1px solid {COLORS['border']}; "
+            f"border-radius: 6px; padding: 10px 14px; "
+            f"color: {COLORS['accent']}; font-size: 13px; font-weight: 700;"
+        )
+        preview_lbl.setAlignment(Qt.AlignCenter)
+        layout.addWidget(preview_lbl)
+
+        def _update_preview():
+            tail   = tail_spin.value()
+            usable = max(0.0, total_audio - tail)
+            n      = n_primary if rb_primary.isChecked() else n_all
+            if n == 0:
+                preview_lbl.setText("No slides to distribute.")
+                return
+            new_dur = max(2, int(usable / n))
+            preview_lbl.setText(
+                f"Each slide → {new_dur} s   "
+                f"({format_time_hms(usable)} ÷ {n} slides)"
+            )
+
+        rb_all.toggled.connect(lambda _: _update_preview())
+        rb_primary.toggled.connect(lambda _: _update_preview())
+        tail_spin.valueChanged.connect(lambda _: _update_preview())
+        _update_preview()
+
+        # Buttons
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        cancel_btn = _styled_btn("Cancel", "")
+        apply_btn  = _styled_btn("✔  Apply", "primary")
+        apply_btn.setFixedHeight(36)
+        cancel_btn.clicked.connect(dlg.reject)
+        apply_btn.clicked.connect(dlg.accept)
+        btn_row.addStretch()
+        btn_row.addWidget(cancel_btn)
+        btn_row.addWidget(apply_btn)
+        layout.addLayout(btn_row)
+
+        if dlg.exec_() != QDialog.Accepted:
+            return
+
+        # ── Apply ─────────────────────────────────────────────────────────────
+        tail   = tail_spin.value()
+        usable = max(0.0, total_audio - tail)
+        apply_primary_only = rb_primary.isChecked()
+        targets = (
+            [img for img in self.images if not img.get("is_second_image")]
+            if apply_primary_only else self.images
+        )
+        n = len(targets)
         if n == 0:
             return
-        new_dur = int((total_audio - 2) / n)
-        for img in self.images:
+        new_dur = max(2, int(usable / n))
+        for img in targets:
             img["duration"] = new_dur
         self.update_image_table()
+        self.statusBar().showMessage(
+            f"  ✔  Set {n} slides to {new_dur} s each  "
+            f"(total {format_time_hms(n * new_dur)})", 4000
+        )
 
     # ── Premiere Export ───────────────────────────────────────────────────────
 
@@ -3055,6 +3462,31 @@ class SlideshowCreator(QMainWindow):
         os.makedirs(dst_folder, exist_ok=True)
         name = os.path.basename(self.premiere_project_folder) + ".prproj"
         shutil.copy(str(src), os.path.join(dst_folder, name))
+
+    # ── Crop ──────────────────────────────────────────────────────────────────
+
+    def open_crop_dialog(self, row: int):
+        if not (0 <= row < len(self.images)):
+            return
+        img = self.images[row]
+        dlg = CropDialog(
+            image_path=img["path"],
+            rotation=img.get("rotation", 0),
+            existing_crop=img.get("crop") or None,
+            parent=self,
+        )
+        if dlg.exec_() == QDialog.Accepted:
+            result = dlg.get_result()
+            # If the result is a full-image crop (within 0.5% on all sides), clear it
+            if result and (result[0] < 0.005 and result[1] < 0.005
+                           and result[2] > 0.99 and result[3] > 0.99):
+                result = None
+            img["crop"] = result
+            # Refresh the row so the ✂ button colour updates
+            self.image_table.blockSignals(True)
+            self._populate_row(row, img)
+            self.image_table.blockSignals(False)
+            self.update_preview_with_row(row)
 
     # ── Easy Text ─────────────────────────────────────────────────────────────
 
@@ -3240,6 +3672,12 @@ class SlideshowCreator(QMainWindow):
         self.save_action        = _action("action_save_project",    self.save_project,        self.file_menu,   "save")
         self.save_as_action     = _action("action_save_project_as", self.save_project_as,     self.file_menu,   "save_as")
         self.clear_action       = _action("action_clear_project",   self.clear_project,       self.file_menu)
+
+        # ── Recent Projects submenu ────────────────────────────────────────
+        self.file_menu.addSeparator()
+        self.recent_menu = self.file_menu.addMenu("Recent Projects")
+        self._rebuild_recent_menu()
+        self.file_menu.addSeparator()
         self.export_slideshow_action = _action("action_export_slideshow", self.export_slideshow,           self.export_menu)
         self.export_premiere_action  = _action("action_export_premiere",  self.export_premiere_slideshow,  self.export_menu)
 
@@ -3326,12 +3764,15 @@ class ImageProcessingWorker(QThread):
         text       = self.images[i]["text"]
         has_kb     = self.images[i].get("ken_burns", "none") != "none"
         text_on_static = not has_kb
+        crop       = self.images[i].get("crop")
         try:
             original = Image.open(img_path)
             original.verify()
             original = Image.open(img_path)
             if original.size != (self.common_width, self.common_height):
-                new_path = Image_resizer.process_image(img_path, self.output_folder, text, rotation, text_on_static)
+                new_path = Image_resizer.process_image(
+                    img_path, self.output_folder, text, rotation, text_on_static, crop=crop
+                )
                 return i, new_path
         except Exception as e:
             print(f"Corrupted image {img_path}: {e}")
@@ -3376,6 +3817,7 @@ class ImageProcessingWorker(QThread):
             success = render_ken_burns_clip(
                 img["path"], effect, clip_duration, kb_out,
                 text=img.get("text", ""), text_on_kb=text_on_static,
+                crop=img.get("crop"),
             )
             return i, kb_out, success
 
@@ -3436,6 +3878,399 @@ class ImageProcessingPremiereWorker(QThread):
         except Exception as e:
             print(f"XML generation error: {e}")
         self.finished.emit()
+
+
+# ── Crop Dialog ───────────────────────────────────────────────────────────────
+
+class CropCanvas(QWidget):
+    """
+    Displays an image and lets the user drag a crop rectangle over it.
+    The crop rect is stored internally in *pixel* coordinates relative to the
+    displayed (scaled) image, but converted to/from normalised 0-1 coords for
+    the outside world so it is resolution-independent.
+    """
+    crop_changed = pyqtSignal()
+
+    _HANDLE  = 10          # handle square half-size in px
+    _MIN_DIM = 20          # minimum crop size in display pixels
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMouseTracking(True)
+        self.setCursor(Qt.CrossCursor)
+
+        self._pixmap:   QPixmap | None = None   # scaled-to-widget pixmap
+        self._img_rect  = None                  # QRect: where the image sits inside the widget
+        self._crop_rect = None                  # QRect: current crop in image-space pixels
+        self._orig_w = 0
+        self._orig_h = 0
+
+        # drag state
+        self._drag_mode   = None   # "new" | "move" | "tl"|"tr"|"bl"|"br"|"t"|"b"|"l"|"r"
+        self._drag_origin = None
+        self._drag_rect_start = None
+
+    # ── public API ────────────────────────────────────────────────────────────
+
+    def load_image(self, path: str, rotation: int = 0,
+                   norm_crop: tuple | None = None):
+        """Load *path*, apply EXIF + manual rotation, set initial crop."""
+        try:
+            img = Image.open(path)
+            # EXIF
+            try:
+                exif = img._getexif() if hasattr(img, "_getexif") else None
+                _tag = next((k for k, v in ExifTags.TAGS.items() if v == "Orientation"), None)
+                if exif and _tag:
+                    v = exif.get(_tag)
+                    if v == 3:   img = img.rotate(180, expand=True)
+                    elif v == 6: img = img.rotate(270, expand=True)
+                    elif v == 8: img = img.rotate(90,  expand=True)
+            except Exception:
+                pass
+            if rotation:
+                img = img.rotate(rotation, expand=True)
+            img = img.convert("RGB")
+            self._orig_w, self._orig_h = img.size
+
+            # Convert to QPixmap
+            data  = img.tobytes("raw", "RGB")
+            qimg  = QImage(data, img.width, img.height, img.width * 3, QImage.Format_RGB888)
+            self._pixmap = QPixmap.fromImage(qimg)
+        except Exception as e:
+            print(f"CropCanvas load error: {e}")
+            self._pixmap = None
+            return
+
+        if norm_crop:
+            x  = int(norm_crop[0] * self._orig_w)
+            y  = int(norm_crop[1] * self._orig_h)
+            w  = int(norm_crop[2] * self._orig_w)
+            h  = int(norm_crop[3] * self._orig_h)
+            self._crop_rect = QRect(x, y, w, h)
+        else:
+            self._crop_rect = QRect(0, 0, self._orig_w, self._orig_h)
+
+        self._layout_image()
+        self.update()
+
+    def get_norm_crop(self) -> tuple | None:
+        """Return (x, y, w, h) in 0-1 coords, or None if no image."""
+        if self._crop_rect is None or self._orig_w == 0:
+            return None
+        r = self._crop_rect.normalized()
+        return (
+            max(0.0, r.x()      / self._orig_w),
+            max(0.0, r.y()      / self._orig_h),
+            min(1.0, r.width()  / self._orig_w),
+            min(1.0, r.height() / self._orig_h),
+        )
+
+    def reset_crop(self):
+        if self._orig_w:
+            self._crop_rect = QRect(0, 0, self._orig_w, self._orig_h)
+            self.crop_changed.emit()
+            self.update()
+
+    # ── layout ────────────────────────────────────────────────────────────────
+
+    def _layout_image(self):
+        if not self._pixmap:
+            return
+        pw, ph = self.width(), self.height()
+        iw, ih = self._pixmap.width(), self._pixmap.height()
+        scale   = min(pw / iw, ph / ih)
+        dw, dh  = int(iw * scale), int(ih * scale)
+        ox, oy  = (pw - dw) // 2, (ph - dh) // 2
+        self._img_rect   = QRect(ox, oy, dw, dh)
+        self._scale      = scale   # orig → display
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._layout_image()
+        self.update()
+
+    # ── coordinate helpers ────────────────────────────────────────────────────
+
+    def _to_display(self, orig_pt):
+        """QPoint in orig-image space → display space."""
+        r = self._img_rect
+        return QPoint(int(r.x() + orig_pt.x() * self._scale),
+                      int(r.y() + orig_pt.y() * self._scale))
+
+    def _to_orig(self, disp_pt):
+        """QPoint in display space → orig-image space (clamped)."""
+        r = self._img_rect
+        x = (disp_pt.x() - r.x()) / self._scale
+        y = (disp_pt.y() - r.y()) / self._scale
+        x = max(0, min(self._orig_w, x))
+        y = max(0, min(self._orig_h, y))
+        return QPoint(int(x), int(y))
+
+    def _display_crop(self) -> QRect | None:
+        if self._crop_rect is None or self._img_rect is None:
+            return None
+        c  = self._crop_rect.normalized()
+        tl = self._to_display(c.topLeft())
+        br = self._to_display(c.bottomRight())
+        return QRect(tl, br)
+
+    def _handle_rects(self, dc: QRect) -> dict:
+        h = self._HANDLE
+        cx = dc.center().x();  cy = dc.center().y()
+        return {
+            "tl": QRect(dc.left()  - h, dc.top()    - h, h*2, h*2),
+            "tr": QRect(dc.right() - h, dc.top()    - h, h*2, h*2),
+            "bl": QRect(dc.left()  - h, dc.bottom() - h, h*2, h*2),
+            "br": QRect(dc.right() - h, dc.bottom() - h, h*2, h*2),
+            "t":  QRect(cx - h,         dc.top()    - h, h*2, h*2),
+            "b":  QRect(cx - h,         dc.bottom() - h, h*2, h*2),
+            "l":  QRect(dc.left()  - h, cy          - h, h*2, h*2),
+            "r":  QRect(dc.right() - h, cy          - h, h*2, h*2),
+        }
+
+    def _hit_test(self, pos) -> str | None:
+        dc = self._display_crop()
+        if dc is None:
+            return None
+        for name, rect in self._handle_rects(dc).items():
+            if rect.contains(pos):
+                return name
+        if dc.contains(pos):
+            return "move"
+        return "new"
+
+    # ── painting ──────────────────────────────────────────────────────────────
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
+        p.fillRect(self.rect(), QColor(COLORS["bg_deep"]))
+
+        if not self._pixmap or not self._img_rect:
+            p.setPen(QColor(COLORS["text_muted"]))
+            p.drawText(self.rect(), Qt.AlignCenter, "No image")
+            p.end()
+            return
+
+        p.drawPixmap(self._img_rect, self._pixmap)
+
+        dc = self._display_crop()
+        if dc is None:
+            p.end()
+            return
+
+        # Dim outside crop
+        outer = self._img_rect
+        dim = QColor(0, 0, 0, 140)
+        p.fillRect(QRect(outer.left(), outer.top(),  outer.width(), dc.top() - outer.top()),   dim)
+        p.fillRect(QRect(outer.left(), dc.bottom(), outer.width(), outer.bottom() - dc.bottom()), dim)
+        p.fillRect(QRect(outer.left(), dc.top(),    dc.left() - outer.left(), dc.height()),    dim)
+        p.fillRect(QRect(dc.right(),   dc.top(),    outer.right() - dc.right(), dc.height()), dim)
+
+        # Crop border
+        pen = QPen(QColor(COLORS["accent"]), 2)
+        pen.setStyle(Qt.SolidLine)
+        p.setPen(pen)
+        p.setBrush(Qt.NoBrush)
+        p.drawRect(dc)
+
+        # Rule-of-thirds grid (subtle)
+        grid_pen = QPen(QColor(255, 255, 255, 55), 1, Qt.DashLine)
+        p.setPen(grid_pen)
+        for frac in (1/3, 2/3):
+            x = int(dc.left() + dc.width()  * frac)
+            y = int(dc.top()  + dc.height() * frac)
+            p.drawLine(x, dc.top(), x, dc.bottom())
+            p.drawLine(dc.left(), y, dc.right(), y)
+
+        # Handles
+        p.setPen(QPen(QColor(COLORS["accent"]), 1))
+        p.setBrush(QBrush(QColor("#FFFFFF")))
+        for rect in self._handle_rects(dc).values():
+            p.drawEllipse(rect)
+
+        p.end()
+
+    # ── mouse ─────────────────────────────────────────────────────────────────
+
+    def mousePressEvent(self, event):
+        if event.button() != Qt.LeftButton or not self._pixmap:
+            return
+        mode = self._hit_test(event.pos())
+        self._drag_mode   = mode
+        self._drag_origin = event.pos()
+        self._drag_rect_start = QRect(self._crop_rect) if self._crop_rect else None
+        if mode == "new":
+            orig = self._to_orig(event.pos())
+            self._crop_rect = QRect(orig, orig)
+        self.update()
+
+    def mouseMoveEvent(self, event):
+        if not self._pixmap:
+            return
+
+        # Cursor shape on hover
+        if not (event.buttons() & Qt.LeftButton):
+            hit = self._hit_test(event.pos())
+            cursors = {
+                "move": Qt.SizeAllCursor,
+                "tl": Qt.SizeFDiagCursor, "br": Qt.SizeFDiagCursor,
+                "tr": Qt.SizeBDiagCursor, "bl": Qt.SizeBDiagCursor,
+                "t":  Qt.SizeVerCursor,   "b":  Qt.SizeVerCursor,
+                "l":  Qt.SizeHorCursor,   "r":  Qt.SizeHorCursor,
+                "new": Qt.CrossCursor,
+            }
+            self.setCursor(cursors.get(hit, Qt.CrossCursor))
+            return
+
+        if self._drag_mode is None or self._drag_rect_start is None:
+            return
+
+        dx = int((event.x() - self._drag_origin.x()) / self._scale)
+        dy = int((event.y() - self._drag_origin.y()) / self._scale)
+        r  = QRect(self._drag_rect_start)
+
+        def _clamp(v, lo, hi): return max(lo, min(hi, v))
+        W, H = self._orig_w, self._orig_h
+
+        if self._drag_mode == "new":
+            orig = self._to_orig(event.pos())
+            start = self._to_orig(self._drag_origin)
+            self._crop_rect = QRect(start, orig).normalized()
+
+        elif self._drag_mode == "move":
+            nx = _clamp(r.x() + dx, 0, W - r.width())
+            ny = _clamp(r.y() + dy, 0, H - r.height())
+            self._crop_rect = QRect(nx, ny, r.width(), r.height())
+
+        else:
+            x1, y1, x2, y2 = r.left(), r.top(), r.right(), r.bottom()
+            if "l" in self._drag_mode:
+                x1 = _clamp(r.left() + dx, 0, x2 - self._MIN_DIM)
+            if "r" in self._drag_mode:
+                x2 = _clamp(r.right() + dx, x1 + self._MIN_DIM, W)
+            if "t" in self._drag_mode:
+                y1 = _clamp(r.top()  + dy, 0, y2 - self._MIN_DIM)
+            if "b" in self._drag_mode:
+                y2 = _clamp(r.bottom() + dy, y1 + self._MIN_DIM, H)
+            self._crop_rect = QRect(QPoint(x1, y1), QPoint(x2, y2))
+
+        self.crop_changed.emit()
+        self.update()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            if self._crop_rect:
+                self._crop_rect = self._crop_rect.normalized()
+            self._drag_mode = None
+            self.crop_changed.emit()
+            self.update()
+
+
+class CropDialog(QDialog):
+    """
+    Full crop editor.  Opens for one image at a time; returns the normalised
+    crop tuple (x, y, w, h) via get_result() after exec_() == Accepted.
+    """
+
+    def __init__(self, image_path: str, rotation: int = 0,
+                 existing_crop: tuple | None = None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("✂  Crop Image")
+        self.setMinimumSize(800, 600)
+        self.resize(1000, 700)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowMaximizeButtonHint)
+        self._result: tuple | None = None
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # ── Header bar ────────────────────────────────────────────────────────
+        header = QWidget()
+        header.setFixedHeight(48)
+        header.setStyleSheet(
+            f"background: {COLORS['toolbar_bg']}; border-bottom: 1px solid {COLORS['border']};"
+        )
+        hl = QHBoxLayout(header)
+        hl.setContentsMargins(16, 0, 16, 0)
+        hl.setSpacing(12)
+
+        title_lbl = QLabel("✂  Crop Image")
+        title_lbl.setStyleSheet(
+            f"color: {COLORS['text_primary']}; font-size: 14px; font-weight: 700;"
+        )
+        hint_lbl = QLabel(
+            "Drag to draw a new crop  •  Drag edges/corners to resize  •  Drag inside to move"
+        )
+        hint_lbl.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 11px;")
+
+        self._info_lbl = QLabel()
+        self._info_lbl.setStyleSheet(
+            f"color: {COLORS['accent']}; font-size: 12px; font-weight: 600; min-width: 220px;"
+        )
+        self._info_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
+        hl.addWidget(title_lbl)
+        hl.addWidget(hint_lbl)
+        hl.addStretch()
+        hl.addWidget(self._info_lbl)
+        root.addWidget(header)
+
+        # ── Canvas ────────────────────────────────────────────────────────────
+        self._canvas = CropCanvas()
+        self._canvas.crop_changed.connect(self._update_info)
+        root.addWidget(self._canvas, 1)
+
+        # ── Footer bar ────────────────────────────────────────────────────────
+        footer = QWidget()
+        footer.setFixedHeight(52)
+        footer.setStyleSheet(
+            f"background: {COLORS['toolbar_bg']}; border-top: 1px solid {COLORS['border']};"
+        )
+        fl = QHBoxLayout(footer)
+        fl.setContentsMargins(16, 0, 16, 0)
+        fl.setSpacing(10)
+
+        reset_btn  = _styled_btn("↺  Reset Crop", "")
+        cancel_btn = _styled_btn("Cancel", "")
+        apply_btn  = _styled_btn("✔  Apply Crop", "primary")
+        apply_btn.setFixedHeight(36)
+        reset_btn.setFixedHeight(36)
+        cancel_btn.setFixedHeight(36)
+
+        reset_btn.clicked.connect(self._canvas.reset_crop)
+        cancel_btn.clicked.connect(self.reject)
+        apply_btn.clicked.connect(self._accept)
+
+        fl.addWidget(reset_btn)
+        fl.addStretch()
+        fl.addWidget(cancel_btn)
+        fl.addWidget(apply_btn)
+        root.addWidget(footer)
+
+        # Load image last so the canvas has its size
+        self._canvas.load_image(image_path, rotation, existing_crop)
+        self._update_info()
+
+    def _update_info(self):
+        nc = self._canvas.get_norm_crop()
+        if nc is None:
+            self._info_lbl.setText("")
+            return
+        w = int(nc[2] * self._canvas._orig_w)
+        h = int(nc[3] * self._canvas._orig_h)
+        ar = f"{w/h:.2f}" if h else "—"
+        self._info_lbl.setText(f"  {w} × {h} px   ratio {ar}  ")
+
+    def _accept(self):
+        self._result = self._canvas.get_norm_crop()
+        self.accept()
+
+    def get_result(self) -> tuple | None:
+        """Returns (x, y, w, h) in 0-1 coords, or None if reset/cancelled."""
+        return self._result
 
 
 # ── Dialogs ───────────────────────────────────────────────────────────────────

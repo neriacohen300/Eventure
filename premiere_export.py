@@ -75,6 +75,16 @@ def process_single_image(
     if rotation:
         original = original.rotate(rotation, expand=True)
 
+    # Apply crop (normalised 0-1 coords, relative to post-rotation size)
+    crop = img_data.get("crop")
+    if crop:
+        iw, ih = original.size
+        cx = max(0, int(crop[0] * iw))
+        cy = max(0, int(crop[1] * ih))
+        cw = max(1, min(int(crop[2] * iw), iw - cx))
+        ch = max(1, min(int(crop[3] * ih), ih - cy))
+        original = original.crop((cx, cy, cx + cw, cy + ch))
+
     orig_aspect = original.width / original.height
     target_aspect = TARGET_W / TARGET_H
 
