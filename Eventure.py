@@ -48,7 +48,7 @@ import urllib.parse
 import hashlib
 import tempfile
 
-APP_VERSION = "1.0.6"
+APP_VERSION = "1.0.7"
 
 # ── GitHub Audio Library Config ───────────────────────────────────────────────
 GITHUB_AUDIO_USER   = "neriacohen300"
