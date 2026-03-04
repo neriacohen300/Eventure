@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Eventure — Slideshow Creator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:ital,wght@0,300;0,400;1,300&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0a0a0c;
+      --surface: #111115;
+      --border: rgba(255,255,255,0.07);
+      --text: #f0ede8;
+      --muted: #888;
+      --accent: #e8c547;
+      --accent2: #c4a030;
+      --grad: linear-gradient(135deg, #e8c547 0%, #f0a830 100%);
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'DM Sans', sans-serif;
+      font-weight: 300;
+      line-height: 1.7;
+      overflow-x: hidden;
+    }
+
+    /* ── NAV ── */
+    nav {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 1.2rem 4rem;
+      background: rgba(10,10,12,0.85);
+      backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-logo {
+      font-family: 'Syne', sans-serif;
+      font-weight: 800; font-size: 1.3rem;
+      letter-spacing: -0.02em;
+      color: var(--accent);
+    }
+    .nav-links { display: flex; gap: 2.5rem; }
+    .nav-links a {
+      color: var(--muted); text-decoration: none;
+      font-size: 0.9rem; letter-spacing: 0.04em;
+      text-transform: uppercase;
+      transition: color .25s;
+    }
+    .nav-links a:hover { color: var(--text); }
+    .nav-cta {
+      background: var(--grad);
+      color: #0a0a0c !important;
+      padding: 0.5rem 1.4rem;
+      border-radius: 2px;
+      font-weight: 600 !important;
+      color: #000 !important;
+      transition: opacity .2s !important;
+    }
+    .nav-cta:hover { opacity: 0.85; color: #000 !important; }
+
+    /* ── HERO ── */
+    .hero {
+      min-height: 100vh;
+      display: flex; flex-direction: column;
+      justify-content: center; align-items: flex-start;
+      padding: 8rem 4rem 4rem;
+      position: relative;
+      overflow: hidden;
+    }
+    .hero-bg {
+      position: absolute; inset: 0; z-index: 0;
+      background:
+        radial-gradient(ellipse 70% 60% at 80% 40%, rgba(232,197,71,0.08) 0%, transparent 60%),
+        radial-gradient(ellipse 50% 40% at 20% 80%, rgba(196,160,48,0.05) 0%, transparent 60%);
+    }
+    .hero-grid {
+      position: absolute; inset: 0; z-index: 0;
+      background-image:
+        linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
+      background-size: 60px 60px;
+      mask-image: radial-gradient(ellipse 80% 80% at 50% 50%, black, transparent);
+    }
+    .hero-content { position: relative; z-index: 1; max-width: 780px; }
+    .hero-badge {
+      display: inline-flex; align-items: center; gap: 0.5rem;
+      background: rgba(232,197,71,0.1);
+      border: 1px solid rgba(232,197,71,0.2);
+      color: var(--accent);
+      font-size: 0.75rem; letter-spacing: 0.12em;
+      text-transform: uppercase;
+      padding: 0.35rem 1rem;
+      border-radius: 2px;
+      margin-bottom: 2rem;
+      animation: fadeUp .6s ease both;
+    }
+    .hero-badge::before {
+      content: ''; width: 6px; height: 6px;
+      background: var(--accent);
+      border-radius: 50%;
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.3;} }
+
+    h1 {
+      font-family: 'Syne', sans-serif;
+      font-weight: 800;
+      font-size: clamp(3.5rem, 8vw, 7rem);
+      line-height: 0.95;
+      letter-spacing: -0.03em;
+      margin-bottom: 1.5rem;
+      animation: fadeUp .7s .1s ease both;
+    }
+    h1 span { color: var(--accent); }
+
+    .hero-sub {
+      font-size: 1.15rem;
+      color: var(--muted);
+      max-width: 520px;
+      margin-bottom: 3rem;
+      animation: fadeUp .7s .2s ease both;
+    }
+
+    .hero-btns {
+      display: flex; gap: 1rem; flex-wrap: wrap;
+      animation: fadeUp .7s .3s ease both;
+    }
+    .btn-primary {
+      background: var(--grad);
+      color: #0a0a0c;
+      padding: 0.9rem 2.2rem;
+      border-radius: 2px;
+      font-family: 'Syne', sans-serif;
+      font-weight: 700; font-size: 0.9rem;
+      letter-spacing: 0.04em; text-transform: uppercase;
+      text-decoration: none;
+      transition: transform .2s, box-shadow .2s;
+      box-shadow: 0 0 30px rgba(232,197,71,0.2);
+    }
+    .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 8px 40px rgba(232,197,71,0.3); }
+    .btn-secondary {
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 0.9rem 2.2rem;
+      border-radius: 2px;
+      font-family: 'Syne', sans-serif;
+      font-weight: 600; font-size: 0.9rem;
+      letter-spacing: 0.04em; text-transform: uppercase;
+      text-decoration: none;
+      transition: border-color .2s, background .2s;
+    }
+    .btn-secondary:hover { border-color: var(--accent); background: rgba(232,197,71,0.04); }
+
+    .hero-stats {
+      display: flex; gap: 3rem;
+      margin-top: 5rem;
+      padding-top: 3rem;
+      border-top: 1px solid var(--border);
+      animation: fadeUp .7s .45s ease both;
+    }
+    .stat-num {
+      font-family: 'Syne', sans-serif;
+      font-weight: 800; font-size: 2rem;
+      color: var(--accent);
+      letter-spacing: -0.02em;
+    }
+    .stat-label { font-size: 0.8rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(24px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ── SECTION SHARED ── */
+    section { padding: 6rem 4rem; }
+    .section-label {
+      font-size: 0.7rem; letter-spacing: 0.2em; text-transform: uppercase;
+      color: var(--accent); margin-bottom: 1rem;
+    }
+    h2 {
+      font-family: 'Syne', sans-serif;
+      font-weight: 800; font-size: clamp(2rem, 4vw, 3.2rem);
+      letter-spacing: -0.025em; line-height: 1.1;
+      margin-bottom: 1.2rem;
+    }
+    .section-desc { color: var(--muted); max-width: 480px; font-size: 1.05rem; }
+
+    /* ── FEATURES ── */
+    .features { background: var(--surface); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+    .features-header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 4rem; flex-wrap: wrap; gap: 2rem; }
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1px;
+      background: var(--border);
+      border: 1px solid var(--border);
+    }
+    .feature-card {
+      background: var(--surface);
+      padding: 2.5rem;
+      transition: background .25s;
+      position: relative;
+      overflow: hidden;
+    }
+    .feature-card::before {
+      content: '';
+      position: absolute; top: 0; left: 0; right: 0;
+      height: 2px;
+      background: var(--grad);
+      transform: scaleX(0);
+      transform-origin: left;
+      transition: transform .35s;
+    }
+    .feature-card:hover { background: rgba(232,197,71,0.03); }
+    .feature-card:hover::before { transform: scaleX(1); }
+    .feature-icon {
+      font-size: 2rem; margin-bottom: 1.2rem;
+      display: block;
+    }
+    .feature-title {
+      font-family: 'Syne', sans-serif;
+      font-weight: 700; font-size: 1.05rem;
+      margin-bottom: 0.6rem;
+    }
+    .feature-desc { color: var(--muted); font-size: 0.92rem; line-height: 1.6; }
+
+    /* ── HOW IT WORKS ── */
+    .how-it-works { max-width: 1100px; margin: 0 auto; }
+    .steps { display: flex; flex-direction: column; gap: 0; margin-top: 4rem; }
+    .step {
+      display: grid; grid-template-columns: 80px 1fr;
+      gap: 2rem; align-items: start;
+      padding: 2.5rem 0;
+      border-bottom: 1px solid var(--border);
+      position: relative;
+    }
+    .step:last-child { border-bottom: none; }
+    .step-num {
+      font-family: 'Syne', sans-serif;
+      font-weight: 800; font-size: 3.5rem;
+      color: rgba(232,197,71,0.15);
+      line-height: 1;
+      letter-spacing: -0.04em;
+    }
+    .step-title {
+      font-family: 'Syne', sans-serif;
+      font-weight: 700; font-size: 1.2rem;
+      margin-bottom: 0.5rem;
+    }
+    .step-text { color: var(--muted); }
+    .step-tag {
+      display: inline-block;
+      background: rgba(232,197,71,0.1);
+      border: 1px solid rgba(232,197,71,0.2);
+      color: var(--accent);
+      font-size: 0.7rem; padding: 0.2rem 0.6rem;
+      border-radius: 2px; margin-top: 0.8rem;
+      letter-spacing: 0.08em; text-transform: uppercase;
+    }
+
+    /* ── INSTALL ── */
+    .install { background: var(--surface); border-top: 1px solid var(--border); }
+    .install-inner { max-width: 800px; }
+    .code-block {
+      background: #0d0d10;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1.5rem 1.8rem;
+      margin: 1.2rem 0;
+      font-family: 'Courier New', monospace;
+      font-size: 0.88rem;
+      color: #c4ffb2;
+      position: relative;
+      overflow-x: auto;
+    }
+    .code-block .comment { color: #555; }
+    .code-block .cmd { color: #e8c547; }
+    .install-step-label {
+      font-size: 0.72rem; letter-spacing: 0.15em; text-transform: uppercase;
+      color: var(--muted); margin-top: 2rem; margin-bottom: 0.4rem;
+    }
+
+    /* ── DOWNLOAD ── */
+    .download { text-align: center; padding: 8rem 4rem; position: relative; overflow: hidden; }
+    .download-bg {
+      position: absolute; inset: 0; z-index: 0;
+      background: radial-gradient(ellipse 60% 60% at 50% 50%, rgba(232,197,71,0.06) 0%, transparent 70%);
+    }
+    .download-content { position: relative; z-index: 1; }
+    .download h2 { margin-bottom: 1rem; }
+    .download p { color: var(--muted); margin-bottom: 3rem; max-width: 460px; margin-left: auto; margin-right: auto; }
+    .version-badge {
+      display: inline-block;
+      background: rgba(232,197,71,0.1);
+      border: 1px solid rgba(232,197,71,0.25);
+      color: var(--accent);
+      font-size: 0.8rem; padding: 0.3rem 1rem;
+      border-radius: 2px; margin-bottom: 2.5rem;
+      letter-spacing: 0.08em;
+    }
+
+    /* ── FOOTER ── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 2.5rem 4rem;
+      display: flex; justify-content: space-between; align-items: center;
+      flex-wrap: wrap; gap: 1rem;
+      color: var(--muted); font-size: 0.85rem;
+    }
+    footer a { color: var(--muted); text-decoration: none; }
+    footer a:hover { color: var(--accent); }
+    .footer-logo {
+      font-family: 'Syne', sans-serif;
+      font-weight: 800; color: var(--accent);
+    }
+
+    /* ── RESPONSIVE ── */
+    @media (max-width: 768px) {
+      nav { padding: 1rem 1.5rem; }
+      .nav-links { display: none; }
+      .hero { padding: 7rem 1.5rem 3rem; }
+      section { padding: 4rem 1.5rem; }
+      .features-header { flex-direction: column; }
+      footer { padding: 2rem 1.5rem; }
+      .hero-stats { gap: 2rem; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <div class="nav-logo">Eventure</div>
+  <div class="nav-links">
+    <a href="#features">Features</a>
+    <a href="#how-it-works">How it works</a>
+    <a href="#install">Install</a>
+    <a href="https://github.com/neriacohen300/Eventure/releases" class="nav-cta">Download</a>
+  </div>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-bg"></div>
+  <div class="hero-grid"></div>
+  <div class="hero-content">
+    <div class="hero-badge">Now at v1.0.5 — Active Development</div>
+    <h1>Turn Photos<br/>into <span>Slideshows</span></h1>
+    <p class="hero-sub">Eventure takes your photos, processes them intelligently, and generates professional slideshows — ready for screen or Adobe Premiere Pro.</p>
+    <div class="hero-btns">
+      <a href="https://github.com/neriacohen300/Eventure/releases/latest" class="btn-primary">⬇ Download Latest</a>
+      <a href="https://github.com/neriacohen300/Eventure" class="btn-secondary">View on GitHub</a>
+    </div>
+    <div class="hero-stats">
+      <div>
+        <div class="stat-num">6</div>
+        <div class="stat-label">Releases</div>
+      </div>
+      <div>
+        <div class="stat-num">180+</div>
+        <div class="stat-label">Commits</div>
+      </div>
+      <div>
+        <div class="stat-num">MIT</div>
+        <div class="stat-label">License</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FEATURES -->
+<section class="features" id="features">
+  <div class="features-header">
+    <div>
+      <div class="section-label">What it does</div>
+      <h2>Everything you need<br/>for a stunning slideshow</h2>
+    </div>
+    <p class="section-desc">From raw photos to polished export — Eventure handles every step with intelligent processing and a clean UI.</p>
+  </div>
+  <div class="features-grid">
+    <div class="feature-card">
+      <span class="feature-icon">🖼️</span>
+      <div class="feature-title">Smart Image Processing</div>
+      <div class="feature-desc">Auto-fits images to 1920×1080 with blurred background fill, EXIF rotation correction, and fast parallel processing.</div>
+    </div>
+    <div class="feature-card">
+      <span class="feature-icon">✏️</span>
+      <div class="feature-title">Text Overlays with RTL</div>
+      <div class="feature-desc">Add custom text to any slide with full Hebrew / RTL bidirectional support and customizable fonts.</div>
+    </div>
+    <div class="feature-card">
+      <span class="feature-icon">🎬</span>
+      <div class="feature-title">Adobe Premiere Export</div>
+      <div class="feature-desc">Exports a ready-to-use Premiere Pro project folder with pre-processed images and transitions — just add effects.</div>
+    </div>
+    <div class="feature-card">
+      <span class="feature-icon">📊</span>
+      <div class="feature-title">PowerPoint Import</div>
+      <div class="feature-desc">Import .pptx files, extract slides as images and text, and convert them into slideshow format automatically.</div>
+    </div>
+    <div class="feature-card">
+      <span class="feature-icon">🎵</span>
+      <div class="feature-title">Audio Support</div>
+      <div class="feature-desc">Attach audio files to your slideshow with duration management, syncing music to the length of your presentation.</div>
+    </div>
+    <div class="feature-card">
+      <span class="feature-icon">🌍</span>
+      <div class="feature-title">Multi-Language UI</div>
+      <div class="feature-desc">Switch between English and Hebrew interfaces. Theme system for full visual customization.</div>
+    </div>
+  </div>
+</section>
+
+<!-- HOW IT WORKS -->
+<section id="how-it-works">
+  <div class="how-it-works">
+    <div class="section-label">Workflow</div>
+    <h2>From folder to finished<br/>in a few clicks</h2>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">01</div>
+        <div>
+          <div class="step-title">Import your photos</div>
+          <div class="step-text">Point Eventure at a folder of images — JPEG, PNG, WebP, and even GIFs are all supported. The app will load them with EXIF orientation data intact.</div>
+          <span class="step-tag">Drag & Drop</span>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">02</div>
+        <div>
+          <div class="step-title">Arrange & customise</div>
+          <div class="step-text">Reorder slides, set durations, pick transitions, add text overlays, and attach background music. Crop and rotate each photo individually.</div>
+          <span class="step-tag">PyQt5 UI</span>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">03</div>
+        <div>
+          <div class="step-title">Process in parallel</div>
+          <div class="step-text">Eventure uses multiprocessing to resize, compose, and blur all images to 1920×1080 simultaneously — no waiting around.</div>
+          <span class="step-tag">Multiprocessing</span>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">04</div>
+        <div>
+          <div class="step-title">Export your way</div>
+          <div class="step-text">Export directly to video, save a .slideshow file, or generate an Adobe Premiere Pro project folder with a preset pack ready to apply your effects.</div>
+          <span class="step-tag">Premiere / Video</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- INSTALL -->
+<section class="install" id="install">
+  <div class="install-inner">
+    <div class="section-label">Get started</div>
+    <h2>Install from source</h2>
+    <p class="section-desc" style="margin-bottom:2rem;">Requires Python 3.10+ on Windows. Or just grab the pre-built <code style="color:var(--accent)">setup.exe</code> from the Releases page.</p>
+
+    <div class="install-step-label">1 — Clone the repo</div>
+    <div class="code-block"><span class="cmd">git clone</span> https://github.com/neriacohen300/Eventure.git
+cd Eventure</div>
+
+    <div class="install-step-label">2 — Install dependencies</div>
+    <div class="code-block"><span class="cmd">pip install</span> -r requirements.txt</div>
+
+    <div class="install-step-label">3 — Run the app</div>
+    <div class="code-block"><span class="cmd">python</span> Eventure.py</div>
+
+    <p style="color:var(--muted); margin-top:1.5rem; font-size:0.9rem;">
+      Key dependencies: <span style="color:var(--text)">PyQt5</span> · <span style="color:var(--text)">Pillow</span> · <span style="color:var(--text)">python-pptx</span> · <span style="color:var(--text)">openpyxl</span> · <span style="color:var(--text)">python-bidi</span>
+    </p>
+  </div>
+</section>
+
+<!-- DOWNLOAD CTA -->
+<section class="download" id="download">
+  <div class="download-bg"></div>
+  <div class="download-content">
+    <div class="section-label">Ready?</div>
+    <div class="version-badge">Latest: v1.0.5</div>
+    <h2>Download Eventure</h2>
+    <p>Grab the installer for Windows or clone the source. Free and open-source under the MIT license.</p>
+    <div style="display:flex; gap:1rem; justify-content:center; flex-wrap:wrap;">
+      <a href="https://github.com/neriacohen300/Eventure/releases/latest" class="btn-primary">⬇ Download setup.exe</a>
+      <a href="https://github.com/neriacohen300/Eventure" class="btn-secondary">View Source</a>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="footer-logo">Eventure</div>
+  <div>Built by <a href="https://github.com/neriacohen300">neriacohen300</a> · MIT License</div>
+  <div>
+    <a href="https://github.com/neriacohen300/Eventure/issues">Issues</a> &nbsp;·&nbsp;
+    <a href="https://github.com/neriacohen300/Eventure/releases">Releases</a>
+  </div>
+</footer>
+
+</body>
+</html>
