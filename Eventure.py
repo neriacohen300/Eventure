@@ -43,7 +43,7 @@ import openpyxl
 
 import premiere_export
 
-APP_VERSION = "1.0.5"
+APP_VERSION = "1.0.6"
 
 plugin_path = os.path.join(os.path.dirname(sys.executable), "Library", "plugins", "platforms")
 os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = plugin_path
@@ -663,17 +663,19 @@ def render_ken_burns_clip(image_path, effect, duration, output_path, rotation=0,
             sx = (cov_w - sw) / 2.0
             sy = (cov_h - sh) / 2.0
         elif effect == "pan_left":
-            sx = (cov_w - W) / 2.0 + travel * (1.0 - 2.0 * t)
+            # Unidirectional: starts fully right (t=0) → moves left (t=1)
+            # Matches zoom behaviour — motion begins from the very first frame.
+            sx = (cov_w - W) / 2.0 + travel * (1.0 - t)
             sy = (cov_h - H) / 2.0
         elif effect == "pan_right":
-            sx = (cov_w - W) / 2.0 - travel * (1.0 - 2.0 * t)
+            sx = (cov_w - W) / 2.0 - travel * (1.0 - t)
             sy = (cov_h - H) / 2.0
         elif effect == "pan_up":
             sx = (cov_w - W) / 2.0
-            sy = (cov_h - H) / 2.0 + travel * (1.0 - 2.0 * t)
+            sy = (cov_h - H) / 2.0 + travel * (1.0 - t)
         elif effect == "pan_down":
             sx = (cov_w - W) / 2.0
-            sy = (cov_h - H) / 2.0 - travel * (1.0 - 2.0 * t)
+            sy = (cov_h - H) / 2.0 - travel * (1.0 - t)
 
         sx = max(0.0, min(float(cov_w) - sw, sx))
         sy = max(0.0, min(float(cov_h) - sh, sy))
@@ -4165,7 +4167,16 @@ class _FrameRenderer:
             import numpy as np
             return np.zeros((self.H, self.W, 3), dtype=np.uint8)
 
-        # Build a timeline of [start_sec, end_sec] per slide (accounting for transitions)
+        # Timeline matches the ffmpeg export exactly: cursor advances by full dur.
+        # This keeps get_frame in sync with _slide_at, _slide_start, and the
+        # marker bar (all use simple sum-of-durations).
+        #
+        # KB continuity: when slide i is entered after a transition, its KB
+        # animation should already be td seconds in (not starting from 0).
+        # We achieve this by passing t_in + td_prev to _render_slide, where
+        # td_prev is the incoming transition duration. During the transition we
+        # pass next_t_in = t_trans * td, so the animation is perfectly continuous
+        # at the moment the transition ends (next_t_in -> td = t_in_kb at t=0).
         cursor = 0.0
         for i, img in enumerate(self.images):
             dur = float(img.get("duration", 5))
@@ -4173,22 +4184,30 @@ class _FrameRenderer:
             slide_end = cursor + dur
 
             if global_t < slide_end or i == len(self.images)-1:
-                t_in = global_t - cursor  # time within this slide
-                t_norm = max(0.0, min(1.0, t_in / dur))
+                t_in = global_t - cursor  # raw seconds since this slide's cursor
+
+                # KB offset: slide i was already rendered for td_prev seconds during
+                # the incoming transition, so KB starts from td_prev not 0.
+                td_prev = float(self.images[i-1].get("transition_duration", 1)) if i > 0 else 0.0
+                t_in_kb = t_in + td_prev
 
                 # Are we in the outgoing transition of this slide?
                 trans_start = dur - td
                 if td > 0 and t_in >= trans_start and i < len(self.images)-1:
-                    t_trans = (t_in - trans_start) / td
-                    fa = self._render_slide(img, t_in, dur)
-                    fb = self._render_slide(self.images[i+1], 0.0,
-                                            float(self.images[i+1].get("duration", 5)))
+                    t_trans = (t_in - trans_start) / td   # 0->1 over the transition
+                    fa = self._render_slide(img, t_in_kb, dur + td_prev)
+                    next_img = self.images[i + 1]
+                    next_dur = float(next_img.get("duration", 5))
+                    # next slide KB: 0 at trans start, td at trans end —
+                    # matches t_in_kb = td_prev = td when it becomes active.
+                    next_t_in_kb = t_trans * td
+                    fb = self._render_slide(next_img, next_t_in_kb, next_dur + td)
                     transition = img.get("transition", "fade")
                     return self.render_transition(fa, fb, t_trans, transition)
 
-                return self._render_slide(img, t_in, dur)
+                return self._render_slide(img, t_in_kb, dur + td_prev)
 
-            cursor = slide_end
+            cursor += dur   # matches export timeline and all helper functions
 
         import numpy as np
         return np.zeros((self.H, self.W, 3), dtype=np.uint8)
@@ -4419,6 +4438,28 @@ class SlideshowPreviewDialog(QDialog):
         )
         close_btn.clicked.connect(self.close)
 
+        # Volume control
+        vol_lbl = QLabel("🔊")
+        vol_lbl.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 13px;")
+        self._vol_slider = QSlider(Qt.Horizontal)
+        self._vol_slider.setRange(0, 100)
+        self._vol_slider.setValue(100)
+        self._vol_slider.setFixedWidth(90)
+        self._vol_slider.setToolTip("Music volume")
+        self._vol_slider.setStyleSheet(f"""
+            QSlider::groove:horizontal {{
+                height: 4px; background: {COLORS['bg_hover']}; border-radius: 2px;
+            }}
+            QSlider::sub-page:horizontal {{
+                background: {COLORS['success']}; border-radius: 2px;
+            }}
+            QSlider::handle:horizontal {{
+                background: #fff; border: 2px solid {COLORS['success']};
+                width: 12px; height: 12px; margin: -5px 0; border-radius: 6px;
+            }}
+        """)
+        self._vol_slider.valueChanged.connect(self._on_volume_change)
+
         ctrl.addWidget(self._btn_prev)
         ctrl.addWidget(self._btn_back)
         ctrl.addWidget(self._btn_play)
@@ -4427,6 +4468,9 @@ class SlideshowPreviewDialog(QDialog):
         ctrl.addSpacing(16)
         ctrl.addWidget(speed_lbl)
         ctrl.addWidget(self._speed_box)
+        ctrl.addSpacing(16)
+        ctrl.addWidget(vol_lbl)
+        ctrl.addWidget(self._vol_slider)
         ctrl.addStretch()
         ctrl.addWidget(close_btn)
         root.addLayout(ctrl)
@@ -4562,6 +4606,14 @@ class SlideshowPreviewDialog(QDialog):
 
     # ── Speed ─────────────────────────────────────────────────────────────────
 
+    def _on_volume_change(self, value: int):
+        """Apply volume (0-100) to the active QMediaPlayer."""
+        if self._audio_proc is not None:
+            try:
+                self._audio_proc.setVolume(value)
+            except Exception:
+                pass
+
     def _on_speed_change(self, idx: int):
         speeds = [0.5, 1.0, 1.5, 2.0]
         self._speed = speeds[idx]
@@ -4630,35 +4682,52 @@ class SlideshowPreviewDialog(QDialog):
             self._audio_offset   = offset
 
             self._audio_proc = QMediaPlayer(self)
+            self._audio_file_offset = int(file_offset * 1000)  # seek after load
             self._audio_proc.mediaStatusChanged.connect(self._on_audio_status)
+            # Apply current volume immediately
+            vol = self._vol_slider.value() if hasattr(self, "_vol_slider") else 100
+            self._audio_proc.setVolume(vol)
             url = QUrl.fromLocalFile(str(paths[start_index]))
             self._audio_proc.setMedia(QMediaContent(url))
-            self._audio_proc.setPosition(int(file_offset * 1000))
             self._audio_proc.setPlaybackRate(self._speed)
-            self._audio_proc.play()
+            # Don't call play() here – seek + play happen in _on_audio_status
+            # once the media is loaded (avoids the setPosition-before-load bug)
         except Exception as e:
             print(f"Audio preview not available: {e}")
             self._audio_proc = None
 
     def _on_audio_status(self, status):
-        """Advance to the next audio file when the current one ends."""
+        """Seek-then-play on first load; advance playlist on EndOfMedia."""
         try:
             from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
-            if status != QMediaPlayer.EndOfMedia:
+            if self._audio_proc is None:
                 return
-            if not hasattr(self, "_audio_paths") or self._audio_proc is None:
-                return
-            self._audio_index += 1
-            if self._audio_index >= len(self._audio_paths):
-                return  # all songs done
-            next_path = self._audio_paths[self._audio_index]
-            url = QUrl.fromLocalFile(str(next_path))
-            self._audio_proc.setMedia(QMediaContent(url))
-            self._audio_proc.setPosition(0)
-            self._audio_proc.setPlaybackRate(self._speed)
-            self._audio_proc.play()
+
+            if status == QMediaPlayer.LoadedMedia or status == QMediaPlayer.BufferedMedia:
+                # Media is ready – apply the pending seek offset and start playing.
+                # We only do this once per load (offset is reset to 0 after use).
+                offset_ms = getattr(self, "_audio_file_offset", 0)
+                if offset_ms > 0:
+                    self._audio_proc.setPosition(offset_ms)
+                    self._audio_file_offset = 0
+                # Guard: don't auto-play if we're paused (seek while paused)
+                if self._playing:
+                    self._audio_proc.play()
+
+            elif status == QMediaPlayer.EndOfMedia:
+                if not hasattr(self, "_audio_paths"):
+                    return
+                self._audio_index += 1
+                if self._audio_index >= len(self._audio_paths):
+                    return  # all songs done
+                next_path = self._audio_paths[self._audio_index]
+                self._audio_file_offset = 0  # next file starts from beginning
+                url = QUrl.fromLocalFile(str(next_path))
+                self._audio_proc.setMedia(QMediaContent(url))
+                self._audio_proc.setPlaybackRate(self._speed)
+                # play() will be called by the LoadedMedia branch above
         except Exception as e:
-            print(f"Audio advance error: {e}")
+            print(f"Audio status error: {e}")
 
     def _stop_audio(self):
         if self._audio_proc is not None:
@@ -4692,7 +4761,7 @@ class _SlideMarkerBar(QWidget):
         self._playhead  = 0.0
         self.setFixedHeight(18)
         self.setCursor(Qt.PointingHandCursor)
-        # Pre-compute slide start times
+        # Pre-compute slide start times (simple sum, matches get_frame cursor).
         self._starts: list[float] = []
         t = 0.0
         for img in images:
