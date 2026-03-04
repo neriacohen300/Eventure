@@ -42,8 +42,100 @@ from openpyxl import Workbook
 import openpyxl
 
 import premiere_export
+import urllib.request
+import urllib.error
+import urllib.parse
+import hashlib
+import tempfile
 
 APP_VERSION = "1.0.6"
+
+# ── GitHub Audio Library Config ───────────────────────────────────────────────
+GITHUB_AUDIO_USER   = "neriacohen300"
+GITHUB_AUDIO_REPO   = "Eventure"
+GITHUB_AUDIO_BRANCH = "main"
+GITHUB_AUDIO_BASE   = f"https://raw.githubusercontent.com/{GITHUB_AUDIO_USER}/{GITHUB_AUDIO_REPO}/{GITHUB_AUDIO_BRANCH}/Songs"
+GITHUB_AUDIO_INDEX  = f"{GITHUB_AUDIO_BASE}/songs.json"
+
+# ── GPU Detection ──────────────────────────────────────────────────────────────
+def _detect_gpu_encoder() -> tuple[str, str]:
+    """
+    Detect the best available hardware H.264 encoder.
+
+    Strategy (most reliable for RTX 40/50 series and all modern GPUs):
+    1. Ask ffmpeg to list its compiled-in encoders — this is instant and
+       never fails due to driver/context issues.
+    2. For NVENC specifically, also check that the NVIDIA driver is
+       actually present by trying a real tiny encode. We do this with
+       yuv420p input (required by h264_nvenc) and the simplest possible
+       flags so Ada/Blackwell cards don't reject it.
+    3. Fall back gracefully to CPU libx264 if nothing works.
+    """
+    import shutil as _shutil
+    import subprocess as _sub
+
+    _NO_WIN = {"creationflags": _sub.CREATE_NO_WINDOW} if hasattr(_sub, "CREATE_NO_WINDOW") else {}
+    ffmpeg = _shutil.which("ffmpeg") or str(APP_DIR / "ffmpeg.exe")
+
+    # ── Step 1: which encoders are compiled in? ──────────────────────────────
+    compiled = set()
+    try:
+        r = _sub.run([ffmpeg, "-encoders"], capture_output=True, timeout=10, **_NO_WIN)
+        out = r.stdout.decode("utf-8", errors="ignore") + r.stderr.decode("utf-8", errors="ignore")
+        for line in out.splitlines():
+            for codec in ("h264_nvenc", "hevc_nvenc", "h264_amf", "h264_qsv",
+                          "h264_videotoolbox"):
+                if codec in line:
+                    compiled.add(codec)
+    except Exception:
+        pass
+
+    # ── Step 2: try each candidate with a real tiny encode ───────────────────
+    candidates = [
+        # (codec, friendly label, extra flags needed)
+        ("h264_nvenc",        "NVIDIA NVENC (RTX)",
+         ["-pix_fmt", "yuv420p", "-preset", "fast", "-b:v", "1M"]),
+        ("h264_amf",          "AMD AMF",
+         ["-pix_fmt", "yuv420p"]),
+        ("h264_qsv",          "Intel QSV",
+         ["-pix_fmt", "nv12"]),
+        ("h264_videotoolbox", "Apple VideoToolbox",
+         ["-pix_fmt", "yuv420p"]),
+    ]
+
+    for codec, label, extra_flags in candidates:
+        if codec not in compiled:
+            continue   # skip if not even compiled in — saves ~2 s per codec
+        try:
+            cmd = (
+                [ffmpeg, "-y",
+                 "-f", "lavfi", "-i", "color=black:s=128x72:r=1:d=0.1"]
+                + ["-vcodec", codec]
+                + extra_flags
+                + ["-frames:v", "1", "-f", "null", "-"]
+            )
+            r = _sub.run(cmd, capture_output=True, timeout=12, **_NO_WIN)
+            if r.returncode == 0:
+                return codec, label
+            # NVENC sometimes exits 1 but the error is just "no frames" —
+            # treat "Initialized" in stderr as success too.
+            stderr = r.stderr.decode("utf-8", errors="ignore")
+            if codec == "h264_nvenc" and (
+                "nvenc" in stderr.lower() and "error" not in stderr.lower()
+            ):
+                return codec, label
+        except Exception:
+            pass
+
+    return "libx264", "CPU (libx264)"
+
+_GPU_ENCODER: tuple[str, str] | None = None   # cached after first call
+
+def get_gpu_encoder() -> tuple[str, str]:
+    global _GPU_ENCODER
+    if _GPU_ENCODER is None:
+        _GPU_ENCODER = _detect_gpu_encoder()
+    return _GPU_ENCODER
 
 plugin_path = os.path.join(os.path.dirname(sys.executable), "Library", "plugins", "platforms")
 os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = plugin_path
@@ -721,14 +813,35 @@ def render_ken_burns_clip(image_path, effect, duration, output_path, rotation=0,
                      + static_overlay_bgr * static_overlay_mask).clip(0, 255).astype(_np.uint8)
         frame_buffer[f] = frame
 
+    gpu_codec, _ = get_gpu_encoder()
+    if gpu_codec == "libx264":
+        vcodec_kb    = ["-vcodec", "libx264", "-pix_fmt", "yuv420p", "-preset", "ultrafast", "-crf", "28"]
+        extra_kb     = ["-tune", "fastdecode"]
+    elif gpu_codec == "h264_nvenc":
+        vcodec_kb    = ["-vcodec", "h264_nvenc", "-pix_fmt", "yuv420p",
+                        "-preset", "p4", "-tune", "hq",
+                        "-rc", "vbr", "-cq", "28", "-b:v", "0",
+                        "-maxrate", "20M", "-bufsize", "40M"]
+        extra_kb     = []
+    elif gpu_codec == "h264_amf":
+        vcodec_kb    = ["-vcodec", "h264_amf", "-pix_fmt", "yuv420p",
+                        "-quality", "balanced", "-rc", "cqp", "-qp_i", "28", "-qp_p", "28"]
+        extra_kb     = []
+    elif gpu_codec == "h264_qsv":
+        vcodec_kb    = ["-vcodec", "h264_qsv", "-pix_fmt", "nv12",
+                        "-preset", "medium", "-global_quality", "28"]
+        extra_kb     = []
+    else:
+        vcodec_kb    = ["-vcodec", gpu_codec, "-pix_fmt", "yuv420p"]
+        extra_kb     = []
+
     cmd = [
         _ffmpeg_exe(), "-y",
         "-f", "rawvideo", "-vcodec", "rawvideo",
         "-s", f"{W}x{H}", "-pix_fmt", "rgb24", "-r", str(FPS),
         "-i", "pipe:0",
-        "-vcodec", "libx264", "-pix_fmt", "yuv420p",
-        "-preset", "ultrafast", "-crf", "28",
-        "-tune", "fastdecode", "-g", "25",
+    ] + vcodec_kb + extra_kb + [
+        "-g", "25",
         "-r", str(FPS), "-movflags", "+faststart",
         output_path,
     ]
@@ -1855,6 +1968,7 @@ class SlideshowCreator(QMainWindow):
             "move_image_down":   "Ctrl+Down",
         }
         self.load_shortcuts()
+        self._load_font_settings()
         self.create_ui()
 
     # ── UI ────────────────────────────────────────────────────────────────────
@@ -2129,6 +2243,27 @@ class SlideshowCreator(QMainWindow):
             tb_layout.addWidget(w)
 
         tb_layout.addStretch()
+
+        # GPU status badge (shows which encoder will be used)
+        self._gpu_badge = QLabel("⏳ Detecting GPU…")
+        self._gpu_badge.setStyleSheet(
+            f"color: {COLORS['text_muted']}; font-size: 10px; "
+            f"background: {COLORS['bg_card']}; border: 1px solid {COLORS['border']}; "
+            f"border-radius: 4px; padding: 2px 8px;"
+        )
+        tb_layout.addWidget(self._gpu_badge)
+        # Detect GPU in background
+        def _gpu_detect():
+            codec, label = get_gpu_encoder()
+            color = COLORS['success'] if codec != 'libx264' else COLORS['text_muted']
+            icon  = "⚡" if codec != 'libx264' else "🖥"
+            self._gpu_badge.setText(f"{icon} {label}")
+            self._gpu_badge.setStyleSheet(
+                f"color: {color}; font-size: 10px; "
+                f"background: {COLORS['bg_card']}; border: 1px solid {COLORS['border']}; "
+                f"border-radius: 4px; padding: 2px 8px;"
+            )
+        threading.Thread(target=_gpu_detect, daemon=True).start()
 
         # Language switch
         lang_lbl = QLabel("Language:")
@@ -2680,7 +2815,8 @@ class SlideshowCreator(QMainWindow):
         self.taskbar_progress.show()
         self.taskbar_progress.setValue(0)
 
-        self.image_worker = ImageProcessingWorker(self.images, output_folder, self.common_width, self.common_height)
+        self.image_worker = ImageProcessingWorker(self.images, output_folder, self.common_width, self.common_height,
+                                                   font_family=getattr(self, "text_font", None))
         self.image_worker.progress.connect(self.update_image_progress)
         self.image_worker.cleanup_dirs.connect(self._store_temp_dirs)
         self.image_worker.finished.connect(self.on_image_processing_finished)
@@ -2757,11 +2893,28 @@ class SlideshowCreator(QMainWindow):
         self._fc_script_path = fc_file.name
 
         output_norm = str(self.output_file).replace(chr(92), "/")
+        gpu_codec, gpu_label = get_gpu_encoder()
+        # GPU encoders need different quality flags
+        # RTX 40/50 series NVENC uses -preset p4/p5 (quality/speed balance),
+        # NOT the old "ultrafast/fast" presets which were CPU-only.
+        if gpu_codec == "libx264":
+            vcodec_args = "-c:v libx264 -preset ultrafast -crf 23"
+        elif gpu_codec == "h264_nvenc":
+            # p4 = balanced quality/speed on Turing+; CQ 26 = visually lossless
+            vcodec_args = "-c:v h264_nvenc -preset p4 -tune hq -rc vbr -cq 26 -b:v 0 -maxrate 20M -bufsize 40M -pix_fmt yuv420p"
+        elif gpu_codec == "h264_amf":
+            vcodec_args = "-c:v h264_amf -quality balanced -rc cqp -qp_i 26 -qp_p 26 -pix_fmt yuv420p"
+        elif gpu_codec == "h264_qsv":
+            vcodec_args = "-c:v h264_qsv -preset medium -global_quality 26 -pix_fmt nv12"
+        else:
+            vcodec_args = f"-c:v {gpu_codec} -pix_fmt yuv420p"
+
+        print(f"[Export] Using encoder: {gpu_label} ({gpu_codec})")
         command = (
             f'ffmpeg -y {" ".join(inputs)} '
             f'-filter_complex_script "{fc_file.name}" '
             f'-map {final_stream} {audio_map} '
-            f'-c:a aac -c:v libx264 -pix_fmt yuv420p -preset ultrafast -movflags +faststart -shortest '
+            f'-c:a aac {vcodec_args} -movflags +faststart -shortest '
             f'"{output_norm}"'
         )
 
@@ -3581,6 +3734,40 @@ class SlideshowCreator(QMainWindow):
                 self.save_shortcuts()
                 self.update_shortcuts()
 
+    def _open_font_picker(self):
+        """Open the font picker dialog and apply the chosen font to text overlays."""
+        dlg = FontPickerDialog(current_font=self.text_font, parent=self)
+        if dlg.exec_() == QDialog.Accepted:
+            family = dlg.get_result()
+            if family:
+                self.text_font = family
+                # Persist choice
+                try:
+                    cfg_path = BASEPATH / "font_settings.json"
+                    with open(cfg_path, "w", encoding="utf-8") as f:
+                        json.dump({"text_font": family}, f)
+                except Exception as e:
+                    print(f"Could not save font setting: {e}")
+                # Register with Qt so it's available for rendering
+                QFontDatabase.addApplicationFont(
+                    str(BASEPATH / "Fonts" / "GoogleFonts" / f"{family.replace(' ', '_')}.ttf")
+                )
+                QMessageBox.information(
+                    self, "Font Updated",
+                    f"Text font set to '{family}'.\n\n"
+                    "This font will be used for all new text overlays on exported slideshows."
+                )
+
+    def _load_font_settings(self):
+        """Load saved font settings on startup."""
+        try:
+            cfg_path = BASEPATH / "font_settings.json"
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            self.text_font = cfg.get("text_font", "Segoe UI")
+        except (FileNotFoundError, json.JSONDecodeError):
+            pass
+
     # ── Info / Help ───────────────────────────────────────────────────────────
 
     def show_info(self):
@@ -3773,6 +3960,12 @@ class SlideshowCreator(QMainWindow):
         self.set_language_hebrew_action  = _action("action_set_language_hebrew",  lambda: self.set_language("he"), self.language_menu)
         self.open_help_dialog_action     = _action("action_browse_help_topics",   self.open_help_dialog,           self.help_menu)
 
+        # ── Font Picker ───────────────────────────────────────────────────
+        self.settings_menu.addSeparator()
+        font_action = QAction("🔤  Choose Text Font…", self)
+        font_action.triggered.connect(self._open_font_picker)
+        self.settings_menu.addAction(font_action)
+
 
 # ── Worker Threads ────────────────────────────────────────────────────────────
 
@@ -3782,12 +3975,13 @@ class ImageProcessingWorker(QThread):
     corrupted_image = pyqtSignal(str)
     cleanup_dirs    = pyqtSignal(list)
 
-    def __init__(self, images, output_folder, common_width, common_height):
+    def __init__(self, images, output_folder, common_width, common_height, font_family=None):
         super().__init__()
         self.images        = images
         self.output_folder = output_folder
         self.common_width  = common_width
         self.common_height = common_height
+        self.font_family   = font_family
         self._temp_dirs: list = []
 
     def _resize_one(self, i: int):
@@ -3803,7 +3997,8 @@ class ImageProcessingWorker(QThread):
             original = Image.open(img_path)
             if original.size != (self.common_width, self.common_height):
                 new_path = Image_resizer.process_image(
-                    img_path, self.output_folder, text, rotation, text_on_static, crop=crop
+                    img_path, self.output_folder, text, rotation, text_on_static,
+                    crop=crop, font_family=self.font_family
                 )
                 return i, new_path
         except Exception as e:
@@ -5390,24 +5585,413 @@ class InfoDialog(QDialog):
         layout.addLayout(btn_row)
 
 
+class FontPickerDialog(QDialog):
+    """
+    Font picker:
+    • Left panel  – installed Windows/system fonts (from QFontDatabase)
+    • Right panel – Google Fonts browser (search + one-click download)
+    Selected font is returned via get_result().
+    """
+    font_selected = pyqtSignal(str)   # font family name
+
+    # A curated list of popular Google Fonts families
+    GOOGLE_FONTS_POPULAR = [
+        "Roboto", "Open Sans", "Lato", "Montserrat", "Oswald", "Raleway",
+        "Poppins", "Merriweather", "Ubuntu", "Nunito", "Playfair Display",
+        "Source Sans Pro", "PT Sans", "Noto Sans", "Inter", "Rubik",
+        "Work Sans", "Fira Sans", "Quicksand", "Cabin", "Barlow",
+        "Josefin Sans", "Mulish", "Karla", "Exo 2", "Titillium Web",
+        "Heebo", "Libre Franklin", "Arimo", "Tinos", "Alef", "David Libre",
+        "Frank Ruhl Libre", "Varela Round", "Assistant", "Secular One",
+    ]
+
+    def __init__(self, current_font: str = "Segoe UI", parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Choose Font")
+        self.setMinimumSize(760, 520)
+        self.resize(820, 560)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowMaximizeButtonHint)
+        self._result: str | None = None
+        self._download_dir = BASEPATH / "Fonts" / "GoogleFonts"
+        self._download_dir.mkdir(parents=True, exist_ok=True)
+        self._build_ui(current_font)
+
+    # ── UI ────────────────────────────────────────────────────────────────────
+
+    def _build_ui(self, current_font: str):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # Header
+        header = QWidget()
+        header.setFixedHeight(48)
+        header.setStyleSheet(
+            f"background: {COLORS['toolbar_bg']}; border-bottom: 1px solid {COLORS['border']};"
+        )
+        hl = QHBoxLayout(header)
+        hl.setContentsMargins(16, 0, 16, 0)
+        title = QLabel("  Choose Font")
+        title.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 14px; font-weight: 700;")
+        self._preview_label = QLabel("The quick brown fox  אבגדהוזחטי")
+        self._preview_label.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; font-size: 18px; padding: 0 16px;"
+        )
+        hl.addWidget(title)
+        hl.addStretch()
+        hl.addWidget(self._preview_label)
+        root.addWidget(header)
+
+        # Split: system fonts | Google Fonts
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.setHandleWidth(1)
+
+        # ── Left: system fonts ────────────────────────────────────────────
+        left = QWidget()
+        ll = QVBoxLayout(left)
+        ll.setContentsMargins(12, 12, 6, 12)
+        ll.setSpacing(8)
+        ll.addWidget(_make_section_label("System / Installed Fonts"))
+
+        self._sys_search = QLineEdit()
+        self._sys_search.setPlaceholderText("Search…")
+        self._sys_search.textChanged.connect(self._filter_system)
+        ll.addWidget(self._sys_search)
+
+        self._sys_list = QListWidget()
+        db = QFontDatabase()
+        self._all_system_fonts = sorted(db.families())
+        self._sys_list.addItems(self._all_system_fonts)
+        # pre-select current
+        matches = self._sys_list.findItems(current_font, Qt.MatchExactly)
+        if matches:
+            self._sys_list.setCurrentItem(matches[0])
+            self._sys_list.scrollToItem(matches[0])
+        self._sys_list.currentTextChanged.connect(self._on_system_select)
+        ll.addWidget(self._sys_list)
+        splitter.addWidget(left)
+
+        # ── Right: Google Fonts ───────────────────────────────────────────
+        right = QWidget()
+        rl = QVBoxLayout(right)
+        rl.setContentsMargins(6, 12, 12, 12)
+        rl.setSpacing(8)
+        rl.addWidget(_make_section_label("Google Fonts  (downloads to your computer)"))
+
+        gf_top = QHBoxLayout()
+        self._gf_search = QLineEdit()
+        self._gf_search.setPlaceholderText("Search Google Fonts…")
+        self._gf_search.textChanged.connect(self._filter_google)
+        refresh_btn = QPushButton("↻")
+        refresh_btn.setFixedSize(30, 28)
+        refresh_btn.setToolTip("Refresh list from internet")
+        refresh_btn.clicked.connect(self._fetch_google_fonts_list)
+        gf_top.addWidget(self._gf_search)
+        gf_top.addWidget(refresh_btn)
+        rl.addLayout(gf_top)
+
+        self._gf_list = QListWidget()
+        self._all_google_fonts = list(self.GOOGLE_FONTS_POPULAR)
+        self._populate_google_list()
+        self._gf_list.currentTextChanged.connect(self._on_google_select)
+        rl.addWidget(self._gf_list)
+
+        self._dl_status = QLabel("")
+        self._dl_status.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 11px;")
+        self._dl_status.setWordWrap(True)
+        rl.addWidget(self._dl_status)
+
+        self._dl_btn = _styled_btn("⬇  Download & Use Selected Font", "primary")
+        self._dl_btn.setFixedHeight(34)
+        self._dl_btn.setEnabled(False)
+        self._dl_btn.clicked.connect(self._download_google_font)
+        rl.addWidget(self._dl_btn)
+        splitter.addWidget(right)
+
+        splitter.setSizes([380, 380])
+        root.addWidget(splitter, 1)
+
+        # Footer
+        footer = QWidget()
+        footer.setFixedHeight(52)
+        footer.setStyleSheet(
+            f"background: {COLORS['toolbar_bg']}; border-top: 1px solid {COLORS['border']};"
+        )
+        fl = QHBoxLayout(footer)
+        fl.setContentsMargins(16, 0, 16, 0)
+        fl.setSpacing(10)
+        cancel_btn = _styled_btn("Cancel", "")
+        self._apply_btn = _styled_btn("✔  Use This Font", "primary")
+        self._apply_btn.setFixedHeight(36)
+        self._apply_btn.setEnabled(False)
+        cancel_btn.clicked.connect(self.reject)
+        self._apply_btn.clicked.connect(self._accept)
+        self._sel_label = QLabel("No font selected")
+        self._sel_label.setStyleSheet(
+            f"color: {COLORS['accent']}; font-size: 13px; font-weight: 700;"
+        )
+        fl.addWidget(self._sel_label)
+        fl.addStretch()
+        fl.addWidget(cancel_btn)
+        fl.addWidget(self._apply_btn)
+        root.addWidget(footer)
+
+    # ── system font handling ──────────────────────────────────────────────────
+
+    def _filter_system(self, text: str):
+        self._sys_list.clear()
+        lo = text.lower()
+        self._sys_list.addItems([f for f in self._all_system_fonts if lo in f.lower()])
+
+    def _on_system_select(self, family: str):
+        if not family:
+            return
+        self._gf_list.clearSelection()
+        self._result = family
+        self._sel_label.setText(f"Selected: {family}")
+        self._apply_btn.setEnabled(True)
+        self._preview_label.setFont(QFont(family, 14))
+
+    # ── Google Fonts handling ─────────────────────────────────────────────────
+
+    def _populate_google_list(self, filter_text: str = ""):
+        self._gf_list.clear()
+        lo = filter_text.lower()
+        for name in sorted(self._all_google_fonts):
+            if lo in name.lower():
+                # Mark downloaded fonts
+                ttf = self._download_dir / f"{name.replace(' ', '_')}.ttf"
+                label = f"✓ {name}" if ttf.exists() else name
+                item = QListWidgetItem(label)
+                item.setData(Qt.UserRole, name)
+                if ttf.exists():
+                    item.setForeground(QColor(COLORS["success"]))
+                self._gf_list.addItem(item)
+
+    def _filter_google(self, text: str):
+        self._populate_google_list(text)
+
+    def _on_google_select(self, _):
+        item = self._gf_list.currentItem()
+        if not item:
+            return
+        family = item.data(Qt.UserRole) or item.text().lstrip("✓ ").strip()
+        self._sys_list.clearSelection()
+        ttf = self._download_dir / f"{family.replace(' ', '_')}.ttf"
+        if ttf.exists():
+            self._result = family
+            self._sel_label.setText(f"Selected: {family}")
+            self._apply_btn.setEnabled(True)
+            # Register font with Qt if not already registered
+            fdb = QFontDatabase()
+            fdb.addApplicationFont(str(ttf))
+            self._preview_label.setFont(QFont(family, 14))
+            self._dl_btn.setText("✔  Font already downloaded — Use It")
+        else:
+            self._result = None
+            self._apply_btn.setEnabled(False)
+            self._sel_label.setText(f"Download required: {family}")
+            self._dl_btn.setText(f"⬇  Download & Use  '{family}'")
+        self._dl_btn.setEnabled(True)
+
+    def _fetch_google_fonts_list(self):
+        """Background fetch of broader font list from Google Fonts API (if available)."""
+        self._dl_status.setText("Fetching Google Fonts list…")
+
+        def _fetch():
+            try:
+                url = "https://fonts.google.com/metadata/fonts"
+                req = urllib.request.Request(url, headers={"User-Agent": "Eventure-App"})
+                with urllib.request.urlopen(req, timeout=8) as resp:
+                    raw = resp.read().decode("utf-8")
+                # The metadata JSON has a ")]}'" prefix (XSSI protection)
+                if raw.startswith(")]}'"):
+                    raw = raw[4:].lstrip()
+                import json as _json
+                data = _json.loads(raw)
+                families = [f["family"] for f in data.get("familyMetadataList", [])]
+                if families:
+                    return families
+            except Exception as e:
+                print(f"Google Fonts metadata fetch failed: {e}")
+            return None
+
+        class _W(QThread):
+            done = pyqtSignal(object)
+            def run(self): self.done.emit(_fetch())
+
+        w = _W(self)
+        def _on_done(families):
+            if families:
+                self._all_google_fonts = families
+                self._populate_google_list(self._gf_search.text())
+                self._dl_status.setText(f"Loaded {len(families)} Google Fonts families.")
+            else:
+                self._dl_status.setText("Could not load font list — check internet connection.")
+            w.deleteLater()
+        w.done.connect(_on_done)
+        w.start()
+
+    def _download_google_font(self):
+        item = self._gf_list.currentItem()
+        if not item:
+            return
+        family = item.data(Qt.UserRole) or item.text().lstrip("✓ ").strip()
+        ttf_path = self._download_dir / f"{family.replace(' ', '_')}.ttf"
+        if ttf_path.exists():
+            # Already downloaded — just apply
+            self._result = family
+            self._sel_label.setText(f"Selected: {family}")
+            self._apply_btn.setEnabled(True)
+            fdb = QFontDatabase()
+            fdb.addApplicationFont(str(ttf_path))
+            self._preview_label.setFont(QFont(family, 14))
+            return
+
+        self._dl_status.setText(f"Downloading '{family}'…")
+        self._dl_btn.setEnabled(False)
+        QApplication.processEvents()
+
+        def _do_download():
+            try:
+                # Google Fonts CSS API → extract TTF URL
+                css_url = (
+                    "https://fonts.googleapis.com/css2"
+                    f"?family={family.replace(' ', '+')}:wght@400;700"
+                    "&display=swap"
+                )
+                req = urllib.request.Request(
+                    css_url,
+                    headers={"User-Agent":
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+                )
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    css = resp.read().decode("utf-8")
+                # Extract first TTF/WOFF2 URL from CSS
+                import re as _re
+                urls = _re.findall(r"url\((https://[^)]+)\)", css)
+                if not urls:
+                    return None, "No font URL found in Google Fonts CSS."
+                font_url = urls[0]
+                with urllib.request.urlopen(
+                    urllib.request.Request(font_url,
+                        headers={"User-Agent": "Mozilla/5.0"}), timeout=15
+                ) as resp:
+                    data = resp.read()
+                with open(ttf_path, "wb") as f:
+                    f.write(data)
+                return str(ttf_path), None
+            except Exception as e:
+                return None, str(e)
+
+        class _DL(QThread):
+            done = pyqtSignal(object, object)
+            def run(self): self.done.emit(*_do_download())
+
+        dl = _DL(self)
+        def _on_dl(path, err):
+            if path:
+                fdb = QFontDatabase()
+                fdb.addApplicationFont(path)
+                self._result = family
+                self._sel_label.setText(f"Selected: {family}")
+                self._apply_btn.setEnabled(True)
+                self._preview_label.setFont(QFont(family, 14))
+                self._dl_status.setText(f"✓ '{family}' downloaded successfully.")
+                self._populate_google_list(self._gf_search.text())
+                self._dl_btn.setText("✔  Font downloaded — Use It")
+            else:
+                self._dl_status.setText(f"Download failed: {err}")
+            self._dl_btn.setEnabled(True)
+            dl.deleteLater()
+        dl.done.connect(_on_dl)
+        dl.start()
+
+    # ── accept / result ───────────────────────────────────────────────────────
+
+    def _accept(self):
+        if self._result:
+            self.font_selected.emit(self._result)
+            self.accept()
+
+    def get_result(self) -> str | None:
+        return self._result
+
+
 class AudioLibraryDialog(QDialog):
+    """
+    Audio library that streams its song index from GitHub.
+    Songs are downloaded on-demand to BASEPATH/Songs/ — no need to bundle them.
+    The index is re-fetched every time the dialog opens (with a local cache
+    fallback if offline).
+    """
     def __init__(self, tr_function=None, parent=None):
         super().__init__(parent)
         self.tr    = tr_function
         self.songs = []
+        self._downloading: set = set()   # track in-progress downloads
         self.setWindowTitle(self.tr("label_audio_library"))
-        self.setMinimumSize(640, 460)
-        self._load_songs()
+        self.setMinimumSize(720, 520)
+        self.resize(800, 560)
+        self._songs_dir = BASEPATH / "Songs"
+        self._songs_dir.mkdir(parents=True, exist_ok=True)
         self._init_ui()
+        self._fetch_index()   # async load
 
-    def _load_songs(self):
-        songs_file = BASEPATH / "Songs" / "songs.json"
+    # ── index fetching ────────────────────────────────────────────────────────
+
+    def _fetch_index(self):
+        """Fetch songs.json from GitHub in the background."""
+        self._set_status("Checking for music library updates…")
+
+        class _W(QThread):
+            done = pyqtSignal(object, object)   # (songs_list, error_str)
+            def run(self):
+                try:
+                    req = urllib.request.Request(
+                        GITHUB_AUDIO_INDEX,
+                        headers={"User-Agent": "Eventure-App",
+                                 "Cache-Control": "no-cache"}
+                    )
+                    with urllib.request.urlopen(req, timeout=8) as resp:
+                        import json as _j
+                        data = _j.loads(resp.read().decode("utf-8"))
+                    # Persist locally so we can work offline next time
+                    local = Path(str(BASEPATH / "Songs" / "songs.json"))
+                    with open(local, "w", encoding="utf-8") as f:
+                        _j.dump(data, f, ensure_ascii=False, indent=2)
+                    self.done.emit(data, None)
+                except Exception as e:
+                    self.done.emit(None, str(e))
+
+        w = _W(self)
+        def _on_done(songs, err):
+            if songs is not None:
+                self.songs = songs
+                self._set_status(f"{len(songs)} songs in library  •  click ⬇ to download")
+            else:
+                # Fall back to local cache
+                self._load_local_songs()
+                if self.songs:
+                    self._set_status(f"Offline mode — {len(self.songs)} cached songs")
+                else:
+                    self._set_status(f"Could not load library: {err}")
+            self._populate(filter_text="")
+            w.deleteLater()
+        w.done.connect(_on_done)
+        w.start()
+
+    def _load_local_songs(self):
+        songs_file = self._songs_dir / "songs.json"
         try:
+            import json as _j
             with open(songs_file, "r", encoding="utf-8") as f:
-                self.songs = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError) as e:
-            print(f"Songs load error: {e}")
+                self.songs = _j.load(f)
+        except Exception as e:
+            print(f"Songs local load error: {e}")
             self.songs = []
+
+    # ── UI ────────────────────────────────────────────────────────────────────
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -5418,6 +6002,11 @@ class AudioLibraryDialog(QDialog):
         title.setStyleSheet(f"font-size: 16px; font-weight: 700; color: {COLORS['text_primary']};")
         layout.addWidget(title)
 
+        # Status / info bar
+        self._status_lbl = QLabel("Loading…")
+        self._status_lbl.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 11px;")
+        layout.addWidget(self._status_lbl)
+
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText(self.tr("search_songs"))
         self.search_input.textChanged.connect(self._filter_songs)
@@ -5425,23 +6014,37 @@ class AudioLibraryDialog(QDialog):
 
         content_row = QHBoxLayout()
         self.song_list = QListWidget()
-        self._populate(filter_text="")
         content_row.addWidget(self.song_list, 1)
 
         # Info panel
         info_panel = QFrame()
         info_panel.setProperty("class", "panel")
-        info_panel.setMinimumWidth(220)
+        info_panel.setMinimumWidth(240)
         info_layout = QVBoxLayout(info_panel)
         info_layout.setContentsMargins(14, 14, 14, 14)
         info_layout.setSpacing(8)
-        info_lbl = _make_section_label("Song Details")
-        info_layout.addWidget(info_lbl)
+        info_layout.addWidget(_make_section_label("Song Details"))
         self.info_label = QLabel(self.tr("song_info_label"))
-        self.info_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px; line-height: 1.6;")
+        self.info_label.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; font-size: 12px; line-height: 1.6;"
+        )
         self.info_label.setWordWrap(True)
         self.info_label.setAlignment(Qt.AlignTop)
         info_layout.addWidget(self.info_label)
+
+        # Download progress inside info panel
+        self._dl_bar = QProgressBar()
+        self._dl_bar.setRange(0, 100)
+        self._dl_bar.setValue(0)
+        self._dl_bar.setVisible(False)
+        self._dl_bar.setFixedHeight(4)
+        info_layout.addWidget(self._dl_bar)
+
+        self._dl_lbl = QLabel("")
+        self._dl_lbl.setStyleSheet(f"color: {COLORS['warning']}; font-size: 11px;")
+        self._dl_lbl.setWordWrap(True)
+        info_layout.addWidget(self._dl_lbl)
+
         info_layout.addStretch()
         content_row.addWidget(info_panel)
         layout.addLayout(content_row)
@@ -5449,29 +6052,84 @@ class AudioLibraryDialog(QDialog):
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
         close_btn = _styled_btn(self.tr("close"), "")
-        add_btn   = _styled_btn(f"＋  {self.tr('add_selected')}", "primary")
-        add_btn.setFixedHeight(36)
+        refresh_btn = _styled_btn("↻  Refresh Library", "")
+        self.add_btn = _styled_btn(f"＋  {self.tr('add_selected')}", "primary")
+        self.add_btn.setFixedHeight(36)
         close_btn.clicked.connect(self.close)
-        add_btn.clicked.connect(self._add_selected)
+        refresh_btn.clicked.connect(self._fetch_index)
+        self.add_btn.clicked.connect(self._add_selected)
         btn_row.addWidget(close_btn)
+        btn_row.addWidget(refresh_btn)
         btn_row.addStretch()
-        btn_row.addWidget(add_btn)
+        btn_row.addWidget(self.add_btn)
         layout.addLayout(btn_row)
 
         self.song_list.itemSelectionChanged.connect(self._update_info)
 
+    def _set_status(self, text: str):
+        self._status_lbl.setText(text)
+
     def _populate(self, filter_text: str = ""):
         self.song_list.clear()
-        low = filter_text.lower()
+        lo = filter_text.lower()
         for song in self.songs:
-            if (low in song["name"].lower() or low in song["author"].lower()
-                    or low in song.get("fits_for", "").lower()):
-                item = QListWidgetItem(f"{song['name']} — {song['author']}")
+            if (lo in song["name"].lower() or lo in song["author"].lower()
+                    or lo in song.get("fits_for", "").lower()):
+                local_path = self._local_path(song)
+                downloaded = local_path.exists()
+                icon = "✓" if downloaded else "⬇"
+                item = QListWidgetItem(f"{icon}  {song['name']} — {song['author']}")
                 item.setData(Qt.UserRole, song)
+                if downloaded:
+                    item.setForeground(QColor(COLORS["success"]))
                 self.song_list.addItem(item)
 
     def _filter_songs(self):
         self._populate(self.search_input.text())
+
+    def _local_path(self, song: dict) -> Path:
+        """
+        Return the local file path for a song.
+        Songs are stored flat in self._songs_dir (no sub-folders).
+        Works whether the JSON entry uses:
+          {BASE_PATH}/Songs/AudioFiles/Artist - Title.mp3   (old format)
+          AudioFiles/Artist - Title.mp3                     (github_path)
+          Artist - Title.mp3                                (filename only)
+        """
+        raw = song.get("path", song["name"] + ".mp3")
+        raw = raw.replace("{BASE_PATH}", "").replace("\\", "/")
+        filename = os.path.basename(raw.replace("\\", "/"))
+        return self._songs_dir / filename
+
+    def _github_url(self, song: dict) -> str:
+        """
+        Build the raw GitHub download URL.
+        Handles all three path formats in the JSON:
+          1. github_path = "AudioFiles/Artist - Title.mp3"   → use as-is (subfolder aware)
+          2. path        = "{BASE_PATH}/Songs/AudioFiles/..."  → strip prefix, keep subfolder
+          3. neither     → just the filename, assume root of Songs/
+        GITHUB_AUDIO_BASE already ends with /Songs so we append the relative part.
+        """
+        # Prefer explicit github_path (cleanest)
+        gp = song.get("github_path", "")
+        if gp:
+            # Already relative to Songs/ on GitHub
+            rel = gp.replace("\\", "/").lstrip("/")
+            return f"{GITHUB_AUDIO_BASE}/{urllib.parse.quote(rel, safe='/')}"
+
+        # Fall back to "path" — strip {BASE_PATH}/Songs/ prefix to get relative part
+        raw = song.get("path", song["name"] + ".mp3")
+        raw = raw.replace("{BASE_PATH}", "").replace("\\", "/")
+        # raw might now be  /Songs/AudioFiles/X.mp3  or  Songs/AudioFiles/X.mp3
+        # Strip leading /Songs/ so we don't double it with GITHUB_AUDIO_BASE
+        for prefix in ("/Songs/", "Songs/"):
+            if raw.lstrip("/").startswith(prefix.lstrip("/")):
+                raw = raw.lstrip("/")[len(prefix.lstrip("/")):]
+                break
+        raw = raw.lstrip("/")
+        if not raw:
+            raw = song["name"] + ".mp3"
+        return f"{GITHUB_AUDIO_BASE}/{urllib.parse.quote(raw, safe='/')}"
 
     def _fmt_dur(self, seconds: float) -> str:
         m = int(seconds // 60); s = int(seconds % 60)
@@ -5481,20 +6139,100 @@ class AudioLibraryDialog(QDialog):
         selected = self.song_list.selectedItems()
         if selected:
             s = selected[0].data(Qt.UserRole)
+            local = self._local_path(s)
+            dl_status = "✓ Downloaded" if local.exists() else "⬇ Not yet downloaded"
             self.info_label.setText(
                 f"<b>Name:</b> {s['name']}<br><br>"
                 f"<b>Artist:</b> {s['author']}<br><br>"
                 f"<b>Duration:</b> {self._fmt_dur(s['duration'])}<br><br>"
-                f"<b>Fits for:</b> {s.get('fits_for', '')}<br>"
+                f"<b>Fits for:</b> {s.get('fits_for', '')}<br><br>"
+                f"<b>Status:</b> {dl_status}<br>"
             )
 
+    def _download_song(self, song: dict, on_done):
+        """Download a song from GitHub asynchronously."""
+        local_path = self._local_path(song)
+        if local_path.exists():
+            on_done(str(local_path), None)
+            return
+
+        url = self._github_url(song)
+        self._dl_lbl.setText(f"Downloading: {song['name']}…")
+        self._dl_bar.setVisible(True)
+        self._dl_bar.setValue(0)
+
+        class _DL(QThread):
+            progress = pyqtSignal(int)
+            done = pyqtSignal(object, object)
+
+            def __init__(self, _url, _path):
+                super().__init__()
+                self._url  = _url
+                self._path = _path
+
+            def run(self):
+                try:
+                    req = urllib.request.Request(
+                        self._url, headers={"User-Agent": "Eventure-App"}
+                    )
+                    with urllib.request.urlopen(req, timeout=30) as resp:
+                        total = int(resp.headers.get("Content-Length", 0))
+                        downloaded = 0
+                        chunk_size = 32768
+                        buf = b""
+                        while True:
+                            chunk = resp.read(chunk_size)
+                            if not chunk:
+                                break
+                            buf += chunk
+                            downloaded += len(chunk)
+                            if total:
+                                self.progress.emit(int(downloaded / total * 100))
+                    with open(self._path, "wb") as f:
+                        f.write(buf)
+                    self.done.emit(str(self._path), None)
+                except Exception as e:
+                    self.done.emit(None, str(e))
+
+        dl = _DL(url, str(local_path))
+        self._downloading.add(dl)
+        dl.progress.connect(self._dl_bar.setValue)
+        def _finish(path, err):
+            self._dl_bar.setVisible(False)
+            if path:
+                self._dl_lbl.setText(f"✓ Downloaded: {song['name']}")
+                self._populate(self.search_input.text())
+            else:
+                self._dl_lbl.setText(f"Download failed: {err}")
+            self._downloading.discard(dl)
+            dl.deleteLater()
+            on_done(path, err)
+        dl.done.connect(_finish)
+        dl.start()
+
     def _add_selected(self):
-        for item in self.song_list.selectedItems():
-            song = item.data(Qt.UserRole)
-            path = Path(song["path"].replace("{BASE_PATH}", str(BASEPATH)))
-            if not any(a["path"] == path for a in self.parent().audio_files):
-                self.parent().audio_files.append({"path": path})
-        self.parent().update_audio_table()
+        items = self.song_list.selectedItems()
+        if not items:
+            return
+        song = items[0].data(Qt.UserRole)
+        local_path = self._local_path(song)
+        if local_path.exists():
+            self._do_add(str(local_path))
+        else:
+            def _on_dl(path, err):
+                if path:
+                    self._do_add(path)
+                else:
+                    QMessageBox.warning(self, "Download Failed",
+                        f"Could not download '{song['name']}':\n{err}\n\n"
+                        "Please check your internet connection.")
+            self._download_song(song, _on_dl)
+
+    def _do_add(self, path: str):
+        parent = self.parent()
+        if parent and not any(str(a["path"]) == path for a in parent.audio_files):
+            parent.audio_files.append({"path": path})
+            parent.update_audio_table()
         self.close()
 
 

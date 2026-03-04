@@ -36,9 +36,33 @@ fonts_folder = script_dir / "Fonts"
 
 _FONT: ImageFont.FreeTypeFont | None = None
 
-def _get_font() -> ImageFont.FreeTypeFont:
-    """Return the cached font, loading it on first call."""
+def _get_font(font_family: str | None = None) -> ImageFont.FreeTypeFont:
+    """Return a font, preferring font_family if provided, else Birzia-Black."""
     global _FONT
+    # If a specific family is requested, try to load it fresh each call
+    if font_family and font_family not in ("Segoe UI", ""):
+        # Check GoogleFonts folder first
+        gf_path = BASEPATH / "Fonts" / "GoogleFonts" / f"{font_family.replace(' ', '_')}.ttf"
+        if gf_path.exists():
+            try:
+                return ImageFont.truetype(str(gf_path), 85)
+            except Exception:
+                pass
+        # Try system font dirs (Windows)
+        import platform
+        if platform.system() == "Windows":
+            win_fonts = Path("C:/Windows/Fonts")
+            for candidate in [
+                win_fonts / f"{font_family}.ttf",
+                win_fonts / f"{font_family.replace(' ', '')}.ttf",
+                win_fonts / f"{font_family.lower().replace(' ', '')}.ttf",
+            ]:
+                if candidate.exists():
+                    try:
+                        return ImageFont.truetype(str(candidate), 85)
+                    except Exception:
+                        pass
+    # Default: cached Birzia-Black
     if _FONT is None:
         font_path = BASEPATH / "Fonts" / "Birzia-Black.otf"
         try:
@@ -137,9 +161,10 @@ def process_image(
     rotation: int,
     text_on_kb: bool,
     crop: tuple | None = None,
+    font_family: str | None = None,
 ) -> str | None:
     TARGET_W, TARGET_H = 1920, 1080
-    font = _get_font()   # lazy-loaded, safe in workers
+    font = _get_font(font_family)   # lazy-loaded, safe in workers
 
     try:
         original = load_image_respecting_exif(image_path)
