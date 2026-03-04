@@ -93,7 +93,7 @@ def sync_app_folders() -> None:
     """
     BASEPATH.mkdir(parents=True, exist_ok=True)
 
-    resources = ["Fonts", "Help", "Languages", "Songs"]
+    resources = ["Fonts", "Help", "Languages"]
     for name in resources:
         src = script_dir / name
         dst = BASEPATH / name
