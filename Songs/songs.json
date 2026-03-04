@@ -158,5 +158,45 @@
     "fits_for": "wedding, proposal, inspirational segment",
     "path": "{BASE_PATH}/Songs/AudioFiles/עקיבא - יש בך הכל.mp3",
     "github_path": "AudioFiles/עקיבא - יש בך הכל.mp3"
+  },
+  {
+    "name": "אני לא מפסיק להתרגש ממך",
+    "author": "דני רובס",
+    "duration": 213,
+    "fits_for": "",
+    "path": "{BASE_PATH}/Songs/AudioFiles/דני רובס - אני לא מפסיק להתרגש ממך.mp3",
+    "github_path": "AudioFiles/דני רובס - אני לא מפסיק להתרגש ממך.mp3"
+  },
+  {
+    "name":"מתנות קטנות",
+    "author": "רמי קליינשטן",
+    "duration": 226,
+    "fits_for": "",
+    "path": "{BASE_PATH}/Songs/AudioFiles/רמי קלינשטיין  - מתנות קטנות.mp3",
+    "github_path": "AudioFiles/רמי קלינשטיין  - מתנות קטנות.mp3"
+  },
+  {
+    "name":"אל תוותר",
+    "author": "אמיר פיי גוטמן",
+    "duration": 184,
+    "fits_for": "",
+    "path": "{BASE_PATH}/Songs/AudioFiles/אמיר פיי גוטמן - אל תוותר.mp3",
+    "github_path": "AudioFiles/אמיר פיי גוטמן - אל תוותר.mp3"
+  },
+  {
+    "name":"לך אלי",
+    "author": "מאיר בנאי",
+    "duration": 348,
+    "fits_for": "",
+    "path": "{BASE_PATH}/Songs/AudioFiles/מאיר בנאי - לך אלי.mp3",
+    "github_path": "AudioFiles/מאיר בנאי - לך אלי.mp3"
+  },
+  {
+    "name":"מכתב לאחי",
+    "author": "עילי בוטנר",
+    "duration": 215,
+    "fits_for": "",
+    "path": "{BASE_PATH}/Songs/AudioFiles/עילי בוטנר - מכתב לאחי.mp3",
+    "github_path": "AudioFiles/עילי בוטנר - מכתב לאחי.mp3"
   }
 ]
