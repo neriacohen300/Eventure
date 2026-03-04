@@ -43,7 +43,7 @@ import openpyxl
 
 import premiere_export
 
-APP_VERSION = "1.0.4"
+APP_VERSION = "1.0.5"
 
 plugin_path = os.path.join(os.path.dirname(sys.executable), "Library", "plugins", "platforms")
 os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = plugin_path
