@@ -1,41 +1,13 @@
 """
-main.py  –  Eventure Slideshow Creator (improved)
-
-Key improvements over original:
-  ┌─────────────────────────────────────────────────────────────────────────┐
-  │ PERFORMANCE                                                              │
-  │  • ImageProcessingWorker now uses ThreadPoolExecutor to process images   │
-  │    in parallel instead of sequentially (big speedup for large batches)   │
-  │  • ffprobe calls use a proper list-based subprocess (no shell=True risk) │
-  │  • Audio duration cached after first calculation in InfoDialog           │
-  │                                                                          │
-  │ CODE QUALITY                                                             │
-  │  • save_project / save_project_as deduplicated into _write_project_file  │
-  │  • format_time used from a single shared helper (no duplication)         │
-  │  • load_translations falls back gracefully without a bare except         │
-  │  • EXIF orientation tag looked up once at import                         │
-  │  • Startup folder copies moved to a helper _copy_resource_folders()      │
-  │                                                                          │
-  │ UI / ROBUSTNESS                                                          │
-  │  • Progress bars update from worker threads via signals (thread-safe)    │
-  │  • Premiere style file path now relative (no hardcoded E:\\ path)        │
-  │  • load_project validates line count before indexing                     │
-  └─────────────────────────────────────────────────────────────────────────┘
-
-CRITICAL – multiprocessing fix (Windows):
-  freeze_support() MUST be the very first executable line in the entry-point
-  file.  On Windows, ProcessPoolExecutor spawns fresh Python processes that
-  re-import this module; if freeze_support() isn't first, every worker tries
-  to boot the full Qt app and crashes immediately.
+Eventure.py  –  Redesigned UI
+Full redesign: dark cinema aesthetic, card-based layout, modern toolbar,
+sidebar preview, inline controls. All original functionality preserved.
 """
 
-# ── freeze_support MUST come before every other import ───────────────────────
 import multiprocessing
 import threading
-
 from pptx_export import extract_pptx_content_to_slideshow_file
 multiprocessing.freeze_support()
-# ─────────────────────────────────────────────────────────────────────────────
 
 import configparser
 import copy
@@ -55,13 +27,15 @@ from PyQt5.QtWidgets import (
     QMessageBox, QDialog, QTextEdit, QListWidgetItem, QCheckBox,
     QStyledItemDelegate, QPushButton, QLabel, QFileDialog, QSlider,
     QStyle, QTableWidgetItem, QSpinBox, QHeaderView, QTableWidget,
-    QLineEdit,
+    QLineEdit, QFrame, QScrollArea, QSizePolicy, QToolBar, QStatusBar,
+    QSplitter, QGridLayout, QToolButton, QMenu,
 )
 from PyQt5.QtCore import pyqtSlot
 from PyQt5.QtCore import Qt, QUrl, QSize, QProcess, QTimer, QThread, pyqtSignal, QEvent
 from PyQt5.QtGui import (
     QIcon, QFont, QPixmap, QTextCursor, QCursor, QTransform,
-    QColor, QBrush, QImage,
+    QColor, QBrush, QImage, QPalette, QPainter, QLinearGradient,
+    QFontDatabase,
 )
 from PIL import Image, ExifTags
 from openpyxl import Workbook
@@ -69,12 +43,7 @@ import openpyxl
 
 import premiere_export
 
-from EVENTURE_THEMES.theme import set_theme
-
 APP_VERSION = "1.0.4"
-
-
-# ── Environment ──────────────────────────────────────────────────────────────
 
 plugin_path = os.path.join(os.path.dirname(sys.executable), "Library", "plugins", "platforms")
 os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = plugin_path
@@ -82,99 +51,495 @@ os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = plugin_path
 BASEPATH = Path.home() / "Neria-LTD" / "Eventure"
 BASEPATH.mkdir(parents=True, exist_ok=True)
 
-# ── Resolve the folder that contains the running app ─────────────────────────
-# Works correctly both when running as a plain .py script AND when bundled
-# with PyInstaller (frozen exe).  PyInstaller sets sys.frozen and unpacks
-# bundled files next to sys.executable, so ffmpeg.exe will be found there.
 if getattr(sys, "frozen", False):
-    # Running as PyInstaller bundle — exe lives in this folder
     APP_DIR = Path(sys.executable).resolve().parent
 else:
-    # Running as a normal Python script
     APP_DIR = Path(__file__).resolve().parent
 
-# EXIF orientation tag (looked up once)
 _ORIENTATION_TAG = next(
     (k for k, v in ExifTags.TAGS.items() if v == "Orientation"), None
 )
 
+# ── Design System ─────────────────────────────────────────────────────────────
+
+COLORS = {
+    "bg_deep":       "#1E2228",
+    "bg_panel":      "#252B34",
+    "bg_card":       "#2C333D",
+    "bg_hover":      "#333B47",
+    "bg_selected":   "#2B3A50",
+    "border":        "#363E4A",
+    "border_light":  "#404A58",
+    "accent":        "#5B9BFF",
+    "accent_dim":    "#2D4E7A",
+    "accent_glow":   "rgba(91,155,255,0.15)",
+    "success":       "#4ADB9A",
+    "warning":       "#F5A623",
+    "danger":        "#F76E6E",
+    "purple":        "#A67CFF",
+    "text_primary":  "#E8EDF5",
+    "text_secondary":"#95A0B4",
+    "text_muted":    "#647080",
+    "header_bg":     "#20262F",
+    "toolbar_bg":    "#232930",
+    "second_image":  "rgba(166,124,255,0.12)",
+}
+
+STYLESHEET = f"""
+/* ── Base ── */
+QMainWindow, QWidget {{
+    background-color: {COLORS['bg_deep']};
+    color: {COLORS['text_primary']};
+    font-family: 'Segoe UI', 'SF Pro Display', sans-serif;
+    font-size: 13px;
+}}
+
+/* ── MenuBar ── */
+QMenuBar {{
+    background-color: {COLORS['header_bg']};
+    color: {COLORS['text_secondary']};
+    border-bottom: 1px solid {COLORS['border']};
+    padding: 2px 8px;
+    spacing: 4px;
+    font-size: 12px;
+    letter-spacing: 0.3px;
+}}
+QMenuBar::item {{
+    background: transparent;
+    padding: 5px 12px;
+    border-radius: 4px;
+}}
+QMenuBar::item:selected {{
+    background-color: {COLORS['bg_hover']};
+    color: {COLORS['text_primary']};
+}}
+QMenu {{
+    background-color: {COLORS['bg_card']};
+    border: 1px solid {COLORS['border_light']};
+    border-radius: 8px;
+    padding: 6px 4px;
+    color: {COLORS['text_primary']};
+}}
+QMenu::item {{
+    padding: 7px 28px 7px 16px;
+    border-radius: 4px;
+    margin: 1px 4px;
+}}
+QMenu::item:selected {{
+    background-color: {COLORS['bg_hover']};
+    color: {COLORS['accent']};
+}}
+QMenu::separator {{
+    height: 1px;
+    background: {COLORS['border']};
+    margin: 4px 8px;
+}}
+
+/* ── Toolbar ── */
+QToolBar {{
+    background-color: {COLORS['toolbar_bg']};
+    border-bottom: 1px solid {COLORS['border']};
+    padding: 4px 12px;
+    spacing: 6px;
+}}
+QToolButton {{
+    background-color: transparent;
+    color: {COLORS['text_secondary']};
+    border: none;
+    border-radius: 6px;
+    padding: 6px 14px;
+    font-size: 12px;
+    font-weight: 500;
+}}
+QToolButton:hover {{
+    background-color: {COLORS['bg_hover']};
+    color: {COLORS['text_primary']};
+}}
+QToolButton:pressed {{
+    background-color: {COLORS['bg_selected']};
+    color: {COLORS['accent']};
+}}
+QToolButton[accent="true"] {{
+    background-color: {COLORS['accent_dim']};
+    color: {COLORS['accent']};
+    border: 1px solid {COLORS['accent_dim']};
+}}
+QToolButton[accent="true"]:hover {{
+    background-color: {COLORS['accent']};
+    color: #FFFFFF;
+}}
+
+/* ── Table ── */
+QTableWidget {{
+    background-color: {COLORS['bg_panel']};
+    border: 1px solid {COLORS['border']};
+    border-radius: 10px;
+    gridline-color: {COLORS['border']};
+    color: {COLORS['text_primary']};
+    selection-background-color: {COLORS['bg_selected']};
+    selection-color: {COLORS['text_primary']};
+    outline: none;
+    font-size: 12px;
+}}
+QTableWidget::item {{
+    padding: 6px 10px;
+    border: none;
+}}
+QTableWidget::item:selected {{
+    background-color: {COLORS['bg_selected']};
+    border-left: 2px solid {COLORS['accent']};
+}}
+QHeaderView::section {{
+    background-color: {COLORS['bg_deep']};
+    color: {COLORS['text_muted']};
+    border: none;
+    border-bottom: 1px solid {COLORS['border']};
+    padding: 8px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+}}
+QHeaderView {{
+    background-color: {COLORS['bg_deep']};
+    border: none;
+}}
+
+/* ── Buttons ── */
+QPushButton {{
+    background-color: {COLORS['bg_card']};
+    color: {COLORS['text_primary']};
+    border: 1px solid {COLORS['border_light']};
+    border-radius: 6px;
+    padding: 5px 12px;
+    font-size: 12px;
+    font-weight: 500;
+    min-height: 26px;
+}}
+QPushButton:hover {{
+    background-color: {COLORS['bg_hover']};
+    border-color: {COLORS['accent']};
+    color: {COLORS['accent']};
+}}
+QPushButton:pressed {{
+    background-color: {COLORS['bg_selected']};
+}}
+QPushButton[action="primary"] {{
+    background-color: {COLORS['accent']};
+    border-color: {COLORS['accent']};
+    color: #ffffff;
+    font-weight: 600;
+}}
+QPushButton[action="primary"]:hover {{
+    background-color: #6BA0FF;
+    color: #ffffff;
+}}
+QPushButton[action="danger"] {{
+    background-color: transparent;
+    border-color: {COLORS['danger']};
+    color: {COLORS['danger']};
+}}
+QPushButton[action="danger"]:hover {{
+    background-color: {COLORS['danger']};
+    color: white;
+}}
+QPushButton[action="icon"] {{
+    background: transparent;
+    border: none;
+    padding: 3px 6px;
+    color: {COLORS['text_muted']};
+    font-size: 14px;
+    min-height: 20px;
+    border-radius: 4px;
+}}
+QPushButton[action="icon"]:hover {{
+    background: {COLORS['bg_hover']};
+    color: {COLORS['text_primary']};
+}}
+
+/* ── ComboBox ── */
+QComboBox {{
+    background-color: {COLORS['bg_card']};
+    color: {COLORS['text_primary']};
+    border: 1px solid {COLORS['border']};
+    border-radius: 5px;
+    padding: 4px 8px;
+    font-size: 12px;
+    min-width: 90px;
+}}
+QComboBox:hover {{
+    border-color: {COLORS['accent']};
+}}
+QComboBox::drop-down {{
+    border: none;
+    width: 20px;
+}}
+QComboBox::down-arrow {{
+    image: none;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid {COLORS['text_muted']};
+    margin-right: 6px;
+}}
+QComboBox QAbstractItemView {{
+    background-color: {COLORS['bg_card']};
+    border: 1px solid {COLORS['border_light']};
+    border-radius: 6px;
+    color: {COLORS['text_primary']};
+    selection-background-color: {COLORS['bg_hover']};
+    padding: 4px;
+}}
+
+/* ── CheckBox ── */
+QCheckBox {{
+    color: {COLORS['text_secondary']};
+    spacing: 6px;
+}}
+QCheckBox::indicator {{
+    width: 16px;
+    height: 16px;
+    border: 1.5px solid {COLORS['border_light']};
+    border-radius: 4px;
+    background: {COLORS['bg_card']};
+}}
+QCheckBox::indicator:checked {{
+    background-color: {COLORS['accent']};
+    border-color: {COLORS['accent']};
+}}
+
+/* ── LineEdit / TextEdit ── */
+QLineEdit, QTextEdit {{
+    background-color: {COLORS['bg_card']};
+    color: {COLORS['text_primary']};
+    border: 1px solid {COLORS['border']};
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 13px;
+    selection-background-color: {COLORS['accent_dim']};
+}}
+QLineEdit:focus, QTextEdit:focus {{
+    border-color: {COLORS['accent']};
+    background-color: {COLORS['bg_hover']};
+}}
+QLineEdit::placeholder {{
+    color: {COLORS['text_muted']};
+}}
+
+/* ── SpinBox ── */
+QSpinBox {{
+    background-color: {COLORS['bg_card']};
+    color: {COLORS['text_primary']};
+    border: 1px solid {COLORS['border']};
+    border-radius: 5px;
+    padding: 4px 6px;
+}}
+QSpinBox:focus {{
+    border-color: {COLORS['accent']};
+}}
+
+/* ── ProgressBar ── */
+QProgressBar {{
+    background-color: {COLORS['bg_card']};
+    border: none;
+    border-radius: 3px;
+    height: 4px;
+    text-align: center;
+    color: transparent;
+}}
+QProgressBar::chunk {{
+    border-radius: 3px;
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 {COLORS['accent']}, stop:1 #7AB8FF);
+}}
+QProgressBar[type="kb"]::chunk {{
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 {COLORS['purple']}, stop:1 #C49FFF);
+}}
+QProgressBar[type="premiere"]::chunk {{
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 {COLORS['success']}, stop:1 #7FFFD4);
+}}
+
+/* ── ScrollBar ── */
+QScrollBar:vertical {{
+    background: transparent;
+    width: 8px;
+    border-radius: 4px;
+}}
+QScrollBar::handle:vertical {{
+    background: {COLORS['border_light']};
+    border-radius: 4px;
+    min-height: 20px;
+}}
+QScrollBar::handle:vertical:hover {{
+    background: {COLORS['text_muted']};
+}}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+    height: 0;
+}}
+QScrollBar:horizontal {{
+    background: transparent;
+    height: 8px;
+    border-radius: 4px;
+}}
+QScrollBar::handle:horizontal {{
+    background: {COLORS['border_light']};
+    border-radius: 4px;
+    min-width: 20px;
+}}
+QScrollBar::handle:horizontal:hover {{
+    background: {COLORS['text_muted']};
+}}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+    width: 0;
+}}
+
+/* ── Frames & Panels ── */
+QFrame[class="panel"] {{
+    background-color: {COLORS['bg_panel']};
+    border: 1px solid {COLORS['border']};
+    border-radius: 10px;
+}}
+QFrame[class="divider"] {{
+    background-color: {COLORS['border']};
+    max-height: 1px;
+}}
+
+/* ── Labels ── */
+QLabel[class="section-title"] {{
+    color: {COLORS['text_muted']};
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+}}
+QLabel[class="preview-empty"] {{
+    color: {COLORS['text_muted']};
+    font-size: 13px;
+    background-color: {COLORS['bg_card']};
+    border: 1px dashed {COLORS['border_light']};
+    border-radius: 8px;
+}}
+
+/* ── StatusBar ── */
+QStatusBar {{
+    background-color: {COLORS['header_bg']};
+    color: {COLORS['text_muted']};
+    border-top: 1px solid {COLORS['border']};
+    font-size: 11px;
+    padding: 0 12px;
+}}
+
+/* ── Dialog ── */
+QDialog {{
+    background-color: {COLORS['bg_panel']};
+    color: {COLORS['text_primary']};
+    border: 1px solid {COLORS['border_light']};
+    border-radius: 12px;
+}}
+
+/* ── Splitter ── */
+QSplitter::handle {{
+    background-color: {COLORS['border']};
+}}
+QSplitter::handle:horizontal {{
+    width: 1px;
+}}
+
+/* ── ListWidget ── */
+QListWidget {{
+    background-color: {COLORS['bg_card']};
+    border: 1px solid {COLORS['border']};
+    border-radius: 8px;
+    color: {COLORS['text_primary']};
+    outline: none;
+    padding: 4px;
+}}
+QListWidget::item {{
+    padding: 8px 12px;
+    border-radius: 6px;
+    margin: 1px 0;
+}}
+QListWidget::item:selected {{
+    background-color: {COLORS['bg_selected']};
+    color: {COLORS['accent']};
+}}
+QListWidget::item:hover {{
+    background-color: {COLORS['bg_hover']};
+}}
+"""
+
+
+def _make_section_label(text: str) -> QLabel:
+    lbl = QLabel(text.upper())
+    lbl.setProperty("class", "section-title")
+    return lbl
+
+
+def _make_divider() -> QFrame:
+    f = QFrame()
+    f.setProperty("class", "divider")
+    f.setFrameShape(QFrame.HLine)
+    f.setFixedHeight(1)
+    return f
+
+
+def _styled_btn(text: str, action: str = "") -> QPushButton:
+    btn = QPushButton(text)
+    if action:
+        btn.setProperty("action", action)
+    return btn
+
+
+# ── Update check ─────────────────────────────────────────────────────────────
 
 def check_for_updates(parent_window, current_version: str):
-    """
-    Checks GitHub releases API in a background thread.
-    If a newer version exists, shows a non-blocking dialog with a download link.
-
-    Replace GITHUB_USER and GITHUB_REPO with your actual values.
-    """
-    GITHUB_USER = "neriacohen300"       # ← change this
-    GITHUB_REPO = "Eventure"      # ← change this
+    GITHUB_USER = "neriacohen300"
+    GITHUB_REPO = "Eventure"
     API_URL = f"https://api.github.com/repos/{GITHUB_USER}/{GITHUB_REPO}/releases/latest"
 
     def _fetch():
         try:
             import urllib.request, json
-            req = urllib.request.Request(
-                API_URL,
-                headers={"User-Agent": "Eventure-App"},
-            )
+            req = urllib.request.Request(API_URL, headers={"User-Agent": "Eventure-App"})
             with urllib.request.urlopen(req, timeout=5) as resp:
                 data = json.loads(resp.read().decode())
-
-            latest_tag  = data.get("tag_name", "").lstrip("v")   # e.g. "1.2.3"
+            latest_tag  = data.get("tag_name", "").lstrip("v")
             release_url = data.get("html_url", "")
-            changelog   = data.get("body", "").strip()           # release notes
-
+            changelog   = data.get("body", "").strip()
             if not latest_tag:
                 return
-
-            # Simple tuple comparison: (1, 2, 3) > (1, 0, 0)
             def _ver(s):
                 try:    return tuple(int(x) for x in s.split("."))
                 except: return (0,)
-
             if _ver(latest_tag) > _ver(current_version):
-                # Must update the UI on the main thread via a Qt signal
                 from PyQt5.QtCore import QMetaObject, Qt, Q_ARG
                 QMetaObject.invokeMethod(
-                    parent_window,
-                    "_show_update_dialog",
-                    Qt.QueuedConnection,
-                    Q_ARG(str, latest_tag),
-                    Q_ARG(str, release_url),
-                    Q_ARG(str, changelog),
+                    parent_window, "_show_update_dialog", Qt.QueuedConnection,
+                    Q_ARG(str, latest_tag), Q_ARG(str, release_url), Q_ARG(str, changelog),
                 )
         except Exception as e:
-            print(f"Update check failed: {e}")   # silent — never block startup
+            print(f"Update check failed: {e}")
 
     threading.Thread(target=_fetch, daemon=True).start()
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-
 def _ffmpeg_exe() -> str:
-    """Resolve ffmpeg from PATH, then next to the running app (script or PyInstaller exe)."""
     import shutil as _shutil
     return _shutil.which("ffmpeg") or str(APP_DIR / "ffmpeg.exe")
 
 def _ffprobe_exe() -> str:
-    """Resolve ffprobe from PATH, then next to the running app (script or PyInstaller exe)."""
     import shutil as _shutil
     return _shutil.which("ffprobe") or str(APP_DIR / "ffprobe.exe")
 
 def _get_audio_duration(audio_path: str) -> float:
-    """Return the duration of an audio file in seconds using ffprobe."""
     try:
         result = subprocess.run(
-            [
-                _ffprobe_exe(), "-v", "error",
-                "-show_entries", "format=duration",
-                "-of", "default=noprint_wrappers=1:nokey=1",
-                audio_path,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=10,
+            [_ffprobe_exe(), "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", audio_path],
+            capture_output=True, text=True, timeout=10,
             creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
         )
         return float(result.stdout.strip())
@@ -184,7 +549,6 @@ def _get_audio_duration(audio_path: str) -> float:
 
 
 def format_time_srt(seconds: float) -> str:
-    """Convert seconds to SRT timestamp (HH:MM:SS,mmm)."""
     h   = int(seconds // 3600)
     m   = int((seconds % 3600) // 60)
     s   = int(seconds % 60)
@@ -193,16 +557,13 @@ def format_time_srt(seconds: float) -> str:
 
 
 def format_time_hms(seconds: float) -> str:
-    """Convert seconds to HH:MM:SS."""
     h = int(seconds // 3600)
     m = int((seconds % 3600) // 60)
     s = int(seconds % 60)
     return f"{h:02}:{m:02}:{s:02}"
 
 
-def _copy_resource_folders(script_dir: Path, resources: list[str]) -> None:
-    """Copy each named sub-folder from script_dir into BASEPATH.
-    Files that are locked/open are skipped so the app still starts."""
+def _copy_resource_folders(script_dir: Path, resources: list) -> None:
     for name in resources:
         src = script_dir / name
         dst = BASEPATH / name
@@ -226,27 +587,11 @@ def _copy_resource_folders(script_dir: Path, resources: list[str]) -> None:
         print(f"Folder '{name}' synced to '{dst}'")
 
 
-# ── Ken Burns pre-renderer ───────────────────────────────────────────────────
-#
-# Instead of using FFmpeg's notoriously fragile zoompan filter (which produces
-# variable-framerate streams that break xfade), we pre-render Ken Burns as a
-# real .mp4 clip per image using Pillow + ffmpeg pipe.  The main export then
-# uses these clips as normal video inputs — stable timestamps, correct size,
-# no surprises.
+# ── Ken Burns Renderer ────────────────────────────────────────────────────────
 
 _KB_FPS = 25
 
-def render_ken_burns_clip(image_path: str, effect: str, duration: float,
-                           output_path: str, rotation: int = 0,
-                           text: str = "", text_on_kb: bool = True) -> bool:
-    """
-    Render a smooth Ken Burns clip at 1920x1080 25fps using sub-pixel interpolation.
-
-    Speed improvements vs original:
-      - All frames pre-built into a contiguous numpy buffer → single pipe write (no per-frame syscall)
-      - CRF 28 (was 18) for intermediate clips — re-encoded in final pass anyway
-      - -tune fastdecode + -g 25 for faster ffmpeg encode
-    """
+def render_ken_burns_clip(image_path, effect, duration, output_path, rotation=0, text="", text_on_kb=True):
     import cv2 as _cv2
     import numpy as _np
     import subprocess as _sp
@@ -256,7 +601,6 @@ def render_ken_burns_clip(image_path: str, effect: str, duration: float,
     W, H, FPS = 1920, 1080, _KB_FPS
     frames = max(1, int(duration * FPS))
 
-    # ── Load & orient ─────────────────────────────────────────────────────────
     try:
         img = _Image.open(image_path)
         img = img.convert("RGBA")
@@ -276,25 +620,20 @@ def render_ken_burns_clip(image_path: str, effect: str, duration: float,
         print(f"KB render error: {e}")
         return False
 
-    # ── Smoothstep easing ─────────────────────────────────────────────────────
     def smooth(raw_t):
         t = max(0.0, min(1.0, raw_t))
         return t * t * (3.0 - 2.0 * t)
 
-    # ── Build high-res source canvas ──────────────────────────────────────────
     ZOOM = 1.10
     src_w, src_h = int(W * ZOOM), int(H * ZOOM)
     img_arr = _np.array(img)
     ih, iw = img_arr.shape[:2]
     scale_cov = max(src_w / iw, src_h / ih)
     new_iw, new_ih = int(iw * scale_cov), int(ih * scale_cov)
-
     resized = _cv2.resize(img_arr, (new_iw, new_ih), interpolation=_cv2.INTER_LANCZOS4)
     cx, cy = (new_iw - src_w) // 2, (new_ih - src_h) // 2
     src = resized[cy:cy + src_h, cx:cx + src_w].copy()
 
-    # ── Pre-compute float rectangles ─────────────────────────────────────────
-    IS_PAN = effect in ("pan_left", "pan_right", "pan_up", "pan_down", "none")
     pad_x = src_w - W
     pad_y = src_h - H
     rects = []
@@ -302,41 +641,24 @@ def render_ken_burns_clip(image_path: str, effect: str, duration: float,
         t = smooth(f / max(frames - 1, 1))
         sw, sh = float(src_w), float(src_h)
         sx, sy = 0.0, 0.0
-
         if effect == "zoom_in":
-            sw = src_w - (src_w - W) * t
-            sh = src_h - (src_h - H) * t
-            sx = (src_w - sw) / 2.0
-            sy = (src_h - sh) / 2.0
+            sw = src_w - (src_w - W) * t; sh = src_h - (src_h - H) * t
+            sx = (src_w - sw) / 2.0; sy = (src_h - sh) / 2.0
         elif effect == "zoom_out":
-            sw = W + (src_w - W) * t
-            sh = H + (src_h - H) * t
-            sx = (src_w - sw) / 2.0
-            sy = (src_h - sh) / 2.0
+            sw = W + (src_w - W) * t; sh = H + (src_h - H) * t
+            sx = (src_w - sw) / 2.0; sy = (src_h - sh) / 2.0
         elif effect == "pan_left":
-            sw, sh = float(W), float(H)
-            sx = (src_w - W) * (1.0 - t)
-            sy = (src_h - H) / 2.0
+            sw, sh = float(W), float(H); sx = (src_w - W) * (1.0 - t); sy = (src_h - H) / 2.0
         elif effect == "pan_right":
-            sw, sh = float(W), float(H)
-            sx = (src_w - W) * t
-            sy = (src_h - H) / 2.0
+            sw, sh = float(W), float(H); sx = (src_w - W) * t; sy = (src_h - H) / 2.0
         elif effect == "pan_up":
-            sw, sh = float(W), float(H)
-            sx = float(pad_x) / 2.0
-            sy = float(pad_y) * (1.0 - t)
+            sw, sh = float(W), float(H); sx = float(pad_x) / 2.0; sy = float(pad_y) * (1.0 - t)
         elif effect == "pan_down":
-            sw, sh = float(W), float(H)
-            sx = float(pad_x) / 2.0
-            sy = float(pad_y) * t
+            sw, sh = float(W), float(H); sx = float(pad_x) / 2.0; sy = float(pad_y) * t
         else:
-            sw, sh = float(W), float(H)
-            sx = float(pad_x) / 2.0
-            sy = float(pad_y) / 2.0
-
+            sw, sh = float(W), float(H); sx = float(pad_x) / 2.0; sy = float(pad_y) / 2.0
         rects.append((sx, sy, sw, sh))
 
-    # ── Static text overlay (text_on_kb=False) ────────────────────────────────
     static_overlay_bgr = None
     static_overlay_mask = None
     if text and text.strip() and not text_on_kb:
@@ -349,45 +671,29 @@ def render_ken_burns_clip(image_path: str, effect: str, duration: float,
             overlay = _Image.new("RGBA", (W, H), (0, 0, 0, 0))
             draw = _Draw.Draw(overlay)
             htext = _bidi(text)
-            bbox  = draw.textbbox((0, 0), htext, font=_font)
+            bbox = draw.textbbox((0, 0), htext, font=_font)
             tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
             bg_w, bg_h = tw + 40, th + 20
-            bg_x = (W - bg_w) // 2;  bg_y = H - bg_h - 50
+            bg_x = (W - bg_w) // 2; bg_y = H - bg_h - 50
             draw.rounded_rectangle((bg_x, bg_y, bg_x+bg_w, bg_y+bg_h), radius=12, fill="white")
             draw.text(((W - tw) // 2, bg_y - 4), htext, font=_font, fill="black")
             ov_arr = _np.array(overlay)
-            alpha  = ov_arr[:, :, 3:4].astype(_np.float32) / 255.0
-            static_overlay_bgr  = ov_arr[:, :, :3].astype(_np.float32)
+            alpha = ov_arr[:, :, 3:4].astype(_np.float32) / 255.0
+            static_overlay_bgr = ov_arr[:, :, :3].astype(_np.float32)
             static_overlay_mask = alpha
         except Exception as e:
             print(f"KB text overlay error: {e}")
 
-    # ── Pre-build all frames into a contiguous buffer ─────────────────────────
-    # One numpy allocation → one pipe write → eliminates per-frame syscall overhead
     frame_buffer = _np.empty((frames, H, W, 3), dtype=_np.uint8)
-
     for f in range(frames):
         sx, sy, sw, sh = rects[f]
-        scale_x = W / sw
-        scale_y = H / sh
-        M = _np.array([
-            [scale_x,  0.0, -sx * scale_x],
-            [0.0,  scale_y, -sy * scale_y],
-        ], dtype=_np.float64)
-        frame = _cv2.warpAffine(
-            src, M, (W, H),
-            flags=_cv2.INTER_LINEAR,
-            borderMode=_cv2.BORDER_REFLECT_101,
-        )
+        scale_x = W / sw; scale_y = H / sh
+        M = _np.array([[scale_x, 0.0, -sx * scale_x], [0.0, scale_y, -sy * scale_y]], dtype=_np.float64)
+        frame = _cv2.warpAffine(src, M, (W, H), flags=_cv2.INTER_LINEAR, borderMode=_cv2.BORDER_REFLECT_101)
         if static_overlay_bgr is not None:
-            frame = (
-                frame.astype(_np.float32) * (1.0 - static_overlay_mask)
-                + static_overlay_bgr * static_overlay_mask
-            ).clip(0, 255).astype(_np.uint8)
-
+            frame = (frame.astype(_np.float32) * (1.0 - static_overlay_mask) + static_overlay_bgr * static_overlay_mask).clip(0, 255).astype(_np.uint8)
         frame_buffer[f] = frame
 
-    # ── Pipe entire buffer into ffmpeg in one write ───────────────────────────
     cmd = [
         _ffmpeg_exe(), "-y",
         "-f", "rawvideo", "-vcodec", "rawvideo",
@@ -395,21 +701,17 @@ def render_ken_burns_clip(image_path: str, effect: str, duration: float,
         "-i", "pipe:0",
         "-vcodec", "libx264", "-pix_fmt", "yuv420p",
         "-preset", "ultrafast", "-crf", "28",
-        "-tune", "fastdecode",
-        "-g", "25",
+        "-tune", "fastdecode", "-g", "25",
         "-r", str(FPS), "-movflags", "+faststart",
         output_path,
     ]
     proc = None
     try:
         proc = _sp.Popen(
-            cmd,
-            stdin=_sp.PIPE,
-            stdout=_sp.DEVNULL,
-            stderr=_sp.DEVNULL,
+            cmd, stdin=_sp.PIPE, stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
             creationflags=_sp.CREATE_NO_WINDOW if hasattr(_sp, "CREATE_NO_WINDOW") else 0,
         )
-        proc.stdin.write(frame_buffer.tobytes())  # single syscall instead of N writes
+        proc.stdin.write(frame_buffer.tobytes())
         proc.stdin.close()
         proc.wait()
         return proc.returncode == 0
@@ -421,10 +723,9 @@ def render_ken_burns_clip(image_path: str, effect: str, duration: float,
         return False
 
 
-# ── Taskbar Progress Stub ────────────────────────────────────────────────────
+# ── Taskbar Progress Stub ─────────────────────────────────────────────────────
 
 class _TaskbarProgressStub:
-    """No-op replacement when QWinTaskbarButton is unavailable."""
     def show(self):          pass
     def hide(self):          pass
     def reset(self):         pass
@@ -432,67 +733,1053 @@ class _TaskbarProgressStub:
     def setVisible(self, v): pass
 
 
+# ── Custom Delegate ───────────────────────────────────────────────────────────
+
+class CustomDelegate(QStyledItemDelegate):
+    def paint(self, painter, option, index):
+        is_secondary = index.model().index(index.row(), 1).data(Qt.UserRole)
+        if is_secondary:
+            painter.save()
+            painter.fillRect(option.rect, QColor(80, 55, 120, 60))
+            painter.restore()
+        super().paint(painter, option, index)
+
+
+# ── Preview Panel ─────────────────────────────────────────────────────────────
+
+class PreviewPanel(QFrame):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setProperty("class", "panel")
+        self.setMinimumHeight(220)
+        self.setMinimumWidth(280)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
+
+        title = _make_section_label("Preview")
+        layout.addWidget(title)
+
+        self.image_label = QLabel()
+        self.image_label.setAlignment(Qt.AlignCenter)
+        self.image_label.setProperty("class", "preview-empty")
+        self.image_label.setMinimumHeight(170)
+        self.image_label.setText("No image selected")
+        layout.addWidget(self.image_label)
+
+        self.filename_label = QLabel()
+        self.filename_label.setAlignment(Qt.AlignCenter)
+        self.filename_label.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 11px;")
+        layout.addWidget(self.filename_label)
+
+    def set_pixmap(self, pixmap: QPixmap, filename: str = ""):
+        if pixmap and not pixmap.isNull():
+            self.image_label.setPixmap(pixmap.scaled(
+                self.image_label.width() - 4,
+                self.image_label.height() - 4,
+                Qt.KeepAspectRatio, Qt.SmoothTransformation
+            ))
+            self.image_label.setProperty("class", "")
+        else:
+            self.image_label.clear()
+            self.image_label.setText("No image selected")
+            self.image_label.setProperty("class", "preview-empty")
+        self.filename_label.setText(filename)
+        self.style().unpolish(self.image_label)
+        self.style().polish(self.image_label)
+
+    def clear(self):
+        self.image_label.clear()
+        self.image_label.setText("No image selected")
+        self.filename_label.setText("")
+
+
+# ── Stats Panel ───────────────────────────────────────────────────────────────
+
+class StatsBar(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(16, 6, 16, 6)
+        layout.setSpacing(24)
+
+        self._labels = {}
+        for key, default in [("slides", "0 slides"), ("duration", "0:00:00"), ("audio", "No audio")]:
+            lbl = QLabel(default)
+            lbl.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 11px;")
+            layout.addWidget(lbl)
+            self._labels[key] = lbl
+
+        layout.addStretch()
+
+    def update_stats(self, n_slides, duration_sec, audio_count):
+        self._labels["slides"].setText(f"  {n_slides} slides")
+        self._labels["duration"].setText(f"  {format_time_hms(duration_sec)}")
+        self._labels["audio"].setText(f"  {audio_count} audio file{'s' if audio_count != 1 else ''}")
+
+
+# ── Progress Section ──────────────────────────────────────────────────────────
+
+class ProgressSection(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 4, 0, 0)
+        layout.setSpacing(6)
+
+        def _bar(color_type):
+            bar = QProgressBar()
+            bar.setRange(0, 100)
+            bar.setValue(0)
+            bar.setVisible(False)
+            bar.setFixedHeight(4)
+            bar.setProperty("type", color_type)
+            return bar
+
+        self.export_bar = _bar("")
+        self.image_bar  = _bar("kb")
+        self.premiere_bar = _bar("premiere")
+
+        for bar in [self.export_bar, self.image_bar, self.premiere_bar]:
+            layout.addWidget(bar)
+
+        self.status_label = QLabel()
+        self.status_label.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 11px;")
+        self.status_label.setVisible(False)
+        layout.addWidget(self.status_label)
+
+
+
+# ── Filmstrip Timeline ────────────────────────────────────────────────────────
+
+# ── Background thumbnail loader ───────────────────────────────────────────────
+
+class _ThumbLoader(QThread):
+    """Loads one thumbnail off the UI thread and emits it when ready."""
+    thumb_ready = pyqtSignal(str, object)   # (path, QPixmap)
+
+    THUMB_W = 200
+    THUMB_H = 120
+
+    def __init__(self, path: str, parent=None):
+        super().__init__(parent)
+        self.path = path
+
+    def run(self):
+        try:
+            img = Image.open(self.path)
+            img.thumbnail((self.THUMB_W, self.THUMB_H), Image.LANCZOS)
+            img = img.convert("RGBA")
+            data = img.tobytes("raw", "RGBA")
+            qi   = QImage(data, img.width, img.height, QImage.Format_RGBA8888)
+            px   = QPixmap.fromImage(qi)
+        except Exception:
+            px = QPixmap()
+        self.thumb_ready.emit(self.path, px)
+
+
+# ── Shared canvas logic (reused by inline strip and full-view dialog) ─────────
+
+class _FilmstripCanvas(QWidget):
+    """
+    Painted canvas: drag-to-reorder cards, right-click context menu.
+    Works both as the inner widget of FilmstripTimeline and inside
+    FilmstripFullDialog (larger cards).
+    """
+    order_changed   = pyqtSignal(int, int)   # (from_idx, to_idx)
+    delete_at       = pyqtSignal(int)
+    move_to         = pyqtSignal(int, int)   # (current_idx, target_pos_1based)
+    card_clicked    = pyqtSignal(int)        # for syncing table selection
+
+    CARD_W  = 110
+    CARD_H  = 90
+    THUMB_H = 60
+    GAP     = 8
+    RADIUS  = 8
+
+    def __init__(self, card_w=110, card_h=90, thumb_h=60, gap=8, parent=None):
+        super().__init__(parent)
+        self.CARD_W  = card_w
+        self.CARD_H  = card_h
+        self.THUMB_H = thumb_h
+        self.GAP     = gap
+
+        self.images: list        = []
+        self._thumbs: dict       = {}          # path → QPixmap (None = loading)
+        self._loaders: dict      = {}          # path → _ThumbLoader
+        self._drag_idx: int      = -1
+        self._drag_abs_x: int    = 0
+        self._drag_offset: int   = 0
+        self._hover_idx: int     = -1
+        self._drop_idx: int      = -1
+        self._selected_idx: int  = -1
+
+        self.setMouseTracking(True)
+        self.setCursor(Qt.OpenHandCursor)
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._show_context_menu)
+
+    # ── public ───────────────────────────────────────────────────────────────
+
+    def set_images(self, images: list):
+        self.images = images
+        # Cancel loaders for paths no longer present
+        current_paths = {img["path"] for img in images}
+        for path in list(self._loaders.keys()):
+            if path not in current_paths:
+                self._loaders.pop(path, None)
+        # Evict stale cached thumbs
+        self._thumbs = {k: v for k, v in self._thumbs.items() if k in current_paths}
+        # Kick off loaders for any new paths
+        for img in images:
+            self._request_thumb(img["path"])
+        self._resize_canvas()
+        self.update()
+
+    def set_selected(self, idx: int):
+        self._selected_idx = idx
+        self.update()
+
+    # ── thumb loading ────────────────────────────────────────────────────────
+
+    def _request_thumb(self, path: str):
+        if path in self._thumbs or path in self._loaders:
+            return
+        self._thumbs[path] = None   # sentinel: loading in progress
+        loader = _ThumbLoader(path, self)
+        loader.thumb_ready.connect(self._on_thumb_ready)
+        self._loaders[path] = loader
+        loader.start()
+
+    def _on_thumb_ready(self, path: str, px: QPixmap):
+        # Scale to card dimensions now that we're back on the UI thread
+        if not px.isNull():
+            px = px.scaled(self.CARD_W - 12, self.THUMB_H - 4,
+                           Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self._thumbs[path] = px
+        self._loaders.pop(path, None)
+        self.update()
+
+    # ── geometry ─────────────────────────────────────────────────────────────
+
+    def _card_x(self, idx: int) -> int:
+        return self.GAP + idx * (self.CARD_W + self.GAP)
+
+    def _resize_canvas(self):
+        n = len(self.images)
+        w = self.GAP + n * (self.CARD_W + self.GAP)
+        h = self.CARD_H + self.GAP * 2
+        self.setMinimumSize(max(w, 200), h)
+        self.resize(max(w, 200), h)
+
+    def _idx_at(self, x: int) -> int:
+        for i in range(len(self.images)):
+            cx = self._card_x(i)
+            if cx <= x <= cx + self.CARD_W:
+                return i
+        return -1
+
+    def _drop_pos_at(self, x: int) -> int:
+        n = len(self.images)
+        for i in range(n):
+            mid = self._card_x(i) + self.CARD_W // 2
+            if x < mid:
+                return i
+        return n
+
+    # ── context menu ─────────────────────────────────────────────────────────
+
+    def _show_context_menu(self, pos):
+        idx = self._idx_at(pos.x())
+        if idx < 0:
+            return
+        img  = self.images[idx]
+        name = os.path.basename(img["path"])
+
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            f"QMenu {{ background: {COLORS['bg_card']}; border: 1px solid {COLORS['border_light']};"
+            f"  border-radius: 8px; padding: 4px; color: {COLORS['text_primary']}; }}"
+            f"QMenu::item {{ padding: 7px 24px 7px 14px; border-radius: 4px; margin: 1px 4px; }}"
+            f"QMenu::item:selected {{ background: {COLORS['bg_hover']}; color: {COLORS['accent']}; }}"
+            f"QMenu::separator {{ height: 1px; background: {COLORS['border']}; margin: 4px 8px; }}"
+        )
+
+        # Header (non-interactive title)
+        title_action = QAction(f"#{idx + 1}  {name[:28]}", menu)
+        title_action.setEnabled(False)
+        menu.addAction(title_action)
+        menu.addSeparator()
+
+        move_action   = QAction("✦  Set Position…", menu)
+        delete_action = QAction("✕  Delete", menu)
+        delete_action.setProperty("danger", True)
+
+        menu.addAction(move_action)
+        menu.addSeparator()
+        menu.addAction(delete_action)
+
+        action = menu.exec_(self.mapToGlobal(pos))
+
+        if action == move_action:
+            n = len(self.images)
+            new_pos, ok = QInputDialog.getInt(
+                self, "Set Position",
+                f"Move slide #{idx + 1} to position (1–{n}):",
+                idx + 1, 1, n
+            )
+            if ok and new_pos - 1 != idx:
+                self.move_to.emit(idx, new_pos)
+
+        elif action == delete_action:
+            self.delete_at.emit(idx)
+
+    # ── painting ─────────────────────────────────────────────────────────────
+
+    def paintEvent(self, _event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
+        p.fillRect(self.rect(), QColor(COLORS["bg_deep"]))
+
+        if not self.images:
+            p.setPen(QColor(COLORS["text_muted"]))
+            p.setFont(QFont("Segoe UI", 11))
+            p.drawText(self.rect(), Qt.AlignCenter,
+                       "Add images — they'll appear here for easy drag-to-reorder")
+            p.end()
+            return
+
+        for i in range(len(self.images)):
+            if i == self._drag_idx:
+                continue
+            self._draw_card(p, i, self._card_x(i), self.GAP, dragging=False)
+
+        # Drop indicator line + dot
+        if self._drag_idx >= 0 and self._drop_idx >= 0:
+            if self._drop_idx < len(self.images):
+                lx = self._card_x(self._drop_idx) - self.GAP // 2 - 1
+            else:
+                lx = self._card_x(len(self.images) - 1) + self.CARD_W + self.GAP // 2
+            p.setPen(QColor(COLORS["accent"]))
+            p.setBrush(QBrush(QColor(COLORS["accent"])))
+            p.drawLine(lx, self.GAP - 2, lx, self.GAP + self.CARD_H + 2)
+            p.drawEllipse(lx - 3, self.GAP - 4, 6, 6)
+
+        # Dragged ghost card on top
+        if self._drag_idx >= 0:
+            ghost_x = self._drag_abs_x - self._drag_offset
+            self._draw_card(p, self._drag_idx, ghost_x, self.GAP - 4, dragging=True)
+
+        p.end()
+
+    def _draw_card(self, p: QPainter, idx: int, x: int, y: int, dragging: bool):
+        from PyQt5.QtGui import QPainterPath
+        img       = self.images[idx]
+        is_second = img.get("is_second_image", False)
+        is_sel    = (idx == self._selected_idx and not dragging)
+        is_hover  = (idx == self._hover_idx and not dragging)
+
+        if dragging:
+            # Drop shadow
+            sr = type(self.rect())(x + 3, y + 5, self.CARD_W, self.CARD_H)
+            p.setBrush(QBrush(QColor(0, 0, 0, 60)))
+            p.setPen(Qt.NoPen)
+            p.drawRoundedRect(sr, self.RADIUS, self.RADIUS)
+            bg, bdr = QColor(COLORS["bg_selected"]), QColor(COLORS["accent"])
+        elif is_sel:
+            bg, bdr = QColor(COLORS["bg_selected"]), QColor(COLORS["accent"])
+        elif is_second:
+            bg, bdr = QColor(COLORS["bg_card"]), QColor(COLORS["purple"])
+        elif is_hover:
+            bg, bdr = QColor(COLORS["bg_hover"]), QColor(COLORS["border_light"])
+        else:
+            bg, bdr = QColor(COLORS["bg_card"]), QColor(COLORS["border"])
+
+        card = type(self.rect())(x, y, self.CARD_W, self.CARD_H)
+        p.setBrush(QBrush(bg))
+        p.setPen(bdr)
+        p.drawRoundedRect(card, self.RADIUS, self.RADIUS)
+
+        # Thumbnail (clipped to rounded top)
+        thumb = self._thumbs.get(img["path"])
+        thumb_rect = type(self.rect())(x + 4, y + 3, self.CARD_W - 8, self.THUMB_H)
+        if thumb and not thumb.isNull():
+            tw, th = thumb.width(), thumb.height()
+            tx = x + (self.CARD_W - tw) // 2
+            ty = y + 3 + (self.THUMB_H - th) // 2
+            p.save()
+            clip = QPainterPath()
+            clip.addRoundedRect(thumb_rect.x(), thumb_rect.y(),
+                                thumb_rect.width(), thumb_rect.height(), 5, 5)
+            p.setClipPath(clip)
+            p.drawPixmap(tx, ty, thumb)
+            p.restore()
+        else:
+            # Loading spinner placeholder
+            p.fillRect(thumb_rect, QColor(COLORS["bg_hover"]))
+            p.setPen(QColor(COLORS["text_muted"]))
+            p.setFont(QFont("Segoe UI", 8))
+            label = "…" if img["path"] in self._loaders else "?"
+            p.drawText(thumb_rect, Qt.AlignCenter, label)
+
+        # Number badge (top-left)
+        badge_bg = QColor(COLORS["accent"]) if not is_second else QColor(COLORS["purple"])
+        p.setBrush(QBrush(badge_bg))
+        p.setPen(Qt.NoPen)
+        badge = type(self.rect())(x + 5, y + 6, 20, 14)
+        p.drawRoundedRect(badge, 3, 3)
+        p.setPen(QColor("#FFFFFF"))
+        p.setFont(QFont("Segoe UI", 7, QFont.Bold))
+        p.drawText(badge, Qt.AlignCenter, str(idx + 1))
+
+        # Ken Burns badge (top-right)
+        kb = img.get("ken_burns", "none")
+        if kb != "none":
+            kb_short = {"zoom_in": "Z+", "zoom_out": "Z−", "pan_left": "←",
+                        "pan_right": "→", "pan_up": "↑", "pan_down": "↓"}.get(kb, "KB")
+            p.setBrush(QBrush(QColor(COLORS["purple"])))
+            p.setPen(Qt.NoPen)
+            kb_badge = type(self.rect())(x + self.CARD_W - 24, y + 6, 18, 14)
+            p.drawRoundedRect(kb_badge, 3, 3)
+            p.setPen(QColor("#FFFFFF"))
+            p.setFont(QFont("Segoe UI", 7, QFont.Bold))
+            p.drawText(kb_badge, Qt.AlignCenter, kb_short)
+
+        # Filename + duration
+        name = os.path.basename(img["path"])
+        if len(name) > 13:
+            name = name[:11] + "…"
+        text_y = y + self.THUMB_H + 7
+        label_rect = type(self.rect())(x + 5, text_y, self.CARD_W - 10, 14)
+
+        p.setPen(QColor(COLORS["text_primary"] if (is_sel or is_hover) else COLORS["text_secondary"]))
+        p.setFont(QFont("Segoe UI", 7))
+        p.drawText(label_rect, Qt.AlignLeft | Qt.AlignVCenter, name)
+
+        p.setPen(QColor(COLORS["accent"] if is_sel else COLORS["text_muted"]))
+        p.setFont(QFont("Segoe UI", 7, QFont.Bold))
+        p.drawText(label_rect, Qt.AlignRight | Qt.AlignVCenter, f"{img.get('duration', 5)}s")
+
+        # Bottom highlight bar (selected)
+        if is_sel:
+            p.setBrush(QBrush(QColor(COLORS["accent"])))
+            p.setPen(Qt.NoPen)
+            p.drawRoundedRect(x + 12, y + self.CARD_H - 4, self.CARD_W - 24, 3, 2, 2)
+
+    # ── mouse ────────────────────────────────────────────────────────────────
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            idx = self._idx_at(event.x())
+            if idx >= 0:
+                self._drag_idx    = idx
+                self._drag_abs_x  = event.x()
+                self._drag_offset = event.x() - self._card_x(idx)
+                self._drop_idx    = idx
+                self.setCursor(Qt.ClosedHandCursor)
+                self.card_clicked.emit(idx)
+                self.update()
+
+    def mouseMoveEvent(self, event):
+        if self._drag_idx >= 0:
+            self._drag_abs_x = event.x()
+            self._drop_idx   = self._drop_pos_at(event.x())
+            self.update()
+        else:
+            new_h = self._idx_at(event.x())
+            if new_h != self._hover_idx:
+                self._hover_idx = new_h
+                self.setCursor(Qt.OpenHandCursor if new_h >= 0 else Qt.ArrowCursor)
+                self.update()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton and self._drag_idx >= 0:
+            from_idx = self._drag_idx
+            to_idx   = self._drop_pos_at(event.x())
+            to_idx   = max(0, min(to_idx, len(self.images)))
+            if to_idx > from_idx:
+                to_idx -= 1
+
+            # Reset drag state BEFORE emitting signal so the canvas
+            # repaints clean immediately (no freeze visual)
+            self._drag_idx = -1
+            self._drop_idx = -1
+            self.setCursor(Qt.OpenHandCursor)
+            self.update()
+            QApplication.processEvents()   # flush repaint NOW, before table rebuild
+
+            if from_idx != to_idx:
+                self.order_changed.emit(from_idx, to_idx)
+
+    def leaveEvent(self, _event):
+        self._hover_idx = -1
+        self.update()
+
+
+# ── Inline filmstrip (scrollable, fixed-height strip) ─────────────────────────
+
+class FilmstripTimeline(QScrollArea):
+    order_changed = pyqtSignal(int, int)
+    delete_at     = pyqtSignal(int)
+    move_to       = pyqtSignal(int, int)
+    card_clicked  = pyqtSignal(int)
+
+    CARD_W = 110
+    CARD_H = 90
+    GAP    = 8
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setFrameShape(QFrame.NoFrame)
+        self.setFixedHeight(self.CARD_H + self.GAP * 2 + 6)
+        self.setStyleSheet(
+            f"QScrollArea {{ background: {COLORS['bg_deep']}; border-top: 1px solid {COLORS['border']}; }}"
+            f"QScrollBar:horizontal {{ background: transparent; height: 6px; border-radius: 3px; }}"
+            f"QScrollBar::handle:horizontal {{ background: {COLORS['border_light']}; border-radius: 3px; min-width: 20px; }}"
+            f"QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0; }}"
+        )
+        self._canvas = _FilmstripCanvas(self.CARD_W, self.CARD_H, 60, self.GAP, self)
+        self._canvas.order_changed.connect(self.order_changed)
+        self._canvas.delete_at.connect(self.delete_at)
+        self._canvas.move_to.connect(self.move_to)
+        self._canvas.card_clicked.connect(self.card_clicked)
+        self.setWidget(self._canvas)
+        self.setWidgetResizable(False)
+
+    def set_images(self, images: list):
+        self._canvas.set_images(images)
+
+    def highlight_index(self, idx: int):
+        self._canvas.set_selected(idx)
+        x = self.GAP + idx * (self.CARD_W + self.GAP) - 20
+        self.horizontalScrollBar().setValue(max(0, x))
+
+
+# ── Full-view timeline dialog ─────────────────────────────────────────────────
+
+class _WrappingFilmstripCanvas(QWidget):
+    """
+    Like _FilmstripCanvas but wraps cards into multiple rows based on the
+    widget's current width.  Used by FilmstripFullDialog.
+    All signals and interactions are identical to _FilmstripCanvas.
+    """
+    order_changed = pyqtSignal(int, int)
+    delete_at     = pyqtSignal(int)
+    move_to       = pyqtSignal(int, int)
+    card_clicked  = pyqtSignal(int)
+
+    CARD_W  = 160
+    CARD_H  = 130
+    THUMB_H = 95
+    GAP     = 14
+    RADIUS  = 8
+
+    def __init__(self, card_w=160, card_h=130, thumb_h=95, gap=14, parent=None):
+        super().__init__(parent)
+        self.CARD_W  = card_w
+        self.CARD_H  = card_h
+        self.THUMB_H = thumb_h
+        self.GAP     = gap
+
+        self.images: list       = []
+        self._thumbs: dict      = {}
+        self._loaders: dict     = {}
+        self._drag_idx: int     = -1
+        self._drag_abs_x: int   = 0
+        self._drag_abs_y: int   = 0
+        self._drag_offset_x: int = 0
+        self._drag_offset_y: int = 0
+        self._hover_idx: int    = -1
+        self._drop_idx: int     = -1   # flat insertion index
+        self._selected_idx: int = -1
+
+        self.setMouseTracking(True)
+        self.setCursor(Qt.OpenHandCursor)
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._show_context_menu)
+
+    # ── public ───────────────────────────────────────────────────────────────
+
+    def set_images(self, images: list):
+        self.images = images
+        current_paths = {img["path"] for img in images}
+        for path in list(self._loaders.keys()):
+            if path not in current_paths:
+                self._loaders.pop(path, None)
+        self._thumbs = {k: v for k, v in self._thumbs.items() if k in current_paths}
+        for img in images:
+            self._request_thumb(img["path"])
+        self._relayout()
+        self.update()
+
+    def set_selected(self, idx: int):
+        self._selected_idx = idx
+        self.update()
+
+    # ── thumb loading ─────────────────────────────────────────────────────────
+
+    def _request_thumb(self, path: str):
+        if path in self._thumbs or path in self._loaders:
+            return
+        self._thumbs[path] = None
+        loader = _ThumbLoader(path, self)
+        loader.thumb_ready.connect(self._on_thumb_ready)
+        self._loaders[path] = loader
+        loader.start()
+
+    def _on_thumb_ready(self, path: str, px: QPixmap):
+        if not px.isNull():
+            px = px.scaled(self.CARD_W - 12, self.THUMB_H - 4,
+                           Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self._thumbs[path] = px
+        self._loaders.pop(path, None)
+        self.update()
+
+    # ── layout helpers ────────────────────────────────────────────────────────
+
+    def _cols(self) -> int:
+        """How many cards fit per row given current width."""
+        avail = self.width() - self.GAP
+        cols  = avail // (self.CARD_W + self.GAP)
+        return max(1, cols)
+
+    def _rows(self) -> int:
+        import math
+        n = len(self.images)
+        if n == 0:
+            return 1
+        return math.ceil(n / self._cols())
+
+    def _card_pos(self, idx: int):
+        """Return (x, y) top-left for card at flat index idx."""
+        cols = self._cols()
+        row  = idx // cols
+        col  = idx  % cols
+        x    = self.GAP + col * (self.CARD_W + self.GAP)
+        y    = self.GAP + row * (self.CARD_H + self.GAP)
+        return x, y
+
+    def _relayout(self):
+        rows  = self._rows()
+        total_h = self.GAP + rows * (self.CARD_H + self.GAP)
+        self.setMinimumHeight(total_h)
+        # Use setFixedHeight instead of resize() to avoid recursive resizeEvent
+        # loops when the parent QScrollArea (with widgetResizable=True) resizes
+        # us during window maximize / fullscreen transitions.
+        if self.height() != total_h:
+            self.setFixedHeight(total_h)
+
+    def _idx_at(self, x: int, y: int) -> int:
+        for i in range(len(self.images)):
+            cx, cy = self._card_pos(i)
+            if cx <= x <= cx + self.CARD_W and cy <= y <= cy + self.CARD_H:
+                return i
+        return -1
+
+    def _drop_pos_at(self, x: int, y: int) -> int:
+        """Find nearest insertion gap using distance to card centres."""
+        cols = self._cols()
+        n    = len(self.images)
+        if n == 0:
+            return 0
+        best_dist = float("inf")
+        best_pos  = 0
+        # Check gaps: before card 0, between each pair, after last card
+        for i in range(n + 1):
+            if i < n:
+                cx, cy = self._card_pos(i)
+                gap_x  = cx          # left edge of card i
+                gap_y  = cy + self.CARD_H // 2
+            else:
+                cx, cy = self._card_pos(n - 1)
+                gap_x  = cx + self.CARD_W   # right edge of last card
+                gap_y  = cy + self.CARD_H // 2
+            d = ((x - gap_x) ** 2 + (y - gap_y) ** 2) ** 0.5
+            if d < best_dist:
+                best_dist = d
+                best_pos  = i
+        return best_pos
+
+    # ── context menu ──────────────────────────────────────────────────────────
+
+    def _show_context_menu(self, pos):
+        idx = self._idx_at(pos.x(), pos.y())
+        if idx < 0:
+            return
+        img  = self.images[idx]
+        name = os.path.basename(img["path"])
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            f"QMenu {{ background: {COLORS['bg_card']}; border: 1px solid {COLORS['border_light']};"
+            f"  border-radius: 8px; padding: 4px; color: {COLORS['text_primary']}; }}"
+            f"QMenu::item {{ padding: 7px 24px 7px 14px; border-radius: 4px; margin: 1px 4px; }}"
+            f"QMenu::item:selected {{ background: {COLORS['bg_hover']}; color: {COLORS['accent']}; }}"
+            f"QMenu::separator {{ height: 1px; background: {COLORS['border']}; margin: 4px 8px; }}"
+        )
+        title_action = QAction(f"#{idx + 1}  {name[:28]}", menu)
+        title_action.setEnabled(False)
+        menu.addAction(title_action)
+        menu.addSeparator()
+        move_action   = QAction("✦  Set Position…", menu)
+        delete_action = QAction("✕  Delete", menu)
+        menu.addAction(move_action)
+        menu.addSeparator()
+        menu.addAction(delete_action)
+        action = menu.exec_(self.mapToGlobal(pos))
+        if action == move_action:
+            n = len(self.images)
+            new_pos, ok = QInputDialog.getInt(
+                self, "Set Position",
+                f"Move slide #{idx + 1} to position (1–{n}):",
+                idx + 1, 1, n)
+            if ok and new_pos - 1 != idx:
+                self.move_to.emit(idx, new_pos)
+        elif action == delete_action:
+            self.delete_at.emit(idx)
+
+    # ── painting ──────────────────────────────────────────────────────────────
+
+    def paintEvent(self, _event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
+        p.fillRect(self.rect(), QColor(COLORS["bg_deep"]))
+
+        if not self.images:
+            p.setPen(QColor(COLORS["text_muted"]))
+            p.setFont(QFont("Segoe UI", 12))
+            p.drawText(self.rect(), Qt.AlignCenter,
+                       "Add images — they'll appear here for easy drag-to-reorder")
+            p.end()
+            return
+
+        for i in range(len(self.images)):
+            if i == self._drag_idx:
+                continue
+            cx, cy = self._card_pos(i)
+            self._draw_card(p, i, cx, cy, dragging=False)
+
+        # Drop indicator: blue line between cards
+        if self._drag_idx >= 0 and 0 <= self._drop_idx <= len(self.images):
+            real_di = self._drop_idx
+            if real_di >= self._drag_idx:
+                real_di = max(0, real_di - 1)
+            cols = self._cols()
+            if real_di < len(self.images):
+                lx, ly = self._card_pos(real_di)
+                # draw line to the LEFT of the target card
+                line_x = lx - self.GAP // 2
+                p.setPen(QColor(COLORS["accent"]))
+                p.setBrush(QBrush(QColor(COLORS["accent"])))
+                p.drawLine(line_x, ly, line_x, ly + self.CARD_H)
+                p.drawEllipse(line_x - 3, ly - 3, 6, 6)
+            else:
+                # after last card
+                lx, ly = self._card_pos(len(self.images) - 1)
+                line_x = lx + self.CARD_W + self.GAP // 2
+                p.setPen(QColor(COLORS["accent"]))
+                p.setBrush(QBrush(QColor(COLORS["accent"])))
+                p.drawLine(line_x, ly, line_x, ly + self.CARD_H)
+                p.drawEllipse(line_x - 3, ly - 3, 6, 6)
+
+        # Ghost (dragged card)
+        if self._drag_idx >= 0:
+            gx = self._drag_abs_x - self._drag_offset_x
+            gy = self._drag_abs_y - self._drag_offset_y
+            self._draw_card(p, self._drag_idx, gx, gy, dragging=True)
+
+        p.end()
+
+    def _draw_card(self, p: QPainter, idx: int, x: int, y: int, dragging: bool):
+        from PyQt5.QtGui import QPainterPath
+        img       = self.images[idx]
+        is_second = img.get("is_second_image", False)
+        is_sel    = (idx == self._selected_idx and not dragging)
+        is_hover  = (idx == self._hover_idx and not dragging)
+
+        if dragging:
+            sr = type(self.rect())(x + 3, y + 5, self.CARD_W, self.CARD_H)
+            p.setBrush(QBrush(QColor(0, 0, 0, 60)))
+            p.setPen(Qt.NoPen)
+            p.drawRoundedRect(sr, self.RADIUS, self.RADIUS)
+            bg, bdr = QColor(COLORS["bg_selected"]), QColor(COLORS["accent"])
+        elif is_sel:
+            bg, bdr = QColor(COLORS["bg_selected"]), QColor(COLORS["accent"])
+        elif is_second:
+            bg, bdr = QColor(COLORS["bg_card"]), QColor(COLORS["purple"])
+        elif is_hover:
+            bg, bdr = QColor(COLORS["bg_hover"]), QColor(COLORS["border_light"])
+        else:
+            bg, bdr = QColor(COLORS["bg_card"]), QColor(COLORS["border"])
+
+        card = type(self.rect())(x, y, self.CARD_W, self.CARD_H)
+        p.setBrush(QBrush(bg))
+        p.setPen(bdr)
+        p.drawRoundedRect(card, self.RADIUS, self.RADIUS)
+
+        # Thumbnail
+        thumb = self._thumbs.get(img["path"])
+        thumb_rect = type(self.rect())(x + 4, y + 3, self.CARD_W - 8, self.THUMB_H)
+        if thumb and not thumb.isNull():
+            tw, th = thumb.width(), thumb.height()
+            tx = x + (self.CARD_W - tw) // 2
+            ty = y + 3 + (self.THUMB_H - th) // 2
+            p.save()
+            clip = QPainterPath()
+            clip.addRoundedRect(thumb_rect.x(), thumb_rect.y(),
+                                thumb_rect.width(), thumb_rect.height(), 5, 5)
+            p.setClipPath(clip)
+            p.drawPixmap(tx, ty, thumb)
+            p.restore()
+        else:
+            p.fillRect(thumb_rect, QColor(COLORS["bg_hover"]))
+            p.setPen(QColor(COLORS["text_muted"]))
+            p.setFont(QFont("Segoe UI", 9))
+            label = "…" if img["path"] in self._loaders else "?"
+            p.drawText(thumb_rect, Qt.AlignCenter, label)
+
+        # Number badge
+        badge_bg = QColor(COLORS["accent"]) if not is_second else QColor(COLORS["purple"])
+        p.setBrush(QBrush(badge_bg))
+        p.setPen(Qt.NoPen)
+        badge = type(self.rect())(x + 5, y + 6, 22, 15)
+        p.drawRoundedRect(badge, 3, 3)
+        p.setPen(QColor("#FFFFFF"))
+        p.setFont(QFont("Segoe UI", 8, QFont.Bold))
+        p.drawText(badge, Qt.AlignCenter, str(idx + 1))
+
+        # Ken Burns badge
+        kb = img.get("ken_burns", "none")
+        if kb != "none":
+            kb_short = {"zoom_in": "Z+", "zoom_out": "Z−", "pan_left": "←",
+                        "pan_right": "→", "pan_up": "↑", "pan_down": "↓"}.get(kb, "KB")
+            p.setBrush(QBrush(QColor(COLORS["purple"])))
+            p.setPen(Qt.NoPen)
+            kb_b = type(self.rect())(x + self.CARD_W - 26, y + 6, 20, 15)
+            p.drawRoundedRect(kb_b, 3, 3)
+            p.setPen(QColor("#FFFFFF"))
+            p.setFont(QFont("Segoe UI", 8, QFont.Bold))
+            p.drawText(kb_b, Qt.AlignCenter, kb_short)
+
+        # Filename + duration
+        name = os.path.basename(img["path"])
+        if len(name) > 18:
+            name = name[:16] + "…"
+        text_y   = y + self.THUMB_H + 8
+        lbl_rect = type(self.rect())(x + 5, text_y, self.CARD_W - 10, 16)
+        p.setPen(QColor(COLORS["text_primary"] if (is_sel or is_hover) else COLORS["text_secondary"]))
+        p.setFont(QFont("Segoe UI", 8))
+        p.drawText(lbl_rect, Qt.AlignLeft | Qt.AlignVCenter, name)
+        p.setPen(QColor(COLORS["accent"] if is_sel else COLORS["text_muted"]))
+        p.setFont(QFont("Segoe UI", 8, QFont.Bold))
+        p.drawText(lbl_rect, Qt.AlignRight | Qt.AlignVCenter, f"{img.get('duration', 5)}s")
+
+        if is_sel:
+            p.setBrush(QBrush(QColor(COLORS["accent"])))
+            p.setPen(Qt.NoPen)
+            p.drawRoundedRect(x + 14, y + self.CARD_H - 5, self.CARD_W - 28, 3, 2, 2)
+
+    # ── resize ────────────────────────────────────────────────────────────────
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._relayout()
+        self.update()
+
+    # ── mouse ─────────────────────────────────────────────────────────────────
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            idx = self._idx_at(event.x(), event.y())
+            if idx >= 0:
+                cx, cy = self._card_pos(idx)
+                self._drag_idx      = idx
+                self._drag_abs_x    = event.x()
+                self._drag_abs_y    = event.y()
+                self._drag_offset_x = event.x() - cx
+                self._drag_offset_y = event.y() - cy
+                self._drop_idx      = idx
+                self.setCursor(Qt.ClosedHandCursor)
+                self.card_clicked.emit(idx)
+                self.update()
+
+    def mouseMoveEvent(self, event):
+        if self._drag_idx >= 0:
+            self._drag_abs_x = event.x()
+            self._drag_abs_y = event.y()
+            self._drop_idx   = self._drop_pos_at(event.x(), event.y())
+            self.update()
+        else:
+            new_h = self._idx_at(event.x(), event.y())
+            if new_h != self._hover_idx:
+                self._hover_idx = new_h
+                self.setCursor(Qt.OpenHandCursor if new_h >= 0 else Qt.ArrowCursor)
+                self.update()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton and self._drag_idx >= 0:
+            from_idx = self._drag_idx
+            to_idx   = self._drop_pos_at(event.x(), event.y())
+            to_idx   = max(0, min(to_idx, len(self.images)))
+            if to_idx > from_idx:
+                to_idx -= 1
+
+            self._drag_idx = -1
+            self._drop_idx = -1
+            self.setCursor(Qt.OpenHandCursor)
+            self.update()
+            QApplication.processEvents()
+
+            if from_idx != to_idx:
+                self.order_changed.emit(from_idx, to_idx)
+
+    def leaveEvent(self, _event):
+        self._hover_idx = -1
+        self.update()
+
+
+class FilmstripFullDialog(QDialog):
+    """
+    Full-view timeline dialog.
+    Cards wrap into multiple rows based on the window width —
+    resize the window to see more or fewer cards per row.
+    """
+    order_changed = pyqtSignal(int, int)
+    delete_at     = pyqtSignal(int)
+    move_to       = pyqtSignal(int, int)
+
+    def __init__(self, images: list, selected_idx: int = 0, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Timeline — Full View")
+        self.setMinimumSize(600, 300)
+        self.resize(1200, 500)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowMaximizeButtonHint)
+        self.setStyleSheet(
+            f"QDialog {{ background: {COLORS['bg_deep']}; }}"
+        )
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # Header bar
+        header = QWidget()
+        header.setFixedHeight(44)
+        header.setStyleSheet(
+            f"background: {COLORS['toolbar_bg']}; border-bottom: 1px solid {COLORS['border']};"
+        )
+        hlay = QHBoxLayout(header)
+        hlay.setContentsMargins(16, 0, 16, 0)
+        title = QLabel("  Timeline")
+        title.setStyleSheet(
+            f"color: {COLORS['text_primary']}; font-size: 13px; font-weight: 600;"
+        )
+        hint = QLabel("Drag cards to reorder  •  Right-click for options  •  Resize window to change cards per row")
+        hint.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 11px;")
+        close_btn = _styled_btn("✕  Close", "")
+        close_btn.setFixedHeight(28)
+        close_btn.clicked.connect(self.close)
+        hlay.addWidget(title)
+        hlay.addWidget(hint)
+        hlay.addStretch()
+        hlay.addWidget(close_btn)
+        root.addWidget(header)
+
+        # Scroll area — vertical scroll, no horizontal
+        scroll = QScrollArea()
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setWidgetResizable(True)   # canvas width tracks scroll area width
+        scroll.setStyleSheet(
+            f"QScrollArea {{ background: {COLORS['bg_deep']}; }}"
+            f"QScrollBar:vertical {{ background: transparent; width: 8px; border-radius: 4px; }}"
+            f"QScrollBar::handle:vertical {{ background: {COLORS['border_light']}; border-radius: 4px; min-height: 20px; }}"
+            f"QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}"
+        )
+
+        self._canvas = _WrappingFilmstripCanvas(160, 130, 95, 14, self)
+        self._canvas.set_images(images)
+        self._canvas.set_selected(selected_idx)
+        self._canvas.order_changed.connect(self._fwd_order)
+        self._canvas.delete_at.connect(self._fwd_delete)
+        self._canvas.move_to.connect(self._fwd_move)
+        scroll.setWidget(self._canvas)
+        root.addWidget(scroll, 1)
+
+        # Scroll to show selected card
+        QTimer.singleShot(80, lambda: self._scroll_to(scroll, selected_idx))
+
+    def _scroll_to(self, scroll: QScrollArea, idx: int):
+        if 0 <= idx < len(self._canvas.images):
+            _, cy = self._canvas._card_pos(idx)
+            scroll.verticalScrollBar().setValue(max(0, cy - 20))
+
+    def refresh(self, images: list, selected_idx: int = -1):
+        self._canvas.set_images(images)
+        if selected_idx >= 0:
+            self._canvas.set_selected(selected_idx)
+
+    def _fwd_order(self, a, b):  self.order_changed.emit(a, b)
+    def _fwd_delete(self, i):    self.delete_at.emit(i)
+    def _fwd_move(self, i, p):   self.move_to.emit(i, p)
+
+
 # ── Main Window ───────────────────────────────────────────────────────────────
 
 class SlideshowCreator(QMainWindow):
 
-
     @pyqtSlot(str, str)
     @pyqtSlot(str, str, str)
     def _show_update_dialog(self, new_version: str, url: str, changelog: str = ""):
-        """Called on the main thread when a newer version is available."""
-        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QTextEdit, QPushButton, QHBoxLayout
-
         dlg = QDialog(self)
-        dlg.setWindowTitle(self.tr("update_available"))
+        dlg.setWindowTitle("Update Available")
         dlg.setMinimumWidth(480)
         layout = QVBoxLayout(dlg)
-        layout.setSpacing(10)
+        layout.setSpacing(12)
+        layout.setContentsMargins(20, 20, 20, 20)
 
         header = QLabel(
-            f"<b>{self.tr('new_version')} v{new_version}</b><br>"
-            f"{self.tr('cur_version')} v{APP_VERSION}"
+            f"<b style='font-size:15px; color:{COLORS['accent']}'>New Version Available: v{new_version}</b><br>"
+            f"<span style='color:{COLORS['text_secondary']}'>You are running v{APP_VERSION}</span>"
         )
         header.setTextFormat(Qt.RichText)
         layout.addWidget(header)
 
         if changelog:
-            notes_label = QLabel("<b>What's new:</b>")
-            layout.addWidget(notes_label)
             notes = QTextEdit()
             notes.setReadOnly(True)
             notes.setPlainText(changelog)
-            notes.setFixedHeight(200)
+            notes.setFixedHeight(180)
             layout.addWidget(notes)
 
-        link = QLabel(f'<a href="{url}">{self.tr("download")}</a>')
+        link = QLabel(f'<a href="{url}" style="color:{COLORS["accent"]}">Download latest version →</a>')
         link.setTextFormat(Qt.RichText)
         link.setTextInteractionFlags(Qt.TextBrowserInteraction)
         link.setOpenExternalLinks(True)
         layout.addWidget(link)
 
         btn_row = QHBoxLayout()
-        close_btn = QPushButton(self.tr("close"))
+        close_btn = _styled_btn("Later", "")
         close_btn.clicked.connect(dlg.accept)
         btn_row.addStretch()
         btn_row.addWidget(close_btn)
         layout.addLayout(btn_row)
-
         dlg.exec_()
 
     def __init__(self):
         super().__init__()
-
-        # Resource folders are synced once at startup in __main__ block below.
-        # Do NOT call _copy_resource_folders here — worker processes also
-        # instantiate classes during import, and we must not do file I/O there.
-
         self.language     = "en"
         self.translations = {}
         self.load_translations()
 
         self.setWindowTitle(self.tr("window_title"))
-        self.setGeometry(100, 100, 1200, 800)
+        self.setGeometry(100, 100, 1400, 820)
+        self.setMinimumSize(900, 600)
 
         self.images          = []
         self.audio_files     = []
@@ -527,8 +1814,8 @@ class SlideshowCreator(QMainWindow):
         self.backup_state    = False
         self.premiere_project_folder = ""
         self.loaded_project  = ""
-
-        self._pending_temp_dirs: list[str] = []   # filled by worker, deleted after export
+        self._pending_temp_dirs: list = []
+        self._full_timeline_dlg = None
 
         self.shortcuts = {
             "save":              "Ctrl+S",
@@ -549,11 +1836,44 @@ class SlideshowCreator(QMainWindow):
     # ── UI ────────────────────────────────────────────────────────────────────
 
     def create_ui(self):
-        main_widget = QWidget()
-        main_layout = QHBoxLayout(main_widget)
+        # Central widget + main layout
+        central = QWidget()
+        self.setCentralWidget(central)
+        root_layout = QVBoxLayout(central)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
 
-        # Left panel
-        left_panel = QVBoxLayout()
+        # Toolbar
+        self._build_quick_toolbar(root_layout)
+
+        # Main splitter
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.setHandleWidth(1)
+        splitter.setChildrenCollapsible(False)
+        root_layout.addWidget(splitter, 1)
+
+        # ── Left: Slides table ─────────────────────────────────────────────
+        left_widget = QWidget()
+        left_layout = QVBoxLayout(left_widget)
+        left_layout.setContentsMargins(12, 12, 6, 8)
+        left_layout.setSpacing(8)
+
+        header_row = QHBoxLayout()
+        slides_title = _make_section_label("Slides")
+        slides_title.setStyleSheet(
+            f"color: {COLORS['text_muted']}; font-size: 11px; font-weight: 700; letter-spacing: 1px;"
+        )
+        header_row.addWidget(slides_title)
+        header_row.addStretch()
+
+        self.slide_count_label = QLabel("0")
+        self.slide_count_label.setStyleSheet(
+            f"background: {COLORS['bg_card']}; color: {COLORS['accent']}; "
+            f"border-radius: 10px; padding: 1px 8px; font-size: 11px; font-weight: 600;"
+        )
+        header_row.addWidget(self.slide_count_label)
+        left_layout.addLayout(header_row)
+
         self.image_table = QTableWidget()
         self.image_table.setItemDelegate(CustomDelegate())
         self.image_table.setSortingEnabled(False)
@@ -570,48 +1890,88 @@ class SlideshowCreator(QMainWindow):
             self.tr("table_header_date"),
             self.tr("ken_burns"),
         ])
-        self.image_table.setFont(QFont(self.deafult_font, 10, QFont.Bold))
+        self.image_table.setFont(QFont("Segoe UI", 11))
+        self.image_table.setShowGrid(False)
+        self.image_table.setAlternatingRowColors(False)
+        self.image_table.verticalHeader().setVisible(False)
+        self.image_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.image_table.setEditTriggers(QTableWidget.DoubleClicked | QTableWidget.SelectedClicked)
+
         for col in range(10):
-            self.image_table.horizontalHeader().setSectionResizeMode(
-                col, QHeaderView.ResizeToContents
-            )
+            self.image_table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeToContents)
+        self.image_table.horizontalHeader().setStretchLastSection(False)
+        self.image_table.setColumnWidth(5, 160)  # text col wider
+
         self.image_table.itemChanged.connect(self.on_edit_on_table)
+        left_layout.addWidget(self.image_table)
 
-        self.slides_label = QLabel(self.tr("label_slides"))
-        self.slides_label.setFont(QFont(self.text_font, self.text_font_size, QFont.Bold))
-        left_panel.addWidget(self.slides_label)
-        left_panel.addWidget(self.image_table)
+        # ── Filmstrip timeline ─────────────────────────────────────────────
+        strip_header = QHBoxLayout()
+        strip_header.setContentsMargins(0, 4, 0, 0)
+        strip_lbl = _make_section_label("Timeline — drag to reorder  •  right-click for options")
+        strip_header.addWidget(strip_lbl)
+        strip_header.addStretch()
 
-        # Right panel
-        right_panel = QVBoxLayout()
-
-        self.preview_label = QLabel(self.tr("label_preview"))
-        self.preview_label.setFont(QFont(self.text_font, 16, QFont.Bold))
-        self.preview_label.setAlignment(Qt.AlignCenter)
-        self.preview_label.setFixedHeight(300)
-
-        _pb_style = (
-            "QProgressBar {{ background-color: #1E1E1E; color: white; }}"
-            "QProgressBar::chunk {{ background-color: {color}; }}"
+        expand_btn = QPushButton("⤢  Full View")
+        expand_btn.setFixedHeight(22)
+        expand_btn.setStyleSheet(
+            f"QPushButton {{ background: {COLORS['bg_card']}; color: {COLORS['text_secondary']};"
+            f"  border: 1px solid {COLORS['border']}; border-radius: 4px; padding: 0 8px; font-size: 11px; }}"
+            f"QPushButton:hover {{ color: {COLORS['accent']}; border-color: {COLORS['accent']}; }}"
         )
+        expand_btn.clicked.connect(self._open_full_timeline)
+        strip_header.addWidget(expand_btn)
+        left_layout.addLayout(strip_header)
 
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 100)
-        self.progress_bar.setValue(0)
-        self.progress_bar.setVisible(False)
-        self.progress_bar.setStyleSheet(_pb_style.format(color="#0078d4"))
+        self.filmstrip = FilmstripTimeline()
+        self.filmstrip.order_changed.connect(self._on_filmstrip_reorder)
+        self.filmstrip.delete_at.connect(self._on_filmstrip_delete)
+        self.filmstrip.move_to.connect(self._on_filmstrip_move_to)
+        self.filmstrip.card_clicked.connect(lambda idx: self.image_table.setCurrentCell(idx, 1))
+        left_layout.addWidget(self.filmstrip)
 
-        self.image_progress_bar = QProgressBar()
-        self.image_progress_bar.setRange(0, 100)
-        self.image_progress_bar.setValue(0)
-        self.image_progress_bar.setVisible(False)
-        self.image_progress_bar.setStyleSheet(_pb_style.format(color="#ff4444"))
+        self._full_timeline_dlg = None   # lazily created
 
-        self.image_premiere_progress_bar = QProgressBar()
-        self.image_premiere_progress_bar.setRange(0, 100)
-        self.image_premiere_progress_bar.setValue(0)
-        self.image_premiere_progress_bar.setVisible(False)
-        self.image_premiere_progress_bar.setStyleSheet(_pb_style.format(color="#9932cc"))
+        # Bottom action strip
+        action_strip = QHBoxLayout()
+        action_strip.setSpacing(6)
+        add_img_btn = _styled_btn("＋  Add Images", "primary")
+        add_img_btn.clicked.connect(self.add_images)
+        add_img_btn.setFixedHeight(30)
+
+        easy_text_btn = _styled_btn("✏  Easy Text", "")
+        easy_text_btn.clicked.connect(self.open_easy_text_writing)
+        easy_text_btn.setFixedHeight(30)
+
+        action_strip.addWidget(add_img_btn)
+        action_strip.addWidget(easy_text_btn)
+        action_strip.addStretch()
+        left_layout.addLayout(action_strip)
+
+        # ── Right: Sidebar ─────────────────────────────────────────────────
+        right_widget = QWidget()
+        right_widget.setFixedWidth(300)
+        right_layout = QVBoxLayout(right_widget)
+        right_layout.setContentsMargins(6, 12, 12, 8)
+        right_layout.setSpacing(12)
+
+        # Preview
+        self.preview_panel = PreviewPanel()
+        right_layout.addWidget(self.preview_panel)
+
+        # Audio section
+        audio_header = QHBoxLayout()
+        audio_title = _make_section_label("Audio")
+        audio_header.addWidget(audio_title)
+        audio_header.addStretch()
+
+        self.audio_count_label = QLabel("0")
+        self.audio_count_label.setStyleSheet(
+            f"background: {COLORS['bg_card']}; color: {COLORS['success']}; "
+            f"border-radius: 10px; padding: 1px 8px; font-size: 11px; font-weight: 600;"
+        )
+        audio_header.addWidget(self.audio_count_label)
+        right_layout.addLayout(audio_header)
 
         self.audio_table = QTableWidget()
         self.audio_table.setColumnCount(2)
@@ -619,41 +1979,132 @@ class SlideshowCreator(QMainWindow):
             self.tr("table_header_actions"),
             self.tr("table_header_audio_file"),
         ])
-        self.audio_table.setFont(QFont(self.deafult_font, 10, QFont.Bold))
+        self.audio_table.setFont(QFont("Segoe UI", 11))
+        self.audio_table.setShowGrid(False)
+        self.audio_table.verticalHeader().setVisible(False)
+        self.audio_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.audio_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.audio_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.audio_table.setMaximumHeight(140)
+        right_layout.addWidget(self.audio_table)
 
-        self.audio_files_label = QLabel(self.tr("label_audio_files"))
-        self.audio_files_label.setFont(QFont(self.text_font, self.text_font_size, QFont.Bold))
+        audio_btn_row = QHBoxLayout()
+        audio_btn_row.setSpacing(6)
+        add_audio_btn = _styled_btn("＋  Audio", "")
+        add_audio_btn.clicked.connect(self.add_audio)
+        add_audio_btn.setFixedHeight(28)
+        library_btn = _styled_btn("♪  Library", "")
+        library_btn.clicked.connect(self.open_audio_library)
+        library_btn.setFixedHeight(28)
+        audio_btn_row.addWidget(add_audio_btn)
+        audio_btn_row.addWidget(library_btn)
+        right_layout.addLayout(audio_btn_row)
 
-        self.audio_library_button = QPushButton(self.tr("label_audio_library"))
-        self.audio_library_button.setFont(QFont(self.button_font, self.button_font_size, QFont.Bold))
-        self.audio_library_button.clicked.connect(self.open_audio_library)
+        # Export buttons
+        right_layout.addWidget(_make_divider())
+        export_title = _make_section_label("Export")
+        right_layout.addWidget(export_title)
 
-        right_panel.addWidget(self.preview_label)
-        right_panel.addWidget(self.audio_files_label)
-        right_panel.addWidget(self.audio_table)
-        right_panel.addWidget(self.audio_library_button)
-        right_panel.addWidget(self.progress_bar)
-        right_panel.addWidget(self.image_progress_bar)
-        right_panel.addWidget(self.image_premiere_progress_bar)
+        export_btn = _styled_btn("▶  Export Slideshow", "primary")
+        export_btn.clicked.connect(self.export_slideshow)
+        export_btn.setFixedHeight(36)
+        right_layout.addWidget(export_btn)
 
-        main_layout.addLayout(left_panel, 2)
-        main_layout.addLayout(right_panel, 1)
-        self.setCentralWidget(main_widget)
-        self.audio_files = []
+        premiere_btn = _styled_btn("⬡  Export to Premiere", "")
+        premiere_btn.clicked.connect(self.export_premiere_slideshow)
+        premiere_btn.setFixedHeight(32)
+        right_layout.addWidget(premiere_btn)
 
-        # Windows taskbar progress (optional – gracefully stubbed if unavailable)
+        # Progress bars
+        self.progress_section = ProgressSection()
+        right_layout.addWidget(self.progress_section)
+        self.progress_bar              = self.progress_section.export_bar
+        self.image_progress_bar        = self.progress_section.image_bar
+        self.image_premiere_progress_bar = self.progress_section.premiere_bar
+
+        right_layout.addStretch()
+
+        splitter.addWidget(left_widget)
+        splitter.addWidget(right_widget)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 0)
+
+        # Status bar
+        self.stats_bar = StatsBar()
+        self.setStatusBar(QStatusBar())
+        self.statusBar().addPermanentWidget(self.stats_bar, 1)
+
         self.taskbar_progress = self._make_taskbar_progress()
 
-    # ── Taskbar Progress ──────────────────────────────────────────────────────
+    def _build_quick_toolbar(self, parent_layout: QVBoxLayout):
+        """Build the top quick-action toolbar."""
+        tb_widget = QWidget()
+        tb_widget.setObjectName("quickToolbar")
+        tb_widget.setStyleSheet(f"#quickToolbar {{ background: {COLORS['toolbar_bg']}; border-bottom: 1px solid {COLORS['border']}; }}")
+        tb_widget.setFixedHeight(44)
+
+        tb_layout = QHBoxLayout(tb_widget)
+        tb_layout.setContentsMargins(12, 4, 12, 4)
+        tb_layout.setSpacing(4)
+
+        def _tb_btn(text, tip=""):
+            b = QToolButton()
+            b.setText(text)
+            if tip:
+                b.setToolTip(tip)
+            return b
+
+        btn_open   = _tb_btn("  Open",    "Load project (Ctrl+L)")
+        btn_save   = _tb_btn("  Save",    "Save project (Ctrl+S)")
+        btn_saveas = _tb_btn("  Save As", "Save project as...")
+
+        btn_open.clicked.connect(self.load_project)
+        btn_save.clicked.connect(self.save_project)
+        btn_saveas.clicked.connect(self.save_project_as)
+
+        sep1 = QFrame(); sep1.setFrameShape(QFrame.VLine)
+        sep1.setStyleSheet(f"color: {COLORS['border']}; max-width: 1px;")
+
+        btn_pptx   = _tb_btn("⬢  Import PPTX")
+        btn_pptx.clicked.connect(self.import_pptx)
+
+        btn_sort_new = _tb_btn("⬇ Newest First")
+        btn_sort_new.clicked.connect(lambda: self.auto_sort_images_by_date(True))
+        btn_sort_old = _tb_btn("⬆ Oldest First")
+        btn_sort_old.clicked.connect(lambda: self.auto_sort_images_by_date(False))
+        btn_random   = _tb_btn("⤡ Shuffle")
+        btn_random.clicked.connect(self.set_random_images_order)
+
+        sep2 = QFrame(); sep2.setFrameShape(QFrame.VLine)
+        sep2.setStyleSheet(f"color: {COLORS['border']}; max-width: 1px;")
+
+        btn_info    = _tb_btn("ℹ Info")
+        btn_info.clicked.connect(self.show_info)
+        btn_clear   = _tb_btn("✕  Clear")
+        btn_clear.clicked.connect(self.clear_project)
+
+        for w in [btn_open, btn_save, btn_saveas, sep1,
+                  btn_pptx, btn_sort_new, btn_sort_old, btn_random,
+                  sep2, btn_info, btn_clear]:
+            tb_layout.addWidget(w)
+
+        tb_layout.addStretch()
+
+        # Language switch
+        lang_lbl = QLabel("Language:")
+        lang_lbl.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 11px;")
+        lang_en = _tb_btn("EN")
+        lang_he = _tb_btn("עב")
+        lang_en.clicked.connect(lambda: self.set_language("en"))
+        lang_he.clicked.connect(lambda: self.set_language("he"))
+
+        tb_layout.addWidget(lang_lbl)
+        tb_layout.addWidget(lang_en)
+        tb_layout.addWidget(lang_he)
+
+        parent_layout.addWidget(tb_widget)
 
     def _make_taskbar_progress(self):
-        """
-        Try to create a real Windows taskbar progress button (PyQt5 WinTaskbar).
-        Falls back to a silent no-op stub if the extension is unavailable,
-        so the app works on non-Windows and without the optional package.
-        """
         try:
             from PyQt5.QtWinExtras import QWinTaskbarButton
             btn = QWinTaskbarButton(self)
@@ -664,7 +2115,7 @@ class SlideshowCreator(QMainWindow):
         except Exception:
             return _TaskbarProgressStub()
 
-    # ── Images ────────────────────────────────────────────────────────────────
+    # ── Image table helpers ───────────────────────────────────────────────────
 
     def on_edit_on_table(self, item):
         col = item.column()
@@ -691,12 +2142,89 @@ class SlideshowCreator(QMainWindow):
                 self.update_preview_with_row(row)
             except ValueError:
                 item.setText(str(self.images[row]["rotation"]))
+        self._refresh_stats()
+
+    def _fast_reorder(self, from_idx: int, to_idx: int):
+        """
+        Move images[from_idx] to to_idx and repopulate ONLY the shifted rows.
+        This avoids the freeze caused by a full update_image_table() rebuild.
+        """
+        img = self.images.pop(from_idx)
+        self.images.insert(to_idx, img)
+
+        # After reordering, two second-images may have ended up adjacent.
+        # Clear the is_second_image flag on the moved image if that happened.
+        moved = self.images[to_idx]
+        if moved.get("is_second_image"):
+            prev_is_second = to_idx > 0 and self.images[to_idx - 1].get("is_second_image", False)
+            next_is_second = to_idx + 1 < len(self.images) and self.images[to_idx + 1].get("is_second_image", False)
+            if prev_is_second or next_is_second:
+                moved["is_second_image"] = False
+
+        lo, hi = min(from_idx, to_idx), max(from_idx, to_idx)
+        self.image_table.blockSignals(True)
+        self.image_table.setUpdatesEnabled(False)
+        for r in range(lo, hi + 1):
+            self._populate_row(r, self.images[r])
+        self.image_table.setUpdatesEnabled(True)
+        self.image_table.blockSignals(False)
+
+        self.image_table.setCurrentCell(to_idx, 1)
+        self.filmstrip.set_images(self.images)
+        if self._full_timeline_dlg and self._full_timeline_dlg.isVisible():
+            self._full_timeline_dlg.refresh(self.images, to_idx)
+        self._refresh_stats()
+        self.update_preview_with_row(to_idx)
+
+    def _on_filmstrip_reorder(self, from_idx: int, to_idx: int):
+        """Called when user drags a card in the filmstrip to a new position."""
+        if 0 <= from_idx < len(self.images) and 0 <= to_idx < len(self.images):
+            self._fast_reorder(from_idx, to_idx)
+
+    def _on_filmstrip_delete(self, idx: int):
+        """Right-click → Delete from filmstrip."""
+        if 0 <= idx < len(self.images):
+            del self.images[idx]
+            self.image_table.removeRow(idx)
+            if not self.images:
+                self.preview_panel.clear()
+            else:
+                new_row = max(0, idx - 1)
+                self.image_table.setCurrentCell(new_row, 1)
+                self.update_preview_with_row(new_row)
+            self.filmstrip.set_images(self.images)
+            self._refresh_stats()
+            if self._full_timeline_dlg and self._full_timeline_dlg.isVisible():
+                self._full_timeline_dlg.refresh(self.images, max(0, idx - 1))
+
+    def _on_filmstrip_move_to(self, cur_idx: int, target_pos: int):
+        """Right-click → Set Position from filmstrip (target_pos is 1-based)."""
+        new_idx = target_pos - 1
+        new_idx = max(0, min(new_idx, len(self.images) - 1))
+        if new_idx == cur_idx:
+            return
+        self._fast_reorder(cur_idx, new_idx)
+
+    def _open_full_timeline(self):
+        """Open (or bring to front) the full-view timeline dialog."""
+        sel = self.image_table.currentRow()
+        if self._full_timeline_dlg is None or not self._full_timeline_dlg.isVisible():
+            self._full_timeline_dlg = FilmstripFullDialog(
+                self.images, selected_idx=max(0, sel), parent=self
+            )
+            self._full_timeline_dlg.order_changed.connect(self._on_filmstrip_reorder)
+            self._full_timeline_dlg.delete_at.connect(self._on_filmstrip_delete)
+            self._full_timeline_dlg.move_to.connect(self._on_filmstrip_move_to)
+            self._full_timeline_dlg.show()
+        else:
+            self._full_timeline_dlg.raise_()
+            self._full_timeline_dlg.activateWindow()
+            self._full_timeline_dlg.refresh(self.images, max(0, sel))
 
     def set_all_images_duration(self):
         selected = self.image_table.selectedItems()
         row = self.image_table.row(selected[0]) if selected else None
         current = self.images[row]["duration"] if row is not None else 2
-
         dialog = QInputDialog(self)
         dialog.setWindowTitle(self.tr("dialog_set_duration"))
         dialog.setLabelText(self.tr("dialog_enter_duration"))
@@ -713,20 +2241,13 @@ class SlideshowCreator(QMainWindow):
             self, "Select Images", "", "Images (*.png *.jpg *.jpeg *.bmp *.gif)"
         )
         if files:
-            new = [
-                {
-                    "path": f,
-                    "duration": 5,
-                    "transition": "fade",
-                    "transition_duration": self.default_transition_duration,
-                    "text": "",
-                    "rotation": 0,
-                    "is_second_image": False,
-                    "date": datetime.fromtimestamp(os.path.getmtime(f)).strftime("%Y-%m-%d %H:%M:%S"),
-                    "ken_burns": "none"
-                }
-                for f in files
-            ]
+            new = [{
+                "path": f, "duration": 5, "transition": "fade",
+                "transition_duration": self.default_transition_duration,
+                "text": "", "rotation": 0, "is_second_image": False,
+                "date": datetime.fromtimestamp(os.path.getmtime(f)).strftime("%Y-%m-%d %H:%M:%S"),
+                "ken_burns": "none"
+            } for f in files]
             self.images.extend(new)
             self.update_image_table()
 
@@ -739,17 +2260,25 @@ class SlideshowCreator(QMainWindow):
             QMessageBox.critical(self, self.tr("error"), self.tr("second_image_error"), QMessageBox.Ok)
             self.update_image_row(row)
             return
-        if (state == Qt.Checked and self.images[row-1]["is_second_image"] == True) or (state == Qt.Checked and self.images[row+1]["is_second_image"] == True):
-            QMessageBox.warning(self, self.tr("error"), self.tr("subsequent_line"), QMessageBox.Ok)
-            self.update_image_row(row)
-            return
-        
+        if state == Qt.Checked:
+            # Guard: never allow two consecutive second-images.
+            # Check the image immediately before this one.
+            prev_is_second = self.images[row - 1].get("is_second_image", False)
+            # Check the image immediately after this one (only if it exists).
+            next_is_second = (
+                self.images[row + 1].get("is_second_image", False)
+                if row + 1 < len(self.images)
+                else False
+            )
+            if prev_is_second or next_is_second:
+                QMessageBox.warning(self, self.tr("error"), self.tr("subsequent_line"), QMessageBox.Ok)
+                self.update_image_row(row)
+                return
         is_checked = (state == Qt.Checked)
         self.images[row]["is_second_image"] = is_checked
         item = self.image_table.item(row, 1)
         if item:
             item.setData(Qt.UserRole, is_checked)
-            
         self.update_image_row(row)
 
     def update_image_table(self):
@@ -757,16 +2286,17 @@ class SlideshowCreator(QMainWindow):
         self.image_table.setUpdatesEnabled(False)
         self.image_table.setSortingEnabled(False)
         self.image_table.setRowCount(len(self.images))
-
         for row, img in enumerate(self.images):
             self._populate_row(row, img)
-
         self.image_table.setSortingEnabled(False)
         self.image_table.setUpdatesEnabled(True)
         self.image_table.blockSignals(False)
+        self.filmstrip.set_images(self.images)
+        self._refresh_stats()
 
     def _populate_row(self, row: int, img: dict):
-        """Fill a single row in the image table."""
+        self.image_table.setRowHeight(row, 34)
+
         filename_item = QTableWidgetItem(os.path.basename(img["path"]))
         filename_item.setData(Qt.UserRole, img.get("is_second_image", False))
         filename_item.setFlags(filename_item.flags() & ~Qt.ItemIsEditable)
@@ -776,9 +2306,7 @@ class SlideshowCreator(QMainWindow):
         transition_cb = QComboBox()
         transition_cb.addItems(self.transitions_types)
         transition_cb.setCurrentText(img.get("transition", "fade"))
-        transition_cb.currentTextChanged.connect(
-            lambda text, r=row: self.update_transition(r, text)
-        )
+        transition_cb.currentTextChanged.connect(lambda text, r=row: self.update_transition(r, text))
 
         tl_item = QTableWidgetItem(str(img.get("transition_duration", self.default_transition_duration)))
         tl_item.setFlags(tl_item.flags() & ~Qt.ItemIsEditable)
@@ -790,10 +2318,12 @@ class SlideshowCreator(QMainWindow):
 
         second_cb = QCheckBox()
         second_cb.setChecked(img.get("is_second_image", False))
+        second_cb.setStyleSheet("QCheckBox { margin-left: 10px; }")
         second_cb.stateChanged.connect(lambda state, r=row: self.set_second_image(r, state))
 
         date_item = QTableWidgetItem(str(img.get("date", "")))
         date_item.setFlags(date_item.flags() & ~Qt.ItemIsEditable)
+        date_item.setForeground(QColor(COLORS["text_muted"]))
 
         self.image_table.setItem(row, 1, filename_item)
         self.image_table.setItem(row, 2, duration_item)
@@ -805,50 +2335,58 @@ class SlideshowCreator(QMainWindow):
         self.image_table.setItem(row, 8, date_item)
 
         kb_cb = QComboBox()
-        kb_cb.addItems(["none", "zoom_in", "zoom_out",
-                         "pan_left", "pan_right", "pan_up", "pan_down"])
+        kb_cb.addItems(["none", "zoom_in", "zoom_out", "pan_left", "pan_right", "pan_up", "pan_down"])
         kb_cb.setCurrentText(img.get("ken_burns", "none"))
         kb_cb.currentTextChanged.connect(lambda text, r=row: self._update_ken_burns(r, text))
         self.image_table.setCellWidget(row, 9, kb_cb)
 
-
-        # Action buttons
-        move_up_btn   = QPushButton("↑")
-        move_down_btn = QPushButton("↓")
-        delete_btn    = QPushButton("✖")
-        move_up_btn.clicked.connect(self.move_image_up)
-        move_down_btn.clicked.connect(self.move_image_down)
-        delete_btn.clicked.connect(self.delete_image)
+        # Action buttons – compact icon style
+        up_btn   = QPushButton("↑")
+        dn_btn   = QPushButton("↓")
+        del_btn  = QPushButton("✕")
+        up_btn.setProperty("action", "icon")
+        dn_btn.setProperty("action", "icon")
+        del_btn.setProperty("action", "icon")
+        del_btn.setStyleSheet(f"QPushButton {{ color: {COLORS['danger']}; background: transparent; border: none; padding: 3px 6px; border-radius: 4px; }}"
+                              f"QPushButton:hover {{ background: rgba(247,90,90,0.15); }}")
+        up_btn.clicked.connect(self.move_image_up)
+        dn_btn.clicked.connect(self.move_image_down)
+        del_btn.clicked.connect(self.delete_image)
 
         btn_widget = QWidget()
         btn_layout = QHBoxLayout(btn_widget)
-        btn_layout.addWidget(move_up_btn)
-        btn_layout.addWidget(move_down_btn)
-        btn_layout.addWidget(delete_btn)
-        btn_layout.setContentsMargins(0, 0, 0, 0)
+        btn_layout.addWidget(up_btn)
+        btn_layout.addWidget(dn_btn)
+        btn_layout.addWidget(del_btn)
+        btn_layout.setContentsMargins(4, 0, 4, 0)
+        btn_layout.setSpacing(2)
         self.image_table.setCellWidget(row, 0, btn_widget)
 
     def move_image_up(self):
-        self.image_table.setSortingEnabled(False)
         row = self.image_table.currentRow()
         if row > 0:
             self.images[row], self.images[row - 1] = self.images[row - 1], self.images[row]
             self.update_image_row(row)
             self.update_image_row(row - 1)
             self.image_table.setCurrentCell(row - 1, 1)
+            self.filmstrip.set_images(self.images)
+            self.filmstrip.highlight_index(row - 1)
             self.update_preview_with_row(row - 1)
-        self.image_table.setSortingEnabled(False)
+            if self._full_timeline_dlg and self._full_timeline_dlg.isVisible():
+                self._full_timeline_dlg.refresh(self.images, row - 1)
 
     def move_image_down(self):
-        self.image_table.setSortingEnabled(False)
         row = self.image_table.currentRow()
         if row < len(self.images) - 1:
             self.images[row], self.images[row + 1] = self.images[row + 1], self.images[row]
             self.update_image_row(row)
             self.update_image_row(row + 1)
             self.image_table.setCurrentCell(row + 1, 1)
+            self.filmstrip.set_images(self.images)
+            self.filmstrip.highlight_index(row + 1)
             self.update_preview_with_row(row + 1)
-        self.image_table.setSortingEnabled(False)
+            if self._full_timeline_dlg and self._full_timeline_dlg.isVisible():
+                self._full_timeline_dlg.refresh(self.images, row + 1)
 
     def update_image_row(self, row: int):
         if 0 <= row < len(self.images):
@@ -863,12 +2401,14 @@ class SlideshowCreator(QMainWindow):
             del self.images[row]
             self.image_table.removeRow(row)
             if not self.images:
-                self.preview_label.clear()
+                self.preview_panel.clear()
             else:
                 new_row = max(0, row - 1)
                 self.image_table.setCurrentCell(new_row, 1)
                 self.update_preview_with_row(new_row)
         self.image_table.setSortingEnabled(False)
+        self.filmstrip.set_images(self.images)
+        self._refresh_stats()
 
     def set_random_images_order(self):
         random.shuffle(self.images)
@@ -891,8 +2431,6 @@ class SlideshowCreator(QMainWindow):
                 return
             img = self.images.pop(cur_row)
             self.images.insert(new_pos, img)
-            # Only repopulate the rows that actually shifted — much faster than
-            # rebuilding the entire table for large slideshows.
             lo, hi = min(cur_row, new_pos), max(cur_row, new_pos)
             self.image_table.blockSignals(True)
             self.image_table.setUpdatesEnabled(False)
@@ -908,24 +2446,17 @@ class SlideshowCreator(QMainWindow):
 
     def _warn_corrupted_image(self, path: str):
         name = os.path.basename(path)
-        QMessageBox.warning(
-            self,
-            "Corrupted Image",
-            f"The following image appears to be corrupted and will be skipped:\n\n{name}",
-            QMessageBox.Ok,
-        )
+        QMessageBox.warning(self, "Corrupted Image",
+            f"The following image appears to be corrupted and will be skipped:\n\n{name}", QMessageBox.Ok)
 
     def _store_temp_dirs(self, dirs: list):
-        """Slot: remember temp dirs emitted by the worker so we can delete them later."""
         self._pending_temp_dirs = dirs
 
     def _cleanup_temp_dirs(self):
-        """Delete all temporary folders (A_Blur + kb_clips) after the final export."""
         for d in self._pending_temp_dirs:
             if d and os.path.isdir(d):
                 try:
                     shutil.rmtree(d, ignore_errors=True)
-                    print(f"Cleaned up temp folder: {d}")
                 except Exception as e:
                     print(f"Could not remove temp folder {d}: {e}")
         self._pending_temp_dirs = []
@@ -935,6 +2466,14 @@ class SlideshowCreator(QMainWindow):
         self.taskbar_progress.reset()
         self.taskbar_progress.hide()
         self.continue_with_video_export()
+
+    def _refresh_stats(self):
+        n = len(self.images)
+        dur = sum(img["duration"] for img in self.images)
+        aud = len(self.audio_files)
+        self.slide_count_label.setText(str(n))
+        self.audio_count_label.setText(str(aud))
+        self.stats_bar.update_stats(n, dur, aud)
 
     # ── Audio ─────────────────────────────────────────────────────────────────
 
@@ -952,35 +2491,33 @@ class SlideshowCreator(QMainWindow):
             filename_item = QTableWidgetItem(os.path.basename(audio["path"]))
             filename_item.setFlags(filename_item.flags() & ~Qt.ItemIsEditable)
             self.audio_table.setItem(row, 1, filename_item)
+            self.audio_table.setRowHeight(row, 30)
 
-            mu_btn = QPushButton("↑")
-            md_btn = QPushButton("↓")
-            del_btn = QPushButton("✖")
+            mu_btn = QPushButton("↑"); mu_btn.setProperty("action", "icon")
+            md_btn = QPushButton("↓"); md_btn.setProperty("action", "icon")
+            del_btn = QPushButton("✕"); del_btn.setProperty("action", "icon")
+            del_btn.setStyleSheet(f"QPushButton {{ color: {COLORS['danger']}; background: transparent; border: none; padding: 2px 4px; }}"
+                                  f"QPushButton:hover {{ background: rgba(247,90,90,0.15); }}")
             mu_btn.clicked.connect(lambda _, r=row: self.move_audio_up(r))
             md_btn.clicked.connect(lambda _, r=row: self.move_audio_down(r))
             del_btn.clicked.connect(lambda _, r=row: self.delete_audio(r))
 
             bw = QWidget()
             bl = QHBoxLayout(bw)
-            bl.addWidget(mu_btn)
-            bl.addWidget(md_btn)
-            bl.addWidget(del_btn)
-            bl.setContentsMargins(0, 0, 0, 0)
+            bl.addWidget(mu_btn); bl.addWidget(md_btn); bl.addWidget(del_btn)
+            bl.setContentsMargins(4, 0, 4, 0); bl.setSpacing(2)
             self.audio_table.setCellWidget(row, 0, bw)
+        self._refresh_stats()
 
     def move_audio_up(self, row: int):
         if row > 0:
-            self.audio_files[row], self.audio_files[row - 1] = (
-                self.audio_files[row - 1], self.audio_files[row]
-            )
+            self.audio_files[row], self.audio_files[row - 1] = self.audio_files[row - 1], self.audio_files[row]
             self.update_audio_table()
             self.audio_table.setCurrentCell(row - 1, 1)
 
     def move_audio_down(self, row: int):
         if row < len(self.audio_files) - 1:
-            self.audio_files[row], self.audio_files[row + 1] = (
-                self.audio_files[row + 1], self.audio_files[row]
-            )
+            self.audio_files[row], self.audio_files[row + 1] = self.audio_files[row + 1], self.audio_files[row]
             self.update_audio_table()
             self.audio_table.setCurrentCell(row + 1, 1)
 
@@ -1000,9 +2537,8 @@ class SlideshowCreator(QMainWindow):
         return sum(_get_audio_duration(a["path"]) for a in self.audio_files)
 
     def continue_with_video_export(self):
-        total_img_dur  = sum(img["duration"] for img in self.images)
+        total_img_dur   = sum(img["duration"] for img in self.images)
         total_audio_dur = self._total_audio_duration()
-
         print(f"Total image duration: {total_img_dur}s  |  Total audio duration: {total_audio_dur:.1f}s")
 
         if total_img_dur > total_audio_dur:
@@ -1013,7 +2549,6 @@ class SlideshowCreator(QMainWindow):
             msg.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
             if msg.exec_() == QMessageBox.Cancel:
                 return
-
             n = len(self.images)
             new_dur = int(total_audio_dur / n) if n else 0
             if new_dur < 2 or new_dur > 600:
@@ -1026,35 +2561,24 @@ class SlideshowCreator(QMainWindow):
         command = self.build_ffmpeg_command()
         print("Exporting with command:", command)
 
-        # Locate ffmpeg — QProcess on Windows does NOT inherit the full system
-        # PATH, so we resolve the executable to an absolute path ourselves.
         import shutil as _shutil
         import shlex  as _shlex
-        # 1) Check system PATH, 2) fall back to script folder
         ffmpeg_exe = _ffmpeg_exe()
         import os as _os
         if not _os.path.isfile(ffmpeg_exe):
             ffmpeg_exe = None
         if not ffmpeg_exe:
-            QMessageBox.critical(
-                self, "FFmpeg not found",
+            QMessageBox.critical(self, "FFmpeg not found",
                 "ffmpeg could not be found on your PATH or in the script folder.\n"
-                "Please place ffmpeg.exe next to Eventure.py or add it to your PATH.",
-                QMessageBox.Ok,
-            )
+                "Please place ffmpeg.exe next to Eventure.py or add it to your PATH.", QMessageBox.Ok)
             return
-        print("ffmpeg resolved to:", ffmpeg_exe)
 
-        # Split into program + args list; strip quotes shlex leaves on tokens.
         raw_args = _shlex.split(command, posix=False)
         args = [a.strip('"') for a in raw_args[1:]]
 
         self.process = QProcess(self)
-
-        # Pass the full current environment so ffmpeg can find its libraries.
         from PyQt5.QtCore import QProcessEnvironment
         self.process.setProcessEnvironment(QProcessEnvironment.systemEnvironment())
-
         self.process.readyReadStandardError.connect(self.update_progress)
         self.process.finished.connect(self.export_finished)
 
@@ -1064,11 +2588,9 @@ class SlideshowCreator(QMainWindow):
         self.taskbar_progress.setValue(0)
 
         self.process.start(ffmpeg_exe, args)
-        print("QProcess state after start:", self.process.state())
         if self.process.state() == 0:
             err = self.process.errorString()
-            QMessageBox.critical(self, "Export failed",
-                                 f"Failed to launch ffmpeg:\n{err}", QMessageBox.Ok)
+            QMessageBox.critical(self, "Export failed", f"Failed to launch ffmpeg:\n{err}", QMessageBox.Ok)
 
     def export_slideshow(self):
         if not self.images or not self.audio_files:
@@ -1076,15 +2598,11 @@ class SlideshowCreator(QMainWindow):
             return
         QMessageBox.warning(self, self.tr("just_know"), self.tr("no_secondery"), QMessageBox.Ok)
 
-
-        file_path, _ = QFileDialog.getSaveFileName(
-            self, "Save Slideshow", "", "Video Files (*.mp4);;All Files (*)"
-        )
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save Slideshow", "", "Video Files (*.mp4);;All Files (*)")
         if not file_path:
             QMessageBox.critical(self, self.tr("error"), self.tr("error_select_location"), QMessageBox.Ok)
             return
         self.output_file = file_path
-
         output_folder = os.path.join(os.path.dirname(self.images[0]["path"]), "A_Blur")
 
         self.images_backup = copy.deepcopy(self.images)
@@ -1105,29 +2623,19 @@ class SlideshowCreator(QMainWindow):
     def export_finished(self):
         self.progress_bar.setValue(100)
         self.taskbar_progress.setValue(100)
-        QMessageBox.information(
-            self,
-            self.tr("success_export_complete_window"),
-            self.tr("success_export_complete"),
-        )
+        QMessageBox.information(self, self.tr("success_export_complete_window"), self.tr("success_export_complete"))
         self.progress_bar.setVisible(False)
         self.taskbar_progress.reset()
         self.taskbar_progress.hide()
-        # Remove A_Blur and kb_clips now that the final .mp4 is written.
         self._cleanup_temp_dirs()
-        # Delete the temporary filter_complex script file if one was created.
         fc = getattr(self, "_fc_script_path", None)
         if fc:
-            try:
-                import os as _os
-                _os.remove(fc)
-            except OSError:
-                pass
+            try: os.remove(fc)
+            except OSError: pass
             self._fc_script_path = None
 
     def build_ffmpeg_command(self) -> str:
         inputs, filters = [], []
-
         for i, img in enumerate(self.images):
             if i == 0:
                 duration = img["duration"]
@@ -1135,77 +2643,51 @@ class SlideshowCreator(QMainWindow):
                 duration = img["duration"] + self.images[i - 1]["transition_duration"]
             else:
                 duration = img["duration"] + img["transition_duration"]
-            # If a pre-rendered KB clip exists, use it as a video input (not looped still)
             kb_clip = img.get("_kb_clip_path")
             if kb_clip and os.path.exists(kb_clip):
-                # Normalize to forward slashes — os.path.join uses backslash on
-                # Windows but original paths may use forward slash, causing FFmpeg
-                # to silently fail on mixed-separator paths like E:/foo\bar.mp4
                 kb_clip_norm = str(kb_clip).replace("\\", "/")
                 inputs.append(f'-t {duration} -i "{kb_clip_norm}"')
-                filters.append(
-                    f"[{i}:v]fps=25,setpts=PTS-STARTPTS,scale=1920:1080,setsar=1,format=yuv420p[{i}v]"
-                )
+                filters.append(f"[{i}:v]fps=25,setpts=PTS-STARTPTS,scale=1920:1080,setsar=1,format=yuv420p[{i}v]")
             else:
                 img_path_norm = str(img["path"]).replace("\\", "/")
                 inputs.append(f'-loop 1 -t {duration} -i "{img_path_norm}"')
-                filters.append(
-                    f"[{i}:v]fps=25,scale=1920:1080,setsar=1,"
-                    f"setpts=PTS-STARTPTS,format=yuv420p[{i}v]"
-                )
+                filters.append(f"[{i}:v]fps=25,scale=1920:1080,setsar=1,setpts=PTS-STARTPTS,format=yuv420p[{i}v]")
 
         for i in range(len(self.images) - 1):
-            offset = sum(img["duration"] for img in self.images[: i + 1]) - self.images[i]["transition_duration"]
+            offset = sum(img["duration"] for img in self.images[:i + 1]) - self.images[i]["transition_duration"]
             prev   = f"[{i}v]" if i == 0 else f"[v{i}]"
             filters.append(
                 f"{prev}[{i + 1}v]xfade=transition={self.images[i]['transition']}"
                 f":duration={self.images[i]['transition_duration']}:offset={offset}[v{i + 1}]"
             )
 
-        final_stream = f"[v{len(self.images) - 1}]"
-        audio_index  = len(self.images)
+        final_stream  = f"[v{len(self.images) - 1}]"
+        audio_index   = len(self.images)
         audio_streams = []
-
         for i, audio in enumerate(self.audio_files):
             audio_norm = str(audio["path"]).replace("\\", "/")
             inputs.append(f'-i "{audio_norm}"')
             audio_streams.append(f"[{audio_index + i}:a]")
 
-        # ── Audio fade-out at the end of the video ────────────────────────────
-        # Total video duration used to anchor the fade start time.
         total_video_dur = sum(img["duration"] for img in self.images)
-        fade_duration   = 3.0   # seconds of fade-out
+        fade_duration   = 3.0
         fade_start      = max(0.0, total_video_dur - fade_duration)
 
         if len(audio_streams) > 1:
-            # Concatenate all audio tracks, then apply fade-out on the result.
-            filters.append(
-                f"{''.join(audio_streams)}concat=n={len(audio_streams)}:v=0:a=1[outa_raw]"
-            )
-            filters.append(
-                f"[outa_raw]afade=t=out:st={fade_start:.3f}:d={fade_duration:.3f}[outa]"
-            )
+            filters.append(f"{''.join(audio_streams)}concat=n={len(audio_streams)}:v=0:a=1[outa_raw]")
+            filters.append(f"[outa_raw]afade=t=out:st={fade_start:.3f}:d={fade_duration:.3f}[outa]")
             audio_map = "-map [outa]"
         else:
-            # Single audio stream — apply fade-out directly in the filter graph.
-            filters.append(
-                f"[{audio_index}:a]afade=t=out:st={fade_start:.3f}:d={fade_duration:.3f}[outa]"
-            )
+            filters.append(f"[{audio_index}:a]afade=t=out:st={fade_start:.3f}:d={fade_duration:.3f}[outa]")
             audio_map = "-map [outa]"
 
         filter_complex = ";".join(filters)
 
-        # ── Write filter_complex to a temp script file ────────────────────────
-        # Windows has a 32 767-char command-line limit.  With many images the
-        # filter_complex alone exceeds this.  ffmpeg's -filter_complex_script
-        # reads it from a file instead, keeping the command line short.
         import tempfile as _tempfile
-        fc_file = _tempfile.NamedTemporaryFile(
-            mode="w", suffix=".txt", delete=False, encoding="utf-8"
-        )
+        fc_file = _tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, encoding="utf-8")
         fc_file.write(filter_complex)
         fc_file.close()
-        self._fc_script_path = fc_file.name   # remember so we can delete it later
+        self._fc_script_path = fc_file.name
 
         output_norm = str(self.output_file).replace(chr(92), "/")
         command = (
@@ -1223,8 +2705,6 @@ class SlideshowCreator(QMainWindow):
 
         return command
 
-    # ── Progress ──────────────────────────────────────────────────────────────
-
     def update_progress(self):
         output = self.process.readAllStandardError().data().decode("utf-8", errors="ignore")
         for line in output.split("\n"):
@@ -1234,7 +2714,7 @@ class SlideshowCreator(QMainWindow):
                 if len(parts) == 3:
                     try:
                         h, m, s = map(float, parts)
-                        cur = h * 3600 + m * 60 + s
+                        cur   = h * 3600 + m * 60 + s
                         total = sum(img["duration"] for img in self.images)
                         pct   = int(cur / total * 100) if total else 0
                         self.progress_bar.setValue(pct)
@@ -1281,12 +2761,19 @@ class SlideshowCreator(QMainWindow):
                     t = QTransform()
                     t.rotate(rotation)
                     pixmap = pixmap.transformed(t, Qt.SmoothTransformation)
-                self.preview_label.setPixmap(pixmap.scaled(400, 300, Qt.KeepAspectRatio))
+                self.preview_panel.set_pixmap(pixmap, os.path.basename(img_data["path"]))
             else:
-                self.preview_label.setText("Preview unavailable")
+                self.preview_panel.clear()
 
     def setup_connections(self):
         self.image_table.itemSelectionChanged.connect(self.update_preview)
+        self.image_table.itemSelectionChanged.connect(self._sync_filmstrip_selection)
+
+    def _sync_filmstrip_selection(self):
+        selected = self.image_table.selectedItems()
+        if selected:
+            row = self.image_table.row(selected[0])
+            self.filmstrip.highlight_index(row)
 
     # ── Project ───────────────────────────────────────────────────────────────
 
@@ -1295,11 +2782,11 @@ class SlideshowCreator(QMainWindow):
         self.audio_files.clear()
         self.image_table.setRowCount(0)
         self.audio_table.setRowCount(0)
-        self.preview_label.clear()
+        self.preview_panel.clear()
         self.loaded_project = ""
+        self._refresh_stats()
 
     def _write_project_file(self, path: str):
-        """Serialise current project to disk."""
         with open(path, "w", encoding="utf-8") as f:
             f.write(f"{len(self.audio_files)}\n")
             for audio in self.audio_files:
@@ -1338,43 +2825,33 @@ class SlideshowCreator(QMainWindow):
         file_name, _ = QFileDialog.getOpenFileName(
             self, "Select a PowerPoint file", "", "PowerPoint files (*.pptx;*.pptm);;All Files (*)"
         )
-        
         if file_name:
             slideshow_file = extract_pptx_content_to_slideshow_file(file_name)
             if slideshow_file:
                 self._load_project_from_path(slideshow_file)
 
-        
-
-
     def _load_project_from_path(self, file_name: str):
-        """Load a .slideshow file from an explicit path (also called by file association)."""
         try:
             with open(file_name, "r", encoding="utf-8") as f:
                 lines = f.readlines()
-
             count = int(lines[0].strip())
             if len(lines) < count + 1:
                 raise ValueError("Project file is truncated.")
-
             self.audio_files = [{"path": lines[i + 1].strip()} for i in range(count)]
             self.images = []
             for line in lines[count + 1:]:
                 parts = line.strip().split(",")
                 if len(parts) < 8:
                     continue
-                # parts: path, dur, transition, trans_dur, text, rotation,
-                #        second_image_path, second_image_rotation, date, ken_burns
                 path         = parts[0]
                 dur          = parts[1]
                 transition   = parts[2]
                 trans_dur    = parts[3]
                 text         = parts[4]
                 rotation     = parts[5]
-                is_second  = parts[6]
+                is_second    = parts[6]
                 date         = parts[7] if len(parts) > 7 else ""
-                ken_burns    = parts[8].strip()  if len(parts) > 8  else "none"
-
+                ken_burns    = parts[8].strip() if len(parts) > 8 else "none"
                 self.images.append({
                     "path":                path,
                     "duration":            int(dur),
@@ -1386,11 +2863,9 @@ class SlideshowCreator(QMainWindow):
                     "date":                date,
                     "ken_burns":           ken_burns
                 })
-
             self.update_image_table()
             self.update_audio_table()
             self.loaded_project = file_name
-
         except Exception as e:
             QMessageBox.critical(self, self.tr("error"), f"Failed to load project:\n{e}")
 
@@ -1405,11 +2880,10 @@ class SlideshowCreator(QMainWindow):
             self.images[row]["ken_burns"] = value
 
     def _set_all_ken_burns(self):
-        KB_OPTIONS = ["none", "zoom_in", "zoom_out",
-                      "pan_left", "pan_right", "pan_up", "pan_down"]
+        KB_OPTIONS = ["none", "zoom_in", "zoom_out", "pan_left", "pan_right", "pan_up", "pan_down"]
         dialog = QInputDialog(self)
-        dialog.setWindowTitle("Set Ken Burns Effect")
-        dialog.setLabelText("Select effect for all images:")
+        dialog.setWindowTitle(self.tr("dialog_set_ken_burns_title"))
+        dialog.setLabelText(self.tr("dialog_set_ken_burns_label"))
         dialog.setComboBoxItems(KB_OPTIONS)
         if dialog.exec_() == QDialog.Accepted:
             effect = dialog.textValue()
@@ -1418,86 +2892,49 @@ class SlideshowCreator(QMainWindow):
             self.update_image_table()
 
     def _set_random_ken_burns_per_image(self):
-        """Assign a random Ken Burns effect to every image independently."""
-        KB_OPTIONS = ["zoom_in", "zoom_out",
-                      "pan_left", "pan_right", "pan_up", "pan_down"]
+        KB_OPTIONS = ["zoom_in", "zoom_out", "pan_left", "pan_right", "pan_up", "pan_down"]
         for img in self.images:
             img["ken_burns"] = random.choice(KB_OPTIONS)
         self.update_image_table()
 
     def _set_smart_ken_burns(self):
-        """
-        Assign Ken Burns effects using a cinematic continuity algorithm.
-
-        Rules:
-          1. Motion continuity — the next effect should feel like it picks up
-             where the last one left off:
-               zoom_in  → zoom_out  (camera reverses, starts at the zoomed-in frame)
-               zoom_out → zoom_in   (same logic in reverse)
-               pan_left → pan_right (reversal feels natural)
-               pan_right→ pan_left
-               pan_up   → pan_down
-               pan_down → pan_up
-          2. Variety — after two reversals in a row, force a category switch
-             (zoom ↔ pan) to break the monotony.
-          3. Occasional wildcards (≈ 20 %) — insert a pan between two zooms or
-             vice-versa to keep the sequence interesting.
-          4. Second images (PiP) are skipped.
-        """
-        # Continuity map: what naturally follows each effect
         REVERSAL = {
-            "zoom_in":   "zoom_out",
-            "zoom_out":  "zoom_in",
-            "pan_left":  "pan_right",
-            "pan_right": "pan_left",
-            "pan_up":    "pan_down",
-            "pan_down":  "pan_up",
+            "zoom_in": "zoom_out", "zoom_out": "zoom_in",
+            "pan_left": "pan_right", "pan_right": "pan_left",
+            "pan_up": "pan_down", "pan_down": "pan_up",
         }
-        ZOOM_EFFECTS = ["zoom_in",  "zoom_out"]
+        ZOOM_EFFECTS = ["zoom_in", "zoom_out"]
         PAN_EFFECTS  = ["pan_left", "pan_right", "pan_up", "pan_down"]
 
-        def _opposite_category(effect: str) -> list:
+        def _opposite_category(effect):
             return PAN_EFFECTS if effect in ZOOM_EFFECTS else ZOOM_EFFECTS
 
-        def _same_category(effect: str) -> list:
-            pool = ZOOM_EFFECTS if effect in ZOOM_EFFECTS else PAN_EFFECTS
-            return [e for e in pool if e != effect]
-
-        prev_effect   = None
-        reversal_streak = 0   # how many consecutive reversals we've done
+        prev_effect = None
+        reversal_streak = 0
 
         for img in self.images:
             if img.get("is_second_image", False):
-                continue   # PiP slides don't need a KB assignment
-
+                continue
             if prev_effect is None:
-                # First image: pick randomly from all effects
                 chosen = random.choice(ZOOM_EFFECTS + PAN_EFFECTS)
             else:
-                # 20 % wildcard: jump to the opposite category
                 if random.random() < 0.20:
                     chosen = random.choice(_opposite_category(prev_effect))
                     reversal_streak = 0
-                # After 2+ reversals in a row: force a category switch
                 elif reversal_streak >= 2:
                     chosen = random.choice(_opposite_category(prev_effect))
                     reversal_streak = 0
                 else:
-                    # Normal continuity: use the reversal
                     chosen = REVERSAL[prev_effect]
                     reversal_streak += 1
-
             img["ken_burns"] = chosen
             prev_effect = chosen
-
         self.update_image_table()
-
-
 
     def set_all_images_transition(self):
         dialog = QInputDialog(self)
-        dialog.setWindowTitle("Set Transition")
-        dialog.setLabelText("Select transition:")
+        dialog.setWindowTitle(self.tr("dialog_set_transition"))
+        dialog.setLabelText(self.tr("dialog_select_transition"))
         dialog.setComboBoxItems(self.transitions_types)
         if dialog.exec_() == QDialog.Accepted:
             t = dialog.textValue()
@@ -1523,9 +2960,7 @@ class SlideshowCreator(QMainWindow):
     # ── Premiere Export ───────────────────────────────────────────────────────
 
     def export_premiere_slideshow(self):
-        file_path, _ = QFileDialog.getSaveFileName(
-            self, "Save Premiere Slideshow", "", "Folder"
-        )
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save Premiere Slideshow", "", "Folder")
         if not file_path:
             QMessageBox.critical(self, self.tr("error"), self.tr("error_select_location_premiere"), QMessageBox.Ok)
             return
@@ -1539,7 +2974,7 @@ class SlideshowCreator(QMainWindow):
         self.image_premiere_worker = ImageProcessingPremiereWorker(
             self.images, self.premiere_project_folder,
             self.common_width, self.common_height,
-            audio_files=self.audio_files,          # ← pass audio for XML music track
+            audio_files=self.audio_files,
         )
         self.image_premiere_worker.progress.connect(self.update_image_premiere_progress)
         self.image_premiere_worker.finished.connect(self.on_image_premiere_processing_finished)
@@ -1547,19 +2982,14 @@ class SlideshowCreator(QMainWindow):
         self.image_premiere_worker.start()
 
     def on_premiere_xml_ready(self, xml_path: str):
-        """Called when the Premiere XML timeline has been written to disk."""
         print(f"Premiere XML ready: {xml_path}")
-        # Move the XML into the 04_project folder so it lives next to the .prproj
         dst_folder = os.path.join(self.premiere_project_folder, "04_פרוייקט")
         os.makedirs(dst_folder, exist_ok=True)
         dst = os.path.join(dst_folder, "premiere_timeline.xml")
         try:
             shutil.move(xml_path, dst)
-            QMessageBox.information(
-                self,
-                "Premiere XML",
-                f"Timeline XML saved:\n{dst}\n\nIn Premiere Pro: File → Import → premiere_timeline.xml",
-            )
+            QMessageBox.information(self, "Premiere XML",
+                f"Timeline XML saved:\n{dst}\n\nIn Premiere Pro: File → Import → premiere_timeline.xml")
         except Exception as e:
             print(f"Could not move XML to project folder: {e}")
 
@@ -1589,13 +3019,10 @@ class SlideshowCreator(QMainWindow):
     def export_premiere_text(self):
         folder = os.path.join(self.premiere_project_folder, "03_טקסט")
         os.makedirs(folder, exist_ok=True)
-
-        # Copy style file if it exists (use relative path)
-        style_src  = APP_DIR / "Premiere_Project" / "טקסט למצגת - עברית.prtextstyle"
+        style_src = APP_DIR / "Premiere_Project" / "טקסט למצגת - עברית.prtextstyle"
         if style_src.exists():
             shutil.copy(str(style_src), os.path.join(folder, style_src.name))
-
-        srt_path    = os.path.join(folder, "exported_texts.srt")
+        srt_path     = os.path.join(folder, "exported_texts.srt")
         current_time = 0
         idx = 1
         with open(srt_path, "w", encoding="utf-8") as f:
@@ -1620,7 +3047,7 @@ class SlideshowCreator(QMainWindow):
         wb.save(os.path.join(folder, "exported_durations.xlsx"))
 
     def copy_premiere_project_file(self):
-        src  = APP_DIR / "Premiere_Project" / "Project.prproj"
+        src = APP_DIR / "Premiere_Project" / "Project.prproj"
         if not src.exists():
             print(f"Premiere project template not found at {src}")
             return
@@ -1764,23 +3191,10 @@ class SlideshowCreator(QMainWindow):
         self.set_random_ken_burns_action.setText(self.tr("random_ken"))
         self.set_smart_ken_burns_action.setText(self.tr("smart_ken"))
         self.easy_text_writing_action.setText(self.tr("action_easy_text_writing"))
-        self.set_save_shortcut_action.setText(self.tr("action_set_save_shortcut"))
-        self.set_save_as_shortcut_action.setText(self.tr("action_set_save_as_shortcut"))
-        self.set_load_shortcut_action.setText(self.tr("action_set_load_shortcut"))
-        self.set_easy_text_shortcut_action.setText(self.tr("action_set_easy_text_shortcut"))
-        self.set_show_info_shortcut_action.setText(self.tr("action_set_show_info_shortcut"))
-        self.set_delete_row_action.setText(self.tr("action_set_delete_shortcut"))
-        self.set_set_image_location_action.setText(self.tr("action_set_image_location_shortcut"))
-        self.set_move_image_up_action.setText(self.tr("action_set_move_image_up_shortcut"))
-        self.set_move_image_down_action.setText(self.tr("action_set_move_image_down_shortcut"))
         self.show_info_action.setText(self.tr("action_show_info"))
         self.set_language_english_action.setText(self.tr("action_set_language_english"))
         self.set_language_hebrew_action.setText(self.tr("action_set_language_hebrew"))
         self.open_help_dialog_action.setText(self.tr("action_browse_help_topics"))
-
-        self.slides_label.setText(self.tr("label_slides"))
-        self.audio_files_label.setText(self.tr("label_audio_files"))
-        self.preview_label.setText(self.tr("label_preview"))
 
         self.image_table.setHorizontalHeaderLabels([
             self.tr("table_header_actions"), self.tr("table_header_image"),
@@ -1792,9 +3206,8 @@ class SlideshowCreator(QMainWindow):
         self.audio_table.setHorizontalHeaderLabels([
             self.tr("table_header_actions"), self.tr("table_header_audio_file"),
         ])
-        self.audio_library_button.setText(self.tr("label_audio_library"))
 
-    # ── Menu ─────────────────────────────────────────────────────────────────
+    # ── Menu ──────────────────────────────────────────────────────────────────
 
     def create_menu(self):
         self.menubar          = self.menuBar()
@@ -1820,28 +3233,28 @@ class SlideshowCreator(QMainWindow):
             menu.addAction(a)
             return a
 
-        self.import_images   = _action("action_import_images",   self.add_images,          self.import_menu,  "import_images")
-        self.import_audio    = _action("action_import_audio",    self.add_audio,           self.import_menu,  "import_audio")
-        self.import_pptx_action = _action("action_import_pptx", self.import_pptx,self.import_menu)
-        self.load_action     = _action("action_load_project",    self.load_project,        self.file_menu,    "load")
-        self.save_action     = _action("action_save_project",    self.save_project,        self.file_menu,    "save")
-        self.save_as_action  = _action("action_save_project_as", self.save_project_as,     self.file_menu,    "save_as")
-        self.clear_action    = _action("action_clear_project",   self.clear_project,       self.file_menu)
-        self.export_slideshow_action = _action("action_export_slideshow", self.export_slideshow, self.export_menu)
-        self.export_premiere_action  = _action("action_export_premiere",  self.export_premiere_slideshow, self.export_menu)
+        self.import_images      = _action("action_import_images",   self.add_images,          self.import_menu, "import_images")
+        self.import_audio       = _action("action_import_audio",    self.add_audio,           self.import_menu, "import_audio")
+        self.import_pptx_action = _action("action_import_pptx",     self.import_pptx,         self.import_menu)
+        self.load_action        = _action("action_load_project",    self.load_project,        self.file_menu,   "load")
+        self.save_action        = _action("action_save_project",    self.save_project,        self.file_menu,   "save")
+        self.save_as_action     = _action("action_save_project_as", self.save_project_as,     self.file_menu,   "save_as")
+        self.clear_action       = _action("action_clear_project",   self.clear_project,       self.file_menu)
+        self.export_slideshow_action = _action("action_export_slideshow", self.export_slideshow,           self.export_menu)
+        self.export_premiere_action  = _action("action_export_premiere",  self.export_premiere_slideshow,  self.export_menu)
 
         self.delete_row_action      = _action("action_delete_row",    self.delete_image,    self.Img_menu, "delete_row")
         self.move_image_up_action   = _action("action_move_image_up", self.move_image_up,   self.Img_menu, "move_image_up")
         self.move_image_down_action = _action("action_move_image_down", self.move_image_down, self.Img_menu, "move_image_down")
-        self.set_all_images_duration_action   = _action("action_set_all_image_duration",   self.set_all_images_duration, self.Img_menu)
-        self.set_random_image_order_action    = _action("action_set_random_images_order",  self.set_random_images_order, self.Img_menu)
-        self.auto_set_images_action           = _action("action_auto_calc_image_duration", self.auto_calc_image_duration, self.Img_menu)
-        self.set_image_location_action        = _action("dialog_set_image_location",       self.set_image_location, self.Img_menu, "set_image_location")
+        self.set_all_images_duration_action   = _action("action_set_all_image_duration",   self.set_all_images_duration,    self.Img_menu)
+        self.set_random_image_order_action    = _action("action_set_random_images_order",  self.set_random_images_order,    self.Img_menu)
+        self.auto_set_images_action           = _action("action_auto_calc_image_duration", self.auto_calc_image_duration,   self.Img_menu)
+        self.set_image_location_action        = _action("dialog_set_image_location",       self.set_image_location,         self.Img_menu, "set_image_location")
         self.auto_sort_images_by_date_Newest_action = _action("action_auto_sort_newest_first", lambda: self.auto_sort_images_by_date(True),  self.Auto_sort_menu)
         self.auto_sort_images_by_date_Oldest_action = _action("action_auto_sort_oldest_first", lambda: self.auto_sort_images_by_date(False), self.Auto_sort_menu)
 
-        self.set_all_images_transition_type_action      = _action("action_set_all_transition_type",          self.set_all_images_transition,            self.Transitions_menu)
-        self.set_random_transition_for_each_image_action = _action("action_set_random_transition_per_image", self.set_random_transition_for_each_image, self.Transitions_menu)
+        self.set_all_images_transition_type_action       = _action("action_set_all_transition_type",          self.set_all_images_transition,            self.Transitions_menu)
+        self.set_random_transition_for_each_image_action = _action("action_set_random_transition_per_image", self.set_random_transition_for_each_image,  self.Transitions_menu)
 
         self.set_all_ken_burns_action = QAction(self.tr("set_all_ken"), self)
         self.set_all_ken_burns_action.triggered.connect(self._set_all_ken_burns)
@@ -1873,7 +3286,6 @@ class SlideshowCreator(QMainWindow):
             self.shortcuts_menu.addAction(a)
             setattr(self, f"set_{key}_shortcut_action" if key != "set_image_location" else "set_set_image_location_action", a)
 
-        # Expose individual shortcut actions for retranslate
         (
             self.set_save_shortcut_action,
             self.set_save_as_shortcut_action,
@@ -1887,26 +3299,18 @@ class SlideshowCreator(QMainWindow):
         ) = self.shortcuts_menu.actions()
 
         self.show_info_action = _action("action_show_info", self.show_info, self.info_menu, "info")
-
         self.set_language_english_action = _action("action_set_language_english", lambda: self.set_language("en"), self.language_menu)
         self.set_language_hebrew_action  = _action("action_set_language_hebrew",  lambda: self.set_language("he"), self.language_menu)
-
-        self.open_help_dialog_action = _action("action_browse_help_topics", self.open_help_dialog, self.help_menu)
+        self.open_help_dialog_action     = _action("action_browse_help_topics",   self.open_help_dialog,           self.help_menu)
 
 
 # ── Worker Threads ────────────────────────────────────────────────────────────
 
 class ImageProcessingWorker(QThread):
-    """
-    Processes images in parallel using a ThreadPoolExecutor.
-    For CPU-bound PIL work a ProcessPoolExecutor would be even faster,
-    but threads avoid pickle/spawn overhead for small-to-medium batches.
-    """
     progress        = pyqtSignal(int)
     finished        = pyqtSignal()
-    corrupted_image = pyqtSignal(str)   # emits path of any image that fails to open
-    # Emitted after all work is done; carries the list of temp dirs to delete.
-    cleanup_dirs = pyqtSignal(list)
+    corrupted_image = pyqtSignal(str)
+    cleanup_dirs    = pyqtSignal(list)
 
     def __init__(self, images, output_folder, common_width, common_height):
         super().__init__()
@@ -1914,15 +3318,9 @@ class ImageProcessingWorker(QThread):
         self.output_folder = output_folder
         self.common_width  = common_width
         self.common_height = common_height
-        # Temp directories created during this export (populated in run()).
-        self._temp_dirs: list[str] = []
+        self._temp_dirs: list = []
 
-    def _resize_one(self, i: int) -> tuple[int, str | None]:
-        """Step 1: resize/blur image if needed. Run in parallel (PIL, no ffmpeg).
-
-        When there is no Ken Burns effect the KB renderer never runs, so the
-        regardless of what the checkbox says.
-        """
+    def _resize_one(self, i: int):
         img_path   = self.images[i]["path"]
         rotation   = self.images[i]["rotation"]
         text       = self.images[i]["text"]
@@ -1930,8 +3328,8 @@ class ImageProcessingWorker(QThread):
         text_on_static = not has_kb
         try:
             original = Image.open(img_path)
-            original.verify()          # catches truncated / corrupt files
-            original = Image.open(img_path)   # re-open after verify() closes it
+            original.verify()
+            original = Image.open(img_path)
             if original.size != (self.common_width, self.common_height):
                 new_path = Image_resizer.process_image(img_path, self.output_folder, text, rotation, text_on_static)
                 return i, new_path
@@ -1942,8 +3340,6 @@ class ImageProcessingWorker(QThread):
 
     def run(self):
         total = len(self.images)
-
-        # ── Phase 1: parallel image resize/blur ───────────────────────────────
         with ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as executor:
             futures = {executor.submit(self._resize_one, i): i for i in range(total)}
             done = 0
@@ -1955,19 +3351,14 @@ class ImageProcessingWorker(QThread):
                         self.images[i]["path"] = new_path
                 except Exception as e:
                     print(f"Resize error: {e}")
-                # Phase 1 = first 50% of progress bar
                 self.progress.emit(int(done / total * 50))
 
-        # ── Phase 2: limited-parallel Ken Burns rendering ─────────────────────
-        # 2 workers: enough to overlap disk I/O + encoding; more causes contention.
         KB_WORKERS = min(2, os.cpu_count() or 1)
-        kb_images = [i for i in range(total)
-                     if self.images[i].get("ken_burns", "none") != "none"]
+        kb_images = [i for i in range(total) if self.images[i].get("ken_burns", "none") != "none"]
         kb_dir = os.path.join(self.output_folder, "kb_clips")
         if kb_images:
             os.makedirs(kb_dir, exist_ok=True)
 
-        # Track both temp folders so the main thread can delete them later.
         self._temp_dirs = [self.output_folder, kb_dir]
 
         def _render_kb_one(i: int):
@@ -1980,13 +3371,11 @@ class ImageProcessingWorker(QThread):
             else:
                 clip_duration = img.get("duration", 5) + img.get("transition_duration", 1)
             kb_out = os.path.join(kb_dir, f"kb_{i}_{effect}.mp4").replace("\\", "/")
-            print(f"  KB render start: {effect} for image {i} ({clip_duration}s)")
-            has_kb     = self.images[i].get("ken_burns", "none") != "none"
+            has_kb = self.images[i].get("ken_burns", "none") != "none"
             text_on_static = not has_kb
             success = render_ken_burns_clip(
                 img["path"], effect, clip_duration, kb_out,
-                text=img.get("text", ""),
-                text_on_kb=text_on_static,
+                text=img.get("text", ""), text_on_kb=text_on_static,
             )
             return i, kb_out, success
 
@@ -1999,7 +3388,6 @@ class ImageProcessingWorker(QThread):
                     i, kb_out, success = future.result()
                     if success:
                         self.images[i]["_kb_clip_path"] = kb_out
-                        print(f"  KB render done {done_kb}/{len(kb_images)}: image {i}")
                     else:
                         print(f"  KB render failed for image {i}, will use still image")
                 except Exception as e:
@@ -2011,12 +3399,11 @@ class ImageProcessingWorker(QThread):
 
 
 class ImageProcessingPremiereWorker(QThread):
-    progress    = pyqtSignal(int)
-    finished    = pyqtSignal()
-    xml_ready   = pyqtSignal(str)   # emits path to the generated XML file
+    progress  = pyqtSignal(int)
+    finished  = pyqtSignal()
+    xml_ready = pyqtSignal(str)
 
-    def __init__(self, images, output_folder, common_width, common_height,
-                 audio_files=None):
+    def __init__(self, images, output_folder, common_width, common_height, audio_files=None):
         super().__init__()
         self.images        = images
         self.output_folder = output_folder
@@ -2025,46 +3412,29 @@ class ImageProcessingPremiereWorker(QThread):
         self.audio_files   = audio_files or []
 
     def run(self):
-        # ── Step 1: process images (backgrounds + foregrounds) ────────────────
         premiere_export.process_images(self.images, self.output_folder, self.progress.emit)
-
-        # ── Step 2: build slide list mapping processed files → slide data ─────
         bg_folder  = os.path.join(self.output_folder, "01_images", "backgrounds")
         img_folder = os.path.join(self.output_folder, "01_images", "foregrounds")
-
         slide_list = []
         for i, img in enumerate(self.images, start=1):
             if img.get("is_second_image"):
                 fg = os.path.join(img_folder, f"img{i}_2nd_of_img{i-1}.png")
-                slide_list.append({
-                    "bg_path":        None,
-                    "fg_path":        fg if os.path.exists(fg) else None,
-                    "duration":       img.get("duration", 5.0),
-                    "text":           img.get("text", ""),
-                    "is_second_image": True,
-                })
+                slide_list.append({"bg_path": None, "fg_path": fg if os.path.exists(fg) else None,
+                                   "duration": img.get("duration", 5.0), "text": img.get("text", ""),
+                                   "is_second_image": True})
             else:
                 bg = os.path.join(bg_folder, f"background_img{i}.jpg")
                 fg = os.path.join(img_folder, f"img{i}.png")
-                slide_list.append({
-                    "bg_path":        bg if os.path.exists(bg) else None,
-                    "fg_path":        fg if os.path.exists(fg) else None,
-                    "duration":       img.get("duration", 5.0),
-                    "text":           img.get("text", ""),
-                    "is_second_image": False,
-                })
-
-        # ── Step 3: generate the Premiere XML timeline ────────────────────────
+                slide_list.append({"bg_path": bg if os.path.exists(bg) else None,
+                                   "fg_path": fg if os.path.exists(fg) else None,
+                                   "duration": img.get("duration", 5.0), "text": img.get("text", ""),
+                                   "is_second_image": False})
         try:
             xml_path = premiere_export.generate_premiere_xml(
-                slide_list   = slide_list,
-                output_folder= self.output_folder,
-                music_paths   = self.audio_files,
-            )
+                slide_list=slide_list, output_folder=self.output_folder, music_paths=self.audio_files)
             self.xml_ready.emit(xml_path)
         except Exception as e:
             print(f"XML generation error: {e}")
-
         self.finished.emit()
 
 
@@ -2074,15 +3444,34 @@ class HelpDialog(QDialog):
     def __init__(self, parent=None, language="en"):
         super().__init__(parent)
         self.setWindowTitle("Help Topics")
-        self.resize(600, 400)
+        self.resize(640, 460)
         self.language = language
+        self.setStyleSheet(f"background: {COLORS['bg_panel']}; color: {COLORS['text_primary']};")
 
         layout = QVBoxLayout(self)
-        self.topic_list  = QListWidget()
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        title = QLabel("Help Topics")
+        title.setStyleSheet(f"font-size: 16px; font-weight: 700; color: {COLORS['text_primary']};")
+        layout.addWidget(title)
+
+        splitter = QSplitter(Qt.Horizontal)
+        self.topic_list = QListWidget()
         self.info_display = QTextEdit()
         self.info_display.setReadOnly(True)
-        layout.addWidget(self.topic_list)
-        layout.addWidget(self.info_display)
+        splitter.addWidget(self.topic_list)
+        splitter.addWidget(self.info_display)
+        splitter.setSizes([200, 400])
+        layout.addWidget(splitter)
+
+        close_btn = _styled_btn("Close", "")
+        close_btn.clicked.connect(self.close)
+        close_btn.setFixedWidth(80)
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_row.addWidget(close_btn)
+        layout.addLayout(btn_row)
 
         self.help_data = self._load_help_info()
         for topic in self.help_data:
@@ -2116,42 +3505,66 @@ class EasyTextWritingDialog(QDialog):
         self.current_index = start_index
 
         self.setWindowTitle(self.tr("action_easy_text_writing"))
-        self.setGeometry(200, 200, 400, 200)
+        self.setMinimumSize(500, 380)
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(14)
+
+        # Header row
+        header = QHBoxLayout()
+        self.counter_label = QLabel()
+        self.counter_label.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 12px;")
+        header.addStretch()
+        header.addWidget(self.counter_label)
+        layout.addLayout(header)
+
+        # Image preview
         self.image_label = QLabel()
         self.image_label.setAlignment(Qt.AlignCenter)
+        self.image_label.setMinimumHeight(200)
+        self.image_label.setStyleSheet(
+            f"background: {COLORS['bg_card']}; border: 1px solid {COLORS['border']}; border-radius: 8px;"
+        )
         layout.addWidget(self.image_label)
 
+        # Text input
         self.text_input = QTextEdit()
         self.text_input.setPlaceholderText(self.tr("enter_text_for_image"))
         self.text_input.setAlignment(Qt.AlignRight)
         self.text_input.setLayoutDirection(Qt.RightToLeft)
         self.text_input.setPlainText(self.images[self.current_index].get("text", ""))
+        self.text_input.setFixedHeight(80)
         self.text_input.installEventFilter(self)
         layout.addWidget(self.text_input)
 
-        self.text_input.moveCursor(QTextCursor.Start)
-
-        next_btn  = QPushButton(self.tr("next"))
-        close_btn = QPushButton(self.tr("close"))
-        next_btn.clicked.connect(self.next_image)
+        # Buttons
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        close_btn = _styled_btn(self.tr("close"), "")
+        next_btn  = _styled_btn(f"{self.tr('next')}  →", "primary")
         close_btn.clicked.connect(self.close)
-        layout.addWidget(next_btn)
-        layout.addWidget(close_btn)
+        next_btn.clicked.connect(self.next_image)
+        next_btn.setFixedHeight(36)
+        btn_row.addWidget(close_btn)
+        btn_row.addStretch()
+        btn_row.addWidget(next_btn)
+        layout.addLayout(btn_row)
 
+        self.text_input.moveCursor(QTextCursor.Start)
         self.update_image()
 
     def update_image(self):
-        if 0 <= self.current_index < len(self.images):
-            data  = self.images[self.current_index]
-            px    = QPixmap(data["path"])
-            rot   = data.get("rotation", 0)
+        n = len(self.images)
+        self.counter_label.setText(f"{self.current_index + 1} / {n}")
+        if 0 <= self.current_index < n:
+            data = self.images[self.current_index]
+            px   = QPixmap(data["path"])
+            rot  = data.get("rotation", 0)
             if rot:
-                t = QTransform()
-                t.rotate(rot)
+                t = QTransform(); t.rotate(rot)
                 px = px.transformed(t, Qt.SmoothTransformation)
-            self.image_label.setPixmap(px.scaled(300, 200, Qt.KeepAspectRatio))
+            self.image_label.setPixmap(px.scaled(460, 190, Qt.KeepAspectRatio, Qt.SmoothTransformation))
             self.text_input.setPlainText(data.get("text", ""))
 
     def next_image(self):
@@ -2176,31 +3589,46 @@ class InfoDialog(QDialog):
         super().__init__(parent)
         self.tr = tr_function
         self.setWindowTitle(self.tr("menu_info"))
-        self.setGeometry(300, 300, 300, 150)
+        self.setMinimumWidth(340)
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 20)
+        layout.setSpacing(16)
+
+        title = QLabel("Project Info")
+        title.setStyleSheet(f"font-size: 16px; font-weight: 700; color: {COLORS['text_primary']};")
+        layout.addWidget(title)
+        layout.addWidget(_make_divider())
+
         dur_with    = sum(img["duration"] for img in images)
         dur_without = sum(img["duration"] for img in images if not img.get("is_second_image"))
         audio_dur   = sum(_get_audio_duration(a["path"]) for a in audio_files)
 
-        layout.addWidget(QLabel(self.tr("info_total_images") + f" {len(images)}"))
-        layout.addWidget(QLabel(self.tr("info_duration_with_second") + f" {format_time_hms(dur_with)}"))
-        layout.addWidget(QLabel(self.tr("info_duration_without_second") + f" {format_time_hms(dur_without)}"))
-        layout.addWidget(QLabel(self.tr("info_audio_duration") + f" {format_time_hms(audio_dur)}"))
+        def _info_row(label: str, value: str):
+            row = QHBoxLayout()
+            lbl = QLabel(label)
+            lbl.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
+            val = QLabel(value)
+            val.setStyleSheet(f"color: {COLORS['text_primary']}; font-size: 13px; font-weight: 600;")
+            val.setAlignment(Qt.AlignRight)
+            row.addWidget(lbl)
+            row.addStretch()
+            row.addWidget(val)
+            return row
 
-        close_btn = QPushButton(self.tr("close"))
+        layout.addLayout(_info_row(self.tr("info_total_images"), str(len(images))))
+        layout.addLayout(_info_row(self.tr("info_duration_with_second"), format_time_hms(dur_with)))
+        layout.addLayout(_info_row(self.tr("info_duration_without_second"), format_time_hms(dur_without)))
+        layout.addLayout(_info_row(self.tr("info_audio_duration"), format_time_hms(audio_dur)))
+        layout.addWidget(_make_divider())
+
+        close_btn = _styled_btn(self.tr("close"), "primary")
         close_btn.clicked.connect(self.close)
-        layout.addWidget(close_btn)
-
-
-class CustomDelegate(QStyledItemDelegate):
-    def paint(self, painter, option, index):
-        is_secondary = index.model().index(index.row(), 1).data(Qt.UserRole)
-        if is_secondary:
-            painter.save()
-            painter.fillRect(option.rect, QColor(100, 100, 150))
-            painter.restore()
-        super().paint(painter, option, index)
+        close_btn.setFixedHeight(34)
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_row.addWidget(close_btn)
+        layout.addLayout(btn_row)
 
 
 class AudioLibraryDialog(QDialog):
@@ -2209,7 +3637,7 @@ class AudioLibraryDialog(QDialog):
         self.tr    = tr_function
         self.songs = []
         self.setWindowTitle(self.tr("label_audio_library"))
-        self.setGeometry(100, 100, 600, 400)
+        self.setMinimumSize(640, 460)
         self._load_songs()
         self._init_ui()
 
@@ -2224,26 +3652,51 @@ class AudioLibraryDialog(QDialog):
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        title = QLabel(self.tr("label_audio_library"))
+        title.setStyleSheet(f"font-size: 16px; font-weight: 700; color: {COLORS['text_primary']};")
+        layout.addWidget(title)
 
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText(self.tr("search_songs"))
         self.search_input.textChanged.connect(self._filter_songs)
         layout.addWidget(self.search_input)
 
+        content_row = QHBoxLayout()
         self.song_list = QListWidget()
         self._populate(filter_text="")
-        layout.addWidget(self.song_list)
+        content_row.addWidget(self.song_list, 1)
 
+        # Info panel
+        info_panel = QFrame()
+        info_panel.setProperty("class", "panel")
+        info_panel.setMinimumWidth(220)
+        info_layout = QVBoxLayout(info_panel)
+        info_layout.setContentsMargins(14, 14, 14, 14)
+        info_layout.setSpacing(8)
+        info_lbl = _make_section_label("Song Details")
+        info_layout.addWidget(info_lbl)
         self.info_label = QLabel(self.tr("song_info_label"))
-        layout.addWidget(self.info_label)
+        self.info_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px; line-height: 1.6;")
+        self.info_label.setWordWrap(True)
+        self.info_label.setAlignment(Qt.AlignTop)
+        info_layout.addWidget(self.info_label)
+        info_layout.addStretch()
+        content_row.addWidget(info_panel)
+        layout.addLayout(content_row)
 
         btn_row = QHBoxLayout()
-        add_btn   = QPushButton(self.tr("add_selected"))
-        close_btn = QPushButton(self.tr("close"))
-        add_btn.clicked.connect(self._add_selected)
+        btn_row.setSpacing(8)
+        close_btn = _styled_btn(self.tr("close"), "")
+        add_btn   = _styled_btn(f"＋  {self.tr('add_selected')}", "primary")
+        add_btn.setFixedHeight(36)
         close_btn.clicked.connect(self.close)
-        btn_row.addWidget(add_btn)
+        add_btn.clicked.connect(self._add_selected)
         btn_row.addWidget(close_btn)
+        btn_row.addStretch()
+        btn_row.addWidget(add_btn)
         layout.addLayout(btn_row)
 
         self.song_list.itemSelectionChanged.connect(self._update_info)
@@ -2252,12 +3705,9 @@ class AudioLibraryDialog(QDialog):
         self.song_list.clear()
         low = filter_text.lower()
         for song in self.songs:
-            if (
-                low in song["name"].lower()
-                or low in song["author"].lower()
-                or low in song.get("fits_for", "").lower()
-            ):
-                item = QListWidgetItem(f"{song['name']} - {song['author']}")
+            if (low in song["name"].lower() or low in song["author"].lower()
+                    or low in song.get("fits_for", "").lower()):
+                item = QListWidgetItem(f"{song['name']} — {song['author']}")
                 item.setData(Qt.UserRole, song)
                 self.song_list.addItem(item)
 
@@ -2265,8 +3715,7 @@ class AudioLibraryDialog(QDialog):
         self._populate(self.search_input.text())
 
     def _fmt_dur(self, seconds: float) -> str:
-        m = int(seconds // 60)
-        s = int(seconds % 60)
+        m = int(seconds // 60); s = int(seconds % 60)
         return f"{m}:{s:02d}"
 
     def _update_info(self):
@@ -2274,11 +3723,10 @@ class AudioLibraryDialog(QDialog):
         if selected:
             s = selected[0].data(Qt.UserRole)
             self.info_label.setText(
-                f"<b>Name:</b> {s['name']}<br>"
-                f"<b>Author:</b> {s['author']}<br>"
-                f"<b>Duration:</b> {self._fmt_dur(s['duration'])}<br>"
+                f"<b>Name:</b> {s['name']}<br><br>"
+                f"<b>Artist:</b> {s['author']}<br><br>"
+                f"<b>Duration:</b> {self._fmt_dur(s['duration'])}<br><br>"
                 f"<b>Fits for:</b> {s.get('fits_for', '')}<br>"
-                f"<b>Path:</b> {Path(s['path'].replace('{BASE_PATH}', str(BASEPATH)))}"
             )
 
     def _add_selected(self):
@@ -2299,15 +3747,13 @@ if __name__ == "__main__":
 
     app = QApplication(sys.argv)
     app.setWindowIcon(QIcon("logo.ico"))
-    set_theme(app, theme="dark")
+    app.setStyleSheet(STYLESHEET)
+
     window = SlideshowCreator()
     window.create_menu()
     window.setup_connections()
     window.show()
 
-    # ── File association fix: open .slideshow passed by Windows shell ─────────
-    # When the user double-clicks a .slideshow file (or "Open with" the app),
-    # Windows passes the file path as sys.argv[1].  Load it automatically.
     if len(sys.argv) > 1:
         arg = sys.argv[1]
         if arg.endswith(".slideshow") and os.path.exists(arg):
