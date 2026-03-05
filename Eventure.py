@@ -2821,64 +2821,106 @@ class SlideshowCreator(QMainWindow):
             self._fc_script_path = None
 
     def build_ffmpeg_command(self) -> str:
+        """
+        Build the ffmpeg command for the final MP4 export.
+
+        xfade math (correct):
+        ─────────────────────
+        Each slide has:
+          • duration      (d)  = net visible seconds the user set (e.g. 3 s)
+          • transition_dur (td) = overlap with the NEXT slide      (e.g. 1 s)
+
+        ffmpeg clip lengths:
+          • Every clip (except the last) needs d + td seconds of material so that
+            the next slide can begin td seconds before this one finishes.
+          • The last clip only needs d seconds (nothing follows it).
+
+        xfade offset for transition i→i+1:
+          offset[i] = sum of d[0..i]   (cumulative FULL durations, not net)
+          This is the exact moment in the composited timeline where slide i
+          should start cross-fading into slide i+1.
+
+        Audio fade-out starts at total_video_dur = sum(d) to match the last frame.
+        """
+        images = self.images
+        n      = len(images)
         inputs, filters = [], []
-        for i, img in enumerate(self.images):
-            if i == 0:
-                duration = img["duration"]
-            elif i == len(self.images) - 1:
-                duration = img["duration"] + self.images[i - 1]["transition_duration"]
-            else:
-                duration = img["duration"] + img["transition_duration"]
+
+        # ── Video inputs ──────────────────────────────────────────────────────
+        for i, img in enumerate(images):
+            d  = img["duration"]
+            td = img.get("transition_duration", 1)
+            # All clips except the last need extra material for the outgoing transition.
+            # The last clip has no outgoing transition so it only needs d seconds.
+            clip_len = d + td if i < n - 1 else d
+
             kb_clip = img.get("_kb_clip_path")
             if kb_clip and os.path.exists(kb_clip):
                 kb_clip_norm = str(kb_clip).replace("\\", "/")
-                inputs.append(f'-t {duration} -i "{kb_clip_norm}"')
-                filters.append(f"[{i}:v]fps=25,setpts=PTS-STARTPTS,scale=1920:1080,setsar=1,format=yuv420p[{i}v]")
+                inputs.append(f'-t {clip_len} -i "{kb_clip_norm}"')
+                filters.append(
+                    f"[{i}:v]fps=25,setpts=PTS-STARTPTS,"
+                    f"scale=1920:1080,setsar=1,format=yuv420p[{i}v]"
+                )
             else:
                 img_path_norm = str(img["path"]).replace("\\", "/")
-                inputs.append(f'-loop 1 -t {duration} -i "{img_path_norm}"')
-                filters.append(f"[{i}:v]fps=25,scale=1920:1080,setsar=1,setpts=PTS-STARTPTS,format=yuv420p[{i}v]")
+                inputs.append(f'-loop 1 -t {clip_len} -i "{img_path_norm}"')
+                filters.append(
+                    f"[{i}:v]fps=25,scale=1920:1080,"
+                    f"setsar=1,setpts=PTS-STARTPTS,format=yuv420p[{i}v]"
+                )
 
-        for i in range(len(self.images) - 1):
-            # Correct xfade offset = cumulative net durations up to and including slide i.
-            # offset[i] = sum(d[j] - td[j] for j in 0..i)
-            # The old formula kept adding full durations so offsets grew past each
-            # clip's length, making every transition after the first invalid.
-            offset = sum(
-                self.images[j]["duration"] - self.images[j]["transition_duration"]
-                for j in range(i + 1)
-            )
-            prev   = f"[{i}v]" if i == 0 else f"[v{i}]"
+        # ── xfade transitions ─────────────────────────────────────────────────
+        # offset[i] = cumulative sum of full durations for slides 0 … i.
+        # This is exactly when slide i should begin transitioning into slide i+1.
+        cumulative_offset = 0.0
+        for i in range(n - 1):
+            cumulative_offset += images[i]["duration"]
+            td   = images[i].get("transition_duration", 1)
+            prev = f"[{i}v]" if i == 0 else f"[v{i}]"
             filters.append(
-                f"{prev}[{i + 1}v]xfade=transition={self.images[i]['transition']}"
-                f":duration={self.images[i]['transition_duration']}:offset={offset}[v{i + 1}]"
+                f"{prev}[{i + 1}v]xfade=transition={images[i]['transition']}"
+                f":duration={td}:offset={cumulative_offset:.6f}[v{i + 1}]"
             )
 
-        # Force yuv420p on the final composited stream. Without this, xfade can
-        # output yuv444p which encodes as H.264 High 4:4:4 Predictive profile —
-        # unplayable in Windows Media Player and most mobile players.
-        _final_label = f"v{len(self.images) - 1}"
-        filters.append(f"[{_final_label}]format=yuv420p[vout]")
-        final_stream  = "[vout]"
-        audio_index   = len(self.images)
+        # ── Force yuv420p (required for broad compatibility) ─────────────────
+        # Without this, xfade may output yuv444p (H.264 High 4:4:4 Predictive),
+        # which is unplayable in Windows Media Player and most mobile players.
+        final_v_label = f"v{n - 1}" if n > 1 else "0v"
+        filters.append(f"[{final_v_label}]format=yuv420p[vout]")
+
+        # ── Audio inputs + concat + fade-out ─────────────────────────────────
+        audio_index   = n
         audio_streams = []
         for i, audio in enumerate(self.audio_files):
             audio_norm = str(audio["path"]).replace("\\", "/")
             inputs.append(f'-i "{audio_norm}"')
             audio_streams.append(f"[{audio_index + i}:a]")
 
-        total_video_dur = sum(img["duration"] for img in self.images)
+        # Total video duration = sum of each slide's NET duration (what the user set).
+        # Audio fade-out begins fade_duration seconds before the video ends.
+        total_video_dur = sum(img["duration"] for img in images)
         fade_duration   = 3.0
         fade_start      = max(0.0, total_video_dur - fade_duration)
+        print(f"[export] total_video_dur={total_video_dur:.1f}s  fade_start={fade_start:.1f}s")
 
         if len(audio_streams) > 1:
-            filters.append(f"{''.join(audio_streams)}concat=n={len(audio_streams)}:v=0:a=1[outa_raw]")
-            filters.append(f"[outa_raw]afade=t=out:st={fade_start:.3f}:d={fade_duration:.3f}[outa]")
+            filters.append(
+                f"{''.join(audio_streams)}concat=n={len(audio_streams)}:v=0:a=1[outa_raw]"
+            )
+            filters.append(
+                f"[outa_raw]afade=t=out:st={fade_start:.3f}:d={fade_duration:.3f}[outa]"
+            )
+            audio_map = "-map [outa]"
+        elif len(audio_streams) == 1:
+            filters.append(
+                f"[{audio_index}:a]afade=t=out:st={fade_start:.3f}:d={fade_duration:.3f}[outa]"
+            )
             audio_map = "-map [outa]"
         else:
-            filters.append(f"[{audio_index}:a]afade=t=out:st={fade_start:.3f}:d={fade_duration:.3f}[outa]")
-            audio_map = "-map [outa]"
+            audio_map = ""
 
+        # ── Write filter_complex to a temp file (avoids command-line length limits) ─
         filter_complex = ";".join(filters)
 
         import tempfile as _tempfile
@@ -2892,15 +2934,17 @@ class SlideshowCreator(QMainWindow):
         command = (
             f'ffmpeg -y {" ".join(inputs)} '
             f'-filter_complex_script "{fc_file.name}" '
-            f'-map {final_stream} {audio_map} '
-            f'-c:v:0 libx264 -preset ultrafast -crf 28 '
-            f'-c:a:0 aac '
+            f'-map [vout] {audio_map} '
+            f'-c:v libx264 -preset ultrafast -crf 28 '
+            f'-c:a aac '
             f'-movflags +faststart -shortest '
             f'"{output_norm}"'
         )
 
+        # Restore image list to pre-export state (durations may have been adjusted
+        # by the audio-mismatch handler in continue_with_video_export).
         if self.backup_state:
-            self.images      = self.images_backup
+            self.images       = self.images_backup
             self.backup_state = False
             self.update_image_table()
 
@@ -3246,7 +3290,7 @@ class SlideshowCreator(QMainWindow):
                 "path":                path,
                 "duration":            float(dur),
                 "transition":          transition,
-                "transition_duration": self.default_transition_duration,
+                "transition_duration": float(trans_dur),
                 "text":                text.replace("\\n", "\n"),
                 "rotation":            int(rotation),
                 "is_second_image":     is_second.strip().lower() == "true",
@@ -3986,14 +4030,16 @@ class ImageProcessingWorker(QThread):
         self._temp_dirs = [self.output_folder, kb_dir]
 
         def _render_kb_one(i: int):
-            img = self.images[i]
+            img    = self.images[i]
             effect = img["ken_burns"]
-            if i == 0:
-                clip_duration = img.get("duration", 5)
-            elif i == len(self.images) - 1:
-                clip_duration = img.get("duration", 5) + self.images[i - 1].get("transition_duration", 1)
+            d      = img.get("duration", 5)
+            td     = img.get("transition_duration", 1)
+            # Pre-rendered KB clips must match exactly what build_ffmpeg_command
+            # will request: all clips except the last get d+td seconds; last gets d.
+            if i < len(self.images) - 1:
+                clip_duration = d + td
             else:
-                clip_duration = img.get("duration", 5) + img.get("transition_duration", 1)
+                clip_duration = d
             kb_out = os.path.join(kb_dir, f"kb_{i}_{effect}.mp4").replace("\\", "/")
             has_kb = self.images[i].get("ken_burns", "none") != "none"
             text_on_static = not has_kb
@@ -4681,7 +4727,7 @@ class SlideshowPreviewDialog(QDialog):
         vol_lbl.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 13px;")
         self._vol_slider = QSlider(Qt.Horizontal)
         self._vol_slider.setRange(0, 100)
-        self._vol_slider.setValue(100)
+        self._vol_slider.setValue(45)
         self._vol_slider.setFixedWidth(90)
         self._vol_slider.setToolTip("Music volume")
         self._vol_slider.setStyleSheet(f"""
