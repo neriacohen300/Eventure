@@ -2874,8 +2874,20 @@ class SlideshowCreator(QMainWindow):
         fade_duration   = 3.0
         fade_start      = max(0.0, total_video_dur - fade_duration)
 
+        AUDIO_XFADE = 2.0   # crossfade duration between audio tracks (seconds)
+
         if len(audio_streams) > 1:
-            filters.append(f"{''.join(audio_streams)}concat=n={len(audio_streams)}:v=0:a=1[outa_raw]")
+            # Chain acrossfade filters between consecutive audio files.
+            # Each step: [prevout][nextstream]acrossfade=d=XFADE[cfN]
+            # The last merged stream gets the final fade-out to [outa].
+            prev_label = audio_streams[0]
+            for i in range(1, len(audio_streams)):
+                out_label = f"[cf{i}]" if i < len(audio_streams) - 1 else "[outa_raw]"
+                filters.append(
+                    f"{prev_label}{audio_streams[i]}"
+                    f"acrossfade=d={AUDIO_XFADE:.1f}:c1=tri:c2=tri{out_label}"
+                )
+                prev_label = out_label
             filters.append(f"[outa_raw]afade=t=out:st={fade_start:.3f}:d={fade_duration:.3f}[outa]")
             audio_map = "-map [outa]"
         else:
@@ -4856,10 +4868,73 @@ class SlideshowPreviewDialog(QDialog):
 
     # ── Audio via ffmpeg pipe → system audio ─────────────────────────────────
 
+    # Per-instance audio duration cache (avoids repeated ffprobe calls)
+    _preview_dur_cache: dict = {}
+
+    def _preview_audio_duration(self, path: str) -> float:
+        """Cached ffprobe duration lookup for preview players."""
+        if path not in self._preview_dur_cache:
+            self._preview_dur_cache[path] = _get_audio_duration(path)
+        return self._preview_dur_cache[path]
+
+    def _make_player(self, path: str, file_offset_ms: int, vol: int) -> "QMediaPlayer":
+        """
+        Create a fresh QMediaPlayer for *path*, seek to *file_offset_ms* on load,
+        and play if self._playing.  Each player gets a unique status handler
+        (closure over the player instance) so stale signals from old players
+        never affect the current one.
+        """
+        from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
+
+        player = QMediaPlayer(self)
+        player.setVolume(vol)
+        player.setPlaybackRate(self._speed)
+
+        # Whether the initial seek has been applied (guard against double-fire)
+        _seeked = [False]
+
+        def _on_status(status):
+            # Ignore events from players that are no longer active
+            if player is not self._audio_proc:
+                return
+            try:
+                if status in (QMediaPlayer.LoadedMedia, QMediaPlayer.BufferedMedia):
+                    if not _seeked[0]:
+                        _seeked[0] = True
+                        if file_offset_ms > 0:
+                            player.setPosition(file_offset_ms)
+                        if self._playing:
+                            player.play()
+                        # Schedule crossfade to next track (300 ms delay so
+                        # duration() is populated by then)
+                        QTimer.singleShot(300, self._schedule_xfade)
+
+                elif status == QMediaPlayer.EndOfMedia:
+                    # Crossfade timer normally fires before this; this is fallback.
+                    if player is not self._audio_proc:
+                        return
+                    if not hasattr(self, "_audio_paths"):
+                        return
+                    self._audio_index += 1
+                    if self._audio_index >= len(self._audio_paths):
+                        return
+                    next_path = self._audio_paths[self._audio_index]
+                    new_player = self._make_player(next_path, 0, vol)
+                    self._audio_proc = new_player
+            except Exception as e:
+                print(f"Audio status error: {e}")
+
+        player.mediaStatusChanged.connect(_on_status)
+        url = QUrl.fromLocalFile(str(path))
+        player.setMedia(QMediaContent(url))
+        # play() is deferred until LoadedMedia fires (avoids setPosition-before-load)
+        return player
+
     def _start_audio(self, offset: float):
-        """Play audio starting from *offset* seconds using QMediaPlayer.
-        All audio files are played in sequence; offset is applied across the
-        concatenated timeline so seeking mid-playlist works correctly.
+        """
+        Play audio starting from *offset* seconds (absolute timeline position).
+        Finds the right file in the playlist, seeks within it, and starts playback.
+        Uses a per-instance duration cache so repeated seeks don't re-invoke ffprobe.
         """
         self._stop_audio()
         if not self._audio_files:
@@ -4872,75 +4947,162 @@ class SlideshowPreviewDialog(QDialog):
             if not paths:
                 return
 
-            # Pre-compute per-file durations so we can find which file
-            # contains the requested offset.
-            durations = [_get_audio_duration(p) for p in paths]
+            # Use cached durations — no ffprobe on every seek
+            durations = [self._preview_audio_duration(p) for p in paths]
 
-            # Walk the playlist to find which file the offset falls in.
-            remaining = offset
+            # Walk the playlist to find which file contains *offset*.
+            # Each track boundary is shifted left by xfade_dur because the
+            # crossfade causes track N+1 to start xfade_dur seconds early.
+            # Without this correction, seeking matches the raw file durations
+            # instead of the actual playback timeline, putting the wrong track.
+            XFADE = 2.0   # must match self._xfade_dur
+            remaining   = offset
             start_index = 0
             file_offset = 0.0
             for i, dur in enumerate(durations):
-                if remaining < dur or i == len(durations) - 1:
+                # Effective contribution of this track to the timeline:
+                # all tracks except the last are shortened by the crossfade overlap
+                effective_dur = dur - XFADE if i < len(durations) - 1 else dur
+                effective_dur = max(0.0, effective_dur)
+                if remaining < effective_dur or i == len(durations) - 1:
                     start_index = i
                     file_offset = remaining
                     break
-                remaining -= dur
+                remaining -= effective_dur
 
-            self._audio_paths    = paths
+            self._audio_paths     = paths
             self._audio_durations = durations
-            self._audio_index    = start_index
-            self._audio_offset   = offset
+            self._audio_index     = start_index
+            self._audio_offset    = offset
+            self._xfade_dur       = 2.0
+            self._xfade_timer     = None
+            self._xfade_player    = None
 
-            self._audio_proc = QMediaPlayer(self)
-            self._audio_file_offset = int(file_offset * 1000)  # seek after load
-            self._audio_proc.mediaStatusChanged.connect(self._on_audio_status)
-            # Apply current volume immediately
             vol = self._vol_slider.value() if hasattr(self, "_vol_slider") else 100
-            self._audio_proc.setVolume(vol)
-            url = QUrl.fromLocalFile(str(paths[start_index]))
-            self._audio_proc.setMedia(QMediaContent(url))
-            self._audio_proc.setPlaybackRate(self._speed)
-            # Don't call play() here – seek + play happen in _on_audio_status
-            # once the media is loaded (avoids the setPosition-before-load bug)
+            file_offset_ms = int(file_offset * 1000)
+
+            self._audio_proc = self._make_player(paths[start_index], file_offset_ms, vol)
+
         except Exception as e:
             print(f"Audio preview not available: {e}")
             self._audio_proc = None
 
-    def _on_audio_status(self, status):
-        """Seek-then-play on first load; advance playlist on EndOfMedia."""
+    def _schedule_xfade(self):
+        """Schedule a crossfade to start XFADE_DUR seconds before end of track."""
+        if not hasattr(self, "_audio_paths") or self._audio_proc is None:
+            return
+        if self._audio_index >= len(self._audio_paths) - 1:
+            return  # last track — nothing to cross into
+
+        # Calculate how many ms until the crossfade should begin.
+        pos_ms    = self._audio_proc.position()           # ms played so far
+        total_ms  = self._audio_proc.duration()           # total ms of this file
+        xfade_ms  = int(getattr(self, "_xfade_dur", 2.0) * 1000)
+
+        if total_ms <= 0:
+            # duration not yet known — retry in 200 ms
+            QTimer.singleShot(200, self._schedule_xfade)
+            return
+
+        remaining_ms = total_ms - pos_ms
+        start_in_ms  = max(0, remaining_ms - xfade_ms)
+
+        if start_in_ms < 50:
+            # Already inside the crossfade window — start immediately
+            self._do_xfade()
+        else:
+            if getattr(self, "_xfade_timer", None) is not None:
+                try: self._xfade_timer.stop()
+                except Exception: pass
+            self._xfade_timer = QTimer(self)
+            self._xfade_timer.setSingleShot(True)
+            self._xfade_timer.timeout.connect(self._do_xfade)
+            self._xfade_timer.start(start_in_ms)
+
+    def _do_xfade(self):
+        """Start the next audio track and fade old ↓ / new ↑ over _xfade_dur s."""
         try:
             from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
-            if self._audio_proc is None:
-                return
+        except ImportError:
+            return
 
-            if status == QMediaPlayer.LoadedMedia or status == QMediaPlayer.BufferedMedia:
-                # Media is ready – apply the pending seek offset and start playing.
-                # We only do this once per load (offset is reset to 0 after use).
-                offset_ms = getattr(self, "_audio_file_offset", 0)
-                if offset_ms > 0:
-                    self._audio_proc.setPosition(offset_ms)
-                    self._audio_file_offset = 0
-                # Guard: don't auto-play if we're paused (seek while paused)
-                if self._playing:
-                    self._audio_proc.play()
+        if self._audio_proc is None or not self._playing:
+            return
+        if not hasattr(self, "_audio_paths"):
+            return
 
-            elif status == QMediaPlayer.EndOfMedia:
-                if not hasattr(self, "_audio_paths"):
-                    return
-                self._audio_index += 1
-                if self._audio_index >= len(self._audio_paths):
-                    return  # all songs done
-                next_path = self._audio_paths[self._audio_index]
-                self._audio_file_offset = 0  # next file starts from beginning
-                url = QUrl.fromLocalFile(str(next_path))
-                self._audio_proc.setMedia(QMediaContent(url))
-                self._audio_proc.setPlaybackRate(self._speed)
-                # play() will be called by the LoadedMedia branch above
-        except Exception as e:
-            print(f"Audio status error: {e}")
+        next_idx = self._audio_index + 1
+        if next_idx >= len(self._audio_paths):
+            return
+
+        xfade_dur  = float(getattr(self, "_xfade_dur", 2.0))
+        xfade_ms   = int(xfade_dur * 1000)
+        steps      = 20                          # volume update steps
+        interval   = xfade_ms // steps           # ms per step
+        base_vol   = self._vol_slider.value() if hasattr(self, "_vol_slider") else 100
+
+        # Create incoming player
+        incoming = QMediaPlayer(self)
+        incoming.setVolume(0)
+        incoming.setPlaybackRate(self._speed)
+        url = QUrl.fromLocalFile(str(self._audio_paths[next_idx]))
+        incoming.setMedia(QMediaContent(url))
+
+        outgoing = self._audio_proc   # reference to currently playing player
+
+        step_count = [0]
+
+        def _fade_step():
+            s = step_count[0]
+            step_count[0] += 1
+            frac_new = s / steps          # 0 → 1  (incoming gets louder)
+            frac_old = 1.0 - frac_new    # 1 → 0  (outgoing gets quieter)
+            try:
+                incoming.setVolume(int(base_vol * frac_new))
+                outgoing.setVolume(int(base_vol * frac_old))
+            except Exception:
+                pass
+            if step_count[0] >= steps:
+                # Crossfade done — outgoing player becomes incoming
+                try: outgoing.stop()
+                except Exception: pass
+                self._audio_proc  = incoming
+                self._audio_index = next_idx
+                # Connect playlist advance for the new player
+                incoming.mediaStatusChanged.connect(self._on_audio_status)
+                incoming.setVolume(base_vol)
+                # Schedule the next crossfade if more tracks remain
+                self._schedule_xfade()
+
+        # Start incoming player first — fade steps begin once media loads
+        def _on_incoming_ready(status):
+            from PyQt5.QtMultimedia import QMediaPlayer
+            if status in (QMediaPlayer.LoadedMedia, QMediaPlayer.BufferedMedia):
+                incoming.play()
+                # Wire up fade timer now that both players are active
+                fade_timer = QTimer(self)
+                fade_timer.setInterval(interval)
+                fade_timer.timeout.connect(_fade_step)
+                fade_timer.start()
+                # Stop timer after xfade is done
+                QTimer.singleShot(xfade_ms + interval, fade_timer.stop)
+
+        incoming.mediaStatusChanged.connect(_on_incoming_ready)
+
+        # Store reference so it isn't GC'd
+        self._xfade_player = incoming
 
     def _stop_audio(self):
+        # Cancel any pending xfade timer
+        if getattr(self, "_xfade_timer", None) is not None:
+            try: self._xfade_timer.stop()
+            except Exception: pass
+            self._xfade_timer = None
+        # Stop any in-progress crossfade incoming player
+        if getattr(self, "_xfade_player", None) is not None:
+            try: self._xfade_player.stop()
+            except Exception: pass
+            self._xfade_player = None
         if self._audio_proc is not None:
             try:
                 self._audio_proc.stop()
