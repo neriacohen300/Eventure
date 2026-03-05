@@ -76,7 +76,6 @@ Eventure/
 ├── Image_resizer.py       # Image processing (resize, blur bg, text overlay)
 ├── premiere_export.py     # Adobe Premiere Pro XML project generator
 ├── pptx_export.py         # PowerPoint import & .slideshow converter
-├── EVENTURE_THEMES/       # Application themes
 ├── Fonts/                 # Bundled fonts (e.g. Birzia-Black.otf)
 ├── Help/                  # Help documentation (per language)
 ├── Languages/             # Translation JSON files
