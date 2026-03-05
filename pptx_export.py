@@ -3,7 +3,6 @@ from pptx import Presentation
 from openpyxl import Workbook
 import re
 from datetime import datetime
-import slideshow_io
 
 # Function to clean text for Excel (remove illegal characters)
 # Function to clean text for Excel (remove only illegal control characters)
@@ -107,32 +106,42 @@ def extract_pptx_content_to_excel(pptx_file):
 
 def extract_pptx_content_to_slideshow_file(pptx_file):
     pptx_file_name = os.path.splitext(os.path.basename(pptx_file))[0]
-    pptx_dir = os.path.dirname(pptx_file)
-    pptx_folder = os.path.join(pptx_dir, pptx_file_name)
+    pptx_dir = os.path.dirname(pptx_file)  # Get the directory of the PPTX file
+    pptx_folder = os.path.join(pptx_dir, pptx_file_name)  # Create a folder in the same location
 
+    # Create the main folder for this presentation
     if not os.path.exists(pptx_folder):
         os.makedirs(pptx_folder)
 
+    # Open the .pptx file
     presentation = Presentation(pptx_file)
 
-    # Collect all slide records for slideshow_io
-    slide_records = []
-    for slide_num, slide in enumerate(presentation.slides, start=1):
-        images, image_shapes = extract_images_from_slide(slide, pptx_folder, slide_num)
-        text = extract_text_from_slide(slide, slide_num, image_shapes)
-        text = clean_text_for_excel(text) if text else ""
+    current_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-        for i, image in enumerate(images):
-            slide_records.append({
-                "image": image,
-                "text":  text if i == 0 else "",
-                "index": i,   # 0 = primary, 1 = second_image
-            })
 
-        print(f"Processed Slide {slide_num}: {pptx_folder} (Images: {len(images)}, Text: {len(text)} chars)")
-
+    # Prepare the output slideshow file
     slideshow_file = os.path.join(pptx_folder, f"{pptx_file_name}.slideshow")
-    slideshow_io.write_from_pptx(slideshow_file, slide_records)
+    with open(slideshow_file, "w", encoding="utf-8") as file:
+        file.write("0\n")
+        for slide_num, slide in enumerate(presentation.slides, start=1):
+            # Extract images
+            images, image_shapes = extract_images_from_slide(slide, pptx_folder, slide_num)
+
+            # Extract text
+            text = extract_text_from_slide(slide, slide_num, image_shapes)
+            # Clean text before using
+            text = clean_text_for_excel(text) if text else ""
+            
+            # Write to the slideshow file
+            for i, image in enumerate(images):
+                # Only the second image (index 1) gets "True"
+                is_second_image = "True" if i == 1 else "False"
+
+                file.write(
+                    f"{image},5,fade,1,{text if i == 0 else ''},0,{is_second_image},{current_date},none,True,none\n"
+                )
+
+            print(f"Processed Slide {slide_num}: {pptx_folder} (Images: {len(images)}, Text: {len(text)} characters)")
 
     print(f"Slideshow file saved at: {slideshow_file}")
     return slideshow_file
