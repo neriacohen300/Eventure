@@ -31,12 +31,12 @@ from PyQt5.QtWidgets import (
     QLineEdit, QFrame, QScrollArea, QSizePolicy, QToolBar, QStatusBar,
     QSplitter, QGridLayout, QToolButton, QMenu, QRadioButton, QButtonGroup,
 )
-from PyQt5.QtCore import pyqtSlot
-from PyQt5.QtCore import Qt, QUrl, QSize, QProcess, QTimer, QThread, pyqtSignal, QEvent, QPoint, QRect
+from PyQt5.QtCore import pyqtSlot, QObject
+from PyQt5.QtCore import Qt, QUrl, QSize, QProcess, QTimer, QThread, pyqtSignal, QEvent, QPoint, QRect, QObject
 from PyQt5.QtGui import (
     QIcon, QFont, QPixmap, QTextCursor, QCursor, QTransform,
     QColor, QBrush, QImage, QPalette, QPainter, QLinearGradient,
-    QFontDatabase, QPen, QPainterPath,
+    QFontDatabase, QPen, QPainterPath, 
 )
 from PIL import Image, ExifTags, ImageDraw, ImageFont
 from openpyxl import Workbook
@@ -848,6 +848,26 @@ class PreviewPanel(QFrame):
         self.image_label.setText("No image selected")
         layout.addWidget(self.image_label)
 
+        # Fullscreen button row below the preview image
+        fs_row = QHBoxLayout()
+        fs_row.setContentsMargins(0, 0, 0, 0)
+        fs_row.addStretch()
+        self._fs_btn = QPushButton("⛶  Full Screen")
+        self._fs_btn.setFixedHeight(22)
+        self._fs_btn.setStyleSheet(
+            f"QPushButton {{ background: {COLORS['bg_card']}; color: {COLORS['text_muted']};"
+            f"  border: 1px solid {COLORS['border']}; border-radius: 4px;"
+            f"  padding: 0 8px; font-size: 11px; }}"
+            f"QPushButton:hover {{ color: {COLORS['accent']}; border-color: {COLORS['accent']}; }}"
+            f"QPushButton:disabled {{ color: {COLORS['text_muted']}; opacity: 0.4; }}"
+        )
+        self._fs_btn.setEnabled(False)
+        self._fs_btn.clicked.connect(self._open_fullscreen)
+        self._current_pixmap = None
+        self._current_filename = ""
+        fs_row.addWidget(self._fs_btn)
+        layout.addLayout(fs_row)
+
         self.filename_label = QLabel()
         self.filename_label.setAlignment(Qt.AlignCenter)
         self.filename_label.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 11px;")
@@ -855,6 +875,9 @@ class PreviewPanel(QFrame):
 
     def set_pixmap(self, pixmap: QPixmap, filename: str = ""):
         if pixmap and not pixmap.isNull():
+            self._current_pixmap = pixmap
+            self._current_filename = filename
+            self._fs_btn.setEnabled(True)
             self.image_label.setPixmap(pixmap.scaled(
                 self.image_label.width() - 4,
                 self.image_label.height() - 4,
@@ -862,6 +885,9 @@ class PreviewPanel(QFrame):
             ))
             self.image_label.setProperty("class", "")
         else:
+            self._current_pixmap = None
+            self._current_filename = ""
+            self._fs_btn.setEnabled(False)
             self.image_label.clear()
             self.image_label.setText("No image selected")
             self.image_label.setProperty("class", "preview-empty")
@@ -869,7 +895,67 @@ class PreviewPanel(QFrame):
         self.style().unpolish(self.image_label)
         self.style().polish(self.image_label)
 
+    def _open_fullscreen(self):
+        if not self._current_pixmap or self._current_pixmap.isNull():
+            return
+        # Keep a local reference so the dialog can access the pixmap
+        px = self._current_pixmap
+        title = self._current_filename or "Image Preview"
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(title)
+        dlg.setWindowFlags(dlg.windowFlags() | Qt.WindowMaximizeButtonHint)
+        dlg.setMinimumSize(800, 600)
+        dlg.resize(1100, 750)
+        dlg.setStyleSheet(f"background: {COLORS['bg_deep']};")
+
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(8, 8, 8, 8)
+        lay.setSpacing(6)
+
+        # Use a plain QLabel — update it manually via a helper
+        img_lbl = QLabel()
+        img_lbl.setAlignment(Qt.AlignCenter)
+        img_lbl.setStyleSheet(f"background: {COLORS['bg_deep']};")
+        img_lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        lay.addWidget(img_lbl, 1)
+
+        def _rescale():
+            img_lbl.setPixmap(px.scaled(
+                img_lbl.width() - 4, img_lbl.height() - 4,
+                Qt.KeepAspectRatio, Qt.SmoothTransformation
+            ))
+
+        # Install an event filter on the label to catch resize events
+        class _ResizeFilter(QObject):
+            def eventFilter(self, obj, event):
+                if event.type() == QEvent.Resize:
+                    _rescale()
+                return super().eventFilter(obj, event)
+        _filter = _ResizeFilter(dlg)
+        img_lbl.installEventFilter(_filter)
+
+        close_btn = QPushButton("✕  Close")
+        close_btn.setFixedHeight(32)
+        close_btn.setStyleSheet(
+            f"QPushButton {{ background: {COLORS['bg_card']}; color: {COLORS['text_muted']}; "
+            f"border: 1px solid {COLORS['border']}; border-radius: 6px; padding: 0 16px; }}"
+            f"QPushButton:hover {{ background: {COLORS['danger']}; color: #fff; }}"
+        )
+        close_btn.clicked.connect(dlg.close)
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_row.addWidget(close_btn)
+        lay.addLayout(btn_row)
+
+        dlg.show()
+        _rescale()   # initial paint once dialog is visible
+        dlg.exec_()
+
     def clear(self):
+        self._current_pixmap = None
+        self._current_filename = ""
+        self._fs_btn.setEnabled(False)
         self.image_label.clear()
         self.image_label.setText("No image selected")
         self.filename_label.setText("")
@@ -1933,8 +2019,8 @@ class SlideshowCreator(QMainWindow):
         self.audio_files     = []
         self.output_file     = self.tr("output_file")
         self.button_font     = "Segoe UI"
-        self.deafult_font    = "Segoe UI"
-        self.text_font       = "Segoe UI"
+        self.deafult_font    = "Birzia-Black"
+        self.text_font       = "Birzia-Black"
         self.text_font_size  = 10
         self.button_font_size = 9
 
@@ -2042,7 +2128,14 @@ class SlideshowCreator(QMainWindow):
         self.image_table.setFont(QFont("Segoe UI", 11))
         self.image_table.setShowGrid(False)
         self.image_table.setAlternatingRowColors(False)
-        self.image_table.verticalHeader().setVisible(False)
+        self.image_table.verticalHeader().setVisible(True)
+        self.image_table.verticalHeader().setDefaultSectionSize(34)
+        self.image_table.verticalHeader().setStyleSheet(
+            f"QHeaderView::section {{ background-color: {COLORS['bg_deep']}; "
+            f"color: {COLORS['text_muted']}; border: none; "
+            f"border-bottom: 1px solid {COLORS['border']}; "
+            f"padding: 0 6px; font-size: 11px; font-weight: 600; }}"
+        )
         self.image_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.image_table.setEditTriggers(QTableWidget.DoubleClicked | QTableWidget.SelectedClicked)
 
@@ -2133,6 +2226,7 @@ class SlideshowCreator(QMainWindow):
         self.audio_table.verticalHeader().setVisible(False)
         self.audio_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.audio_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.audio_table.horizontalHeader().setMinimumSectionSize(110)
         self.audio_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.audio_table.setMaximumHeight(140)
         right_layout.addWidget(self.audio_table)
@@ -2675,10 +2769,10 @@ class SlideshowCreator(QMainWindow):
             self.audio_table.setItem(row, 1, filename_item)
             self.audio_table.setRowHeight(row, 30)
 
-            mu_btn = QPushButton("↑"); mu_btn.setProperty("action", "icon")
-            md_btn = QPushButton("↓"); md_btn.setProperty("action", "icon")
-            del_btn = QPushButton("✕"); del_btn.setProperty("action", "icon")
-            del_btn.setStyleSheet(f"QPushButton {{ color: {COLORS['danger']}; background: transparent; border: none; padding: 2px 4px; }}"
+            mu_btn = QPushButton("↑"); mu_btn.setProperty("action", "icon"); mu_btn.setMinimumWidth(32)
+            md_btn = QPushButton("↓"); md_btn.setProperty("action", "icon"); md_btn.setMinimumWidth(32)
+            del_btn = QPushButton("✕"); del_btn.setProperty("action", "icon"); del_btn.setMinimumWidth(32)
+            del_btn.setStyleSheet(f"QPushButton {{ color: {COLORS['danger']}; background: transparent; border: none; padding: 2px 8px; min-width: 32px; border-radius: 4px; }}"
                                   f"QPushButton:hover {{ background: rgba(247,90,90,0.15); }}")
             mu_btn.clicked.connect(lambda _, r=row: self.move_audio_up(r))
             md_btn.clicked.connect(lambda _, r=row: self.move_audio_down(r))
@@ -2687,7 +2781,7 @@ class SlideshowCreator(QMainWindow):
             bw = QWidget()
             bl = QHBoxLayout(bw)
             bl.addWidget(mu_btn); bl.addWidget(md_btn); bl.addWidget(del_btn)
-            bl.setContentsMargins(4, 0, 4, 0); bl.setSpacing(2)
+            bl.setContentsMargins(6, 2, 6, 2); bl.setSpacing(4)
             self.audio_table.setCellWidget(row, 0, bw)
         self._refresh_stats()
 
@@ -3692,6 +3786,7 @@ class SlideshowCreator(QMainWindow):
         dlg = SlideshowPreviewDialog(
             images=self.images,
             audio_files=self.audio_files,
+            font_family=getattr(self, "text_font", "Birzia-Black"),
             parent=self,
         )
         dlg.exec_()
@@ -3784,7 +3879,7 @@ class SlideshowCreator(QMainWindow):
 
     def _open_font_picker(self):
         """Open the font picker dialog and apply the chosen font to text overlays."""
-        dlg = FontPickerDialog(current_font=self.text_font, parent=self)
+        dlg = FontPickerDialog(current_font=getattr(self, "text_font", "Birzia-Black"), parent=self)
         if dlg.exec_() == QDialog.Accepted:
             family = dlg.get_result()
             if family:
@@ -3796,10 +3891,13 @@ class SlideshowCreator(QMainWindow):
                         json.dump({"text_font": family}, f)
                 except Exception as e:
                     print(f"Could not save font setting: {e}")
-                # Register with Qt so it's available for rendering
-                QFontDatabase.addApplicationFont(
-                    str(BASEPATH / "Fonts" / "GoogleFonts" / f"{family.replace(' ', '_')}.ttf")
-                )
+                # Register font with Qt
+                _gf_ttf = BASEPATH / "Fonts" / "GoogleFonts" / f"{family.replace(' ', '_')}.ttf"
+                if _gf_ttf.exists():
+                    QFontDatabase.addApplicationFont(str(_gf_ttf))
+                _birzia = BASEPATH / "Fonts" / "Birzia-Black.otf"
+                if _birzia.exists():
+                    QFontDatabase.addApplicationFont(str(_birzia))
                 QMessageBox.information(
                     self, "Font Updated",
                     f"Text font set to '{family}'.\n\n"
@@ -3812,7 +3910,7 @@ class SlideshowCreator(QMainWindow):
             cfg_path = BASEPATH / "font_settings.json"
             with open(cfg_path, "r", encoding="utf-8") as f:
                 cfg = json.load(f)
-            self.text_font = cfg.get("text_font", "Segoe UI")
+            self.text_font = cfg.get("text_font", "Birzia-Black")
         except (FileNotFoundError, json.JSONDecodeError):
             pass
 
@@ -4169,8 +4267,9 @@ class _FrameRenderer:
     W, H = 960, 540
     ZOOM = 1.10
 
-    def __init__(self, images: list):
+    def __init__(self, images: list, font_family: str = "Birzia-Black"):
         self.images = images
+        self._font_family = font_family
         self._img_cache: dict = {}   # path → numpy array (H, W, 3)
 
     # ── image loading ────────────────────────────────────────────────────────
@@ -4471,8 +4570,16 @@ class _FrameRenderer:
             pil = Image.fromarray(frame_arr)
             draw = ImageDraw.Draw(pil)
             try:
-                font_path = BASEPATH / "Fonts" / "Birzia-Black.otf"
-                font = ImageFont.truetype(str(font_path), 42)
+                family = getattr(self, "_font_family", "Birzia-Black")
+                # Try Google Fonts TTF first, then Birzia-Black OTF, then default
+                gf_path = BASEPATH / "Fonts" / "GoogleFonts" / f"{family.replace(' ', '_')}.ttf"
+                birzia_path = BASEPATH / "Fonts" / "Birzia-Black.otf"
+                if gf_path.exists():
+                    font = ImageFont.truetype(str(gf_path), 42)
+                elif birzia_path.exists():
+                    font = ImageFont.truetype(str(birzia_path), 42)
+                else:
+                    font = ImageFont.load_default()
             except Exception:
                 font = ImageFont.load_default()
             hebrew = _bidi(text)
@@ -4614,7 +4721,7 @@ class SlideshowPreviewDialog(QDialog):
     W, H   = 960, 540
     FRAME_MS = int(1000 / FPS)
 
-    def __init__(self, images: list, audio_files: list, parent=None):
+    def __init__(self, images: list, audio_files: list, font_family: str = "Birzia-Black", parent=None):
         super().__init__(parent)
         self.setWindowTitle("▶  Slideshow Preview")
         self.setMinimumSize(1050, 720)
@@ -4624,7 +4731,7 @@ class SlideshowPreviewDialog(QDialog):
 
         self._images      = images
         self._audio_files = audio_files
-        self._renderer    = _FrameRenderer(images)
+        self._renderer    = _FrameRenderer(images, font_family=font_family)
         self._total_dur   = self._renderer.total_duration
 
         # State
@@ -5650,11 +5757,39 @@ class EasyTextWritingDialog(QDialog):
         self.counter_label.setText(f"{self.current_index + 1} / {n}")
         if 0 <= self.current_index < n:
             data = self.images[self.current_index]
-            px   = QPixmap(data["path"])
+            path = data["path"]
             rot  = data.get("rotation", 0)
-            if rot:
-                t = QTransform(); t.rotate(rot)
-                px = px.transformed(t, Qt.SmoothTransformation)
+            crop = data.get("crop")
+            try:
+                img = Image.open(path)
+                try:
+                    if hasattr(img, "_getexif"):
+                        exif = img._getexif()
+                        if exif and _ORIENTATION_TAG:
+                            val = exif.get(_ORIENTATION_TAG)
+                            if val == 3:   img = img.rotate(180, expand=True)
+                            elif val == 6: img = img.rotate(270, expand=True)
+                            elif val == 8: img = img.rotate(90,  expand=True)
+                except Exception:
+                    pass
+                if rot:
+                    img = img.rotate(rot, expand=True)
+                if crop:
+                    iw, ih = img.size
+                    cx = max(0, int(crop[0] * iw))
+                    cy = max(0, int(crop[1] * ih))
+                    cw = max(1, min(int(crop[2] * iw), iw - cx))
+                    ch = max(1, min(int(crop[3] * ih), ih - cy))
+                    img = img.crop((cx, cy, cx + cw, cy + ch))
+                img = img.convert("RGBA")
+                raw = img.tobytes("raw", "RGBA")
+                qimg = QImage(raw, img.width, img.height, QImage.Format_RGBA8888)
+                px = QPixmap.fromImage(qimg)
+            except Exception:
+                px = QPixmap(path)
+                if rot:
+                    t = QTransform(); t.rotate(rot)
+                    px = px.transformed(t, Qt.SmoothTransformation)
             self.image_label.setPixmap(px.scaled(460, 190, Qt.KeepAspectRatio, Qt.SmoothTransformation))
             self.text_input.setPlainText(data.get("text", ""))
 
@@ -5742,7 +5877,7 @@ class FontPickerDialog(QDialog):
         "Frank Ruhl Libre", "Varela Round", "Assistant", "Secular One",
     ]
 
-    def __init__(self, current_font: str = "Segoe UI", parent=None):
+    def __init__(self, current_font: str = "Birzia-Black", parent=None):
         super().__init__(parent)
         self.setWindowTitle("Choose Font")
         self.setMinimumSize(760, 520)
@@ -5751,6 +5886,10 @@ class FontPickerDialog(QDialog):
         self._result: str | None = None
         self._download_dir = BASEPATH / "Fonts" / "GoogleFonts"
         self._download_dir.mkdir(parents=True, exist_ok=True)
+        # Register Birzia-Black so Qt can render the preview label with it
+        _birzia = BASEPATH / "Fonts" / "Birzia-Black.otf"
+        if _birzia.exists():
+            QFontDatabase.addApplicationFont(str(_birzia))
         self._build_ui(current_font)
 
     # ── UI ────────────────────────────────────────────────────────────────────
@@ -5774,6 +5913,7 @@ class FontPickerDialog(QDialog):
         self._preview_label.setStyleSheet(
             f"color: {COLORS['text_secondary']}; font-size: 18px; padding: 0 16px;"
         )
+        self._preview_label.setFont(QFont(current_font, 14))
         hl.addWidget(title)
         hl.addStretch()
         hl.addWidget(self._preview_label)
@@ -5798,6 +5938,8 @@ class FontPickerDialog(QDialog):
         self._sys_list = QListWidget()
         db = QFontDatabase()
         self._all_system_fonts = sorted(db.families())
+        if "Birzia-Black" not in self._all_system_fonts:
+            self._all_system_fonts = ["Birzia-Black"] + self._all_system_fonts
         self._sys_list.addItems(self._all_system_fonts)
         # pre-select current
         matches = self._sys_list.findItems(current_font, Qt.MatchExactly)
@@ -5887,6 +6029,10 @@ class FontPickerDialog(QDialog):
         self._result = family
         self._sel_label.setText(f"Selected: {family}")
         self._apply_btn.setEnabled(True)
+        if family == "Birzia-Black":
+            _birzia = BASEPATH / "Fonts" / "Birzia-Black.otf"
+            if _birzia.exists():
+                QFontDatabase.addApplicationFont(str(_birzia))
         self._preview_label.setFont(QFont(family, 14))
 
     # ── Google Fonts handling ─────────────────────────────────────────────────
