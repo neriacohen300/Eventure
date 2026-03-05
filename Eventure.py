@@ -4,6 +4,7 @@ Full redesign: dark cinema aesthetic, card-based layout, modern toolbar,
 sidebar preview, inline controls. All original functionality preserved.
 """
 
+import numpy as np
 import multiprocessing
 import threading
 from pptx_export import extract_pptx_content_to_slideshow_file
@@ -505,6 +506,31 @@ def _styled_btn(text: str, action: str = "") -> QPushButton:
     return btn
 
 
+def _make_crop_btn(has_crop: bool) -> QPushButton:
+    """Return a styled ✂ Crop button; glows orange when a crop is active."""
+    crop_btn = QPushButton("✂ Crop")
+    crop_btn.setFixedHeight(22)
+    if has_crop:
+        crop_btn.setStyleSheet(
+            f"QPushButton {{ background: {COLORS['warning']}; color: #1a1a1a; "
+            f"border: none; border-radius: 4px; padding: 2px 7px; "
+            f"font-size: 11px; font-weight: 700; }}"
+            f"QPushButton:hover {{ background: #ffc53d; }}"
+        )
+        crop_btn.setToolTip("Edit crop  (crop active)")
+    else:
+        crop_btn.setStyleSheet(
+            f"QPushButton {{ background: {COLORS['bg_hover']}; color: {COLORS['text_secondary']}; "
+            f"border: 1px solid {COLORS['border_light']}; border-radius: 4px; "
+            f"padding: 2px 7px; font-size: 11px; font-weight: 600; }}"
+            f"QPushButton:hover {{ background: {COLORS['accent_dim']}; color: {COLORS['accent']}; "
+            f"border-color: {COLORS['accent']}; }}"
+        )
+        crop_btn.setToolTip("Crop image")
+    return crop_btn
+
+
+
 # ── Update check ─────────────────────────────────────────────────────────────
 
 def check_for_updates(parent_window, current_version: str):
@@ -656,8 +682,11 @@ def render_ken_burns_clip(image_path, effect, duration, output_path, rotation=0,
     cov_h = int(round(ih * scale_cover))
     canvas = _cv2.resize(img_arr, (cov_w, cov_h), interpolation=_cv2.INTER_LANCZOS4)
 
-    # Pan travel = 8% of the shorter output dimension
-    travel = min(W, H) * 0.08
+    # Pan travel clamped to actual canvas headroom in each axis so the window
+    # never gets clipped — the vertical headroom (cov_h-H)/2 is smaller than
+    # (cov_w-W)/2, which is why pan_up/down appeared frozen at the start.
+    h_travel = min((cov_w - W) / 2.0, min(W, H) * 0.08)   # horizontal headroom
+    v_travel = min((cov_h - H) / 2.0, min(W, H) * 0.08)   # vertical headroom
 
     rects = []
     for f in range(frames):
@@ -677,19 +706,17 @@ def render_ken_burns_clip(image_path, effect, duration, output_path, rotation=0,
             sx = (cov_w - sw) / 2.0
             sy = (cov_h - sh) / 2.0
         elif effect == "pan_left":
-            # Unidirectional: starts fully right (t=0) → moves left (t=1)
-            # Matches zoom behaviour — motion begins from the very first frame.
-            sx = (cov_w - W) / 2.0 + travel * (1.0 - t)
+            sx = (cov_w - W) / 2.0 + h_travel * (1.0 - t)
             sy = (cov_h - H) / 2.0
         elif effect == "pan_right":
-            sx = (cov_w - W) / 2.0 - travel * (1.0 - t)
+            sx = (cov_w - W) / 2.0 - h_travel * (1.0 - t)
             sy = (cov_h - H) / 2.0
         elif effect == "pan_up":
             sx = (cov_w - W) / 2.0
-            sy = (cov_h - H) / 2.0 + travel * (1.0 - t)
+            sy = (cov_h - H) / 2.0 + v_travel * (1.0 - t)
         elif effect == "pan_down":
             sx = (cov_w - W) / 2.0
-            sy = (cov_h - H) / 2.0 - travel * (1.0 - t)
+            sy = (cov_h - H) / 2.0 - v_travel * (1.0 - t)
 
         sx = max(0.0, min(float(cov_w) - sw, sx))
         sy = max(0.0, min(float(cov_h) - sh, sy))
@@ -728,7 +755,7 @@ def render_ken_burns_clip(image_path, effect, duration, output_path, rotation=0,
         M = _np.array([[scale_x, 0.0, -sx * scale_x],
                        [0.0, scale_y, -sy * scale_y]], dtype=_np.float64)
         frame = _cv2.warpAffine(canvas, M, (W, H),
-                                flags=_cv2.INTER_LINEAR,
+                                flags=_cv2.INTER_LANCZOS4,
                                 borderMode=_cv2.BORDER_REFLECT_101)
         if static_overlay_bgr is not None:
             frame = (frame.astype(_np.float32) * (1.0 - static_overlay_mask)
@@ -779,11 +806,22 @@ class _TaskbarProgressStub:
 # ── Custom Delegate ───────────────────────────────────────────────────────────
 
 class CustomDelegate(QStyledItemDelegate):
+    """Paints alternating row tints and a purple highlight for second-image rows."""
+
+    _ROW_EVEN = QColor(0x25, 0x2B, 0x34, 255)   # bg_panel
+    _ROW_ODD  = QColor(0x28, 0x2F, 0x39, 255)   # slightly lighter
+    _SECOND   = QColor(80, 55, 120, 55)           # subtle purple tint
+
     def paint(self, painter, option, index):
         is_secondary = index.model().index(index.row(), 1).data(Qt.UserRole)
         if is_secondary:
             painter.save()
-            painter.fillRect(option.rect, QColor(80, 55, 120, 60))
+            painter.fillRect(option.rect, self._SECOND)
+            painter.restore()
+        elif index.row() % 2 == 1:
+            # Odd rows get a very subtle alternate tint for scannability
+            painter.save()
+            painter.fillRect(option.rect, self._ROW_ODD)
             painter.restore()
         super().paint(painter, option, index)
 
@@ -844,22 +882,36 @@ class StatsBar(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(16, 6, 16, 6)
-        layout.setSpacing(24)
+        layout.setContentsMargins(16, 4, 16, 4)
+        layout.setSpacing(6)
 
         self._labels = {}
-        for key, default in [("slides", "0 slides"), ("duration", "0:00:00"), ("audio", "No audio")]:
+        entries = [
+            ("slides",   "🎞",  "0 slides"),
+            ("duration", "⏱",  "0:00:00"),
+            ("audio",    "🎵",  "No audio"),
+        ]
+        for i, (key, icon, default) in enumerate(entries):
+            if i > 0:
+                sep = QLabel("·")
+                sep.setStyleSheet(f"color: {COLORS['border_light']}; font-size: 14px;")
+                layout.addWidget(sep)
+            icon_lbl = QLabel(icon)
+            icon_lbl.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 12px;")
             lbl = QLabel(default)
             lbl.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 11px;")
+            layout.addWidget(icon_lbl)
             layout.addWidget(lbl)
             self._labels[key] = lbl
 
         layout.addStretch()
 
     def update_stats(self, n_slides, duration_sec, audio_count):
-        self._labels["slides"].setText(f"  {n_slides} slides")
-        self._labels["duration"].setText(f"  {format_time_hms(duration_sec)}")
-        self._labels["audio"].setText(f"  {audio_count} audio file{'s' if audio_count != 1 else ''}")
+        self._labels["slides"].setText(f"{n_slides} slides")
+        self._labels["duration"].setText(format_time_hms(duration_sec))
+        self._labels["audio"].setText(
+            f"{audio_count} audio file{'s' if audio_count != 1 else ''}"
+        )
 
 
 # ── Progress Section ──────────────────────────────────────────────────────────
@@ -891,6 +943,21 @@ class ProgressSection(QWidget):
         self.status_label.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 11px;")
         self.status_label.setVisible(False)
         layout.addWidget(self.status_label)
+
+    def set_export_progress(self, value: int, visible: bool = True):
+        self.export_bar.setVisible(visible)
+        if visible:
+            self.export_bar.setValue(value)
+
+    def set_image_progress(self, value: int, visible: bool = True):
+        self.image_bar.setVisible(visible)
+        if visible:
+            self.image_bar.setValue(value)
+
+    def set_premiere_progress(self, value: int, visible: bool = True):
+        self.premiere_bar.setVisible(visible)
+        if visible:
+            self.premiere_bar.setValue(value)
 
 
 
@@ -2133,6 +2200,7 @@ class SlideshowCreator(QMainWindow):
         sep2.setStyleSheet(f"color: {COLORS['border']}; max-width: 1px;")
 
         btn_preview = _tb_btn("▶  Preview", "Preview the full slideshow with audio (no export needed)")
+        btn_preview.setProperty("accent", "true")
         btn_preview.clicked.connect(self.open_preview_dialog)
 
         btn_info    = _tb_btn("ℹ Info")
@@ -2154,6 +2222,8 @@ class SlideshowCreator(QMainWindow):
         lang_lbl.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 11px;")
         lang_en = _tb_btn("EN")
         lang_he = _tb_btn("עב")
+        lang_en.setToolTip("Switch to English")
+        lang_he.setToolTip("Switch to Hebrew (עברית)")
         lang_en.clicked.connect(lambda: self.set_language("en"))
         lang_he.clicked.connect(lambda: self.set_language("he"))
 
@@ -2341,7 +2411,7 @@ class SlideshowCreator(QMainWindow):
             item.setData(Qt.UserRole, is_checked)
         self.update_image_row(row)
 
-    def update_image_table(self):
+    def update_image_table(self, _update_filmstrip: bool = True):
         self.image_table.blockSignals(True)
         self.image_table.setUpdatesEnabled(False)
         self.image_table.setSortingEnabled(False)
@@ -2351,7 +2421,8 @@ class SlideshowCreator(QMainWindow):
         self.image_table.setSortingEnabled(False)
         self.image_table.setUpdatesEnabled(True)
         self.image_table.blockSignals(False)
-        self.filmstrip.set_images(self.images)
+        if _update_filmstrip:
+            self.filmstrip.set_images(self.images)
         self._refresh_stats()
 
     def _populate_row(self, row: int, img: dict):
@@ -2411,25 +2482,7 @@ class SlideshowCreator(QMainWindow):
         del_btn.setProperty("action", "icon")
 
         # Crop button — stands out visually; glows orange when a crop is active
-        crop_btn = QPushButton("✂ Crop")
-        crop_btn.setFixedHeight(22)
-        if img.get("crop"):
-            crop_btn.setStyleSheet(
-                f"QPushButton {{ background: {COLORS['warning']}; color: #1a1a1a; "
-                f"border: none; border-radius: 4px; padding: 2px 7px; "
-                f"font-size: 11px; font-weight: 700; }}"
-                f"QPushButton:hover {{ background: #ffc53d; }}"
-            )
-            crop_btn.setToolTip("Edit crop  (crop active)")
-        else:
-            crop_btn.setStyleSheet(
-                f"QPushButton {{ background: {COLORS['bg_hover']}; color: {COLORS['text_secondary']}; "
-                f"border: 1px solid {COLORS['border_light']}; border-radius: 4px; "
-                f"padding: 2px 7px; font-size: 11px; font-weight: 600; }}"
-                f"QPushButton:hover {{ background: {COLORS['accent_dim']}; color: {COLORS['accent']}; "
-                f"border-color: {COLORS['accent']}; }}"
-            )
-            crop_btn.setToolTip("Crop image")
+        crop_btn = _make_crop_btn(bool(img.get("crop")))
 
         del_btn.setStyleSheet(f"QPushButton {{ color: {COLORS['danger']}; background: transparent; border: none; padding: 3px 6px; border-radius: 4px; }}"
                               f"QPushButton:hover {{ background: rgba(247,90,90,0.15); }}")
@@ -2569,6 +2622,7 @@ class SlideshowCreator(QMainWindow):
         )
         if file:
             self.audio_files.append({"path": file})
+            self._audio_dur_cache.pop(file, None)  # ensure fresh duration next time
             self.update_audio_table()
 
     def update_audio_table(self):
@@ -2619,8 +2673,17 @@ class SlideshowCreator(QMainWindow):
 
     # ── Export ────────────────────────────────────────────────────────────────
 
+    # Cache for audio durations — keyed by absolute path, cleared on audio list change
+    _audio_dur_cache: dict = {}
+
+    def _get_audio_dur(self, path: str) -> float:
+        """Return cached audio duration, calling ffprobe only when necessary."""
+        if path not in self._audio_dur_cache:
+            self._audio_dur_cache[path] = _get_audio_duration(path)
+        return self._audio_dur_cache[path]
+
     def _total_audio_duration(self) -> float:
-        return sum(_get_audio_duration(a["path"]) for a in self.audio_files)
+        return sum(self._get_audio_dur(a["path"]) for a in self.audio_files)
 
     def continue_with_video_export(self):
         total_img_dur   = sum(img["duration"] for img in self.images)
@@ -2710,6 +2773,42 @@ class SlideshowCreator(QMainWindow):
     def export_finished(self):
         self.progress_bar.setValue(100)
         self.taskbar_progress.setValue(100)
+
+        # ── Pass 2: embed thumbnail as attached_pic via a fast remux ─────────
+        # Done as a separate pass so -shortest in pass 1 never sees the
+        # zero-duration image stream (which truncated the entire video).
+        output_norm = str(self.output_file).replace(chr(92), "/")
+        first_img_path = str(self.images[0]["path"]).replace(chr(92), "/") if self.images else ""
+        if first_img_path and os.path.exists(first_img_path):
+            import tempfile as _tmp2
+            tmp_main = _tmp2.NamedTemporaryFile(suffix=".mp4", delete=False).name.replace("\\", "/")
+            try:
+                os.rename(self.output_file, tmp_main)
+                thumb_cmd = (
+                    f'ffmpeg -y -i "{tmp_main}" -i "{first_img_path}" '
+                    f'-map 0 -map 1:v '
+                    f'-c copy -c:v:1 mjpeg '
+                    f'-disposition:v:1 attached_pic '
+                    f'-metadata:s:v:1 comment=Cover '
+                    f'-movflags +faststart '
+                    f'"{output_norm}"'
+                )
+                import subprocess as _sp2
+                _sp2.run(
+                    thumb_cmd, shell=True, check=False,
+                    stdout=_sp2.DEVNULL, stderr=_sp2.DEVNULL,
+                    creationflags=_sp2.CREATE_NO_WINDOW if hasattr(_sp2, "CREATE_NO_WINDOW") else 0,
+                )
+            except Exception as e:
+                print(f"Thumbnail embed error (non-fatal): {e}")
+                # Restore original if rename succeeded but ffmpeg failed
+                if not os.path.exists(self.output_file) and os.path.exists(tmp_main):
+                    try: os.rename(tmp_main, self.output_file)
+                    except Exception: pass
+            finally:
+                try: os.remove(tmp_main)
+                except OSError: pass
+
         QMessageBox.information(self, self.tr("success_export_complete_window"), self.tr("success_export_complete"))
         self.progress_bar.setVisible(False)
         self.taskbar_progress.reset()
@@ -2741,14 +2840,26 @@ class SlideshowCreator(QMainWindow):
                 filters.append(f"[{i}:v]fps=25,scale=1920:1080,setsar=1,setpts=PTS-STARTPTS,format=yuv420p[{i}v]")
 
         for i in range(len(self.images) - 1):
-            offset = sum(img["duration"] for img in self.images[:i + 1]) - self.images[i]["transition_duration"]
+            # Correct xfade offset = cumulative net durations up to and including slide i.
+            # offset[i] = sum(d[j] - td[j] for j in 0..i)
+            # The old formula kept adding full durations so offsets grew past each
+            # clip's length, making every transition after the first invalid.
+            offset = sum(
+                self.images[j]["duration"] - self.images[j]["transition_duration"]
+                for j in range(i + 1)
+            )
             prev   = f"[{i}v]" if i == 0 else f"[v{i}]"
             filters.append(
                 f"{prev}[{i + 1}v]xfade=transition={self.images[i]['transition']}"
                 f":duration={self.images[i]['transition_duration']}:offset={offset}[v{i + 1}]"
             )
 
-        final_stream  = f"[v{len(self.images) - 1}]"
+        # Force yuv420p on the final composited stream. Without this, xfade can
+        # output yuv444p which encodes as H.264 High 4:4:4 Predictive profile —
+        # unplayable in Windows Media Player and most mobile players.
+        _final_label = f"v{len(self.images) - 1}"
+        filters.append(f"[{_final_label}]format=yuv420p[vout]")
+        final_stream  = "[vout]"
         audio_index   = len(self.images)
         audio_streams = []
         for i, audio in enumerate(self.audio_files):
@@ -2777,12 +2888,14 @@ class SlideshowCreator(QMainWindow):
         self._fc_script_path = fc_file.name
 
         output_norm = str(self.output_file).replace(chr(92), "/")
-        vcodec_args = "-c:v libx264 -preset ultrafast -crf 23"
+
         command = (
             f'ffmpeg -y {" ".join(inputs)} '
             f'-filter_complex_script "{fc_file.name}" '
             f'-map {final_stream} {audio_map} '
-            f'-c:a aac {vcodec_args} -movflags +faststart -shortest '
+            f'-c:v:0 libx264 -preset ultrafast -crf 28 '
+            f'-c:a:0 aac '
+            f'-movflags +faststart -shortest '
             f'"{output_norm}"'
         )
 
@@ -2983,6 +3096,9 @@ class SlideshowCreator(QMainWindow):
     def save_project(self):
         if self.loaded_project:
             self._write_project_file(self.loaded_project)
+            self.statusBar().showMessage(
+                f"  ✔  Saved  {os.path.basename(self.loaded_project)}", 3000
+            )
         else:
             self.save_project_as()
 
@@ -2994,6 +3110,8 @@ class SlideshowCreator(QMainWindow):
             self._write_project_file(file_name)
             self.loaded_project = file_name
             self._push_recent(file_name)
+            proj_name = os.path.splitext(os.path.basename(file_name))[0]
+            self.setWindowTitle(f"{self.tr('window_title')} — {proj_name}")
 
     def load_project(self):
         file_name, _ = QFileDialog.getOpenFileName(
@@ -3148,45 +3266,15 @@ class SlideshowCreator(QMainWindow):
         self.update_audio_table()
         self.loaded_project = file_name
         self._push_recent(file_name)
+        # Reflect the project name in the window title
+        proj_name = os.path.splitext(os.path.basename(file_name))[0]
+        self.setWindowTitle(f"{self.tr('window_title')} — {proj_name}")
 
     def _load_project_from_path(self, file_name: str):
+        """Load a project from *file_name* on the main thread (used after PPTX import)."""
         try:
-            with open(file_name, "r", encoding="utf-8") as f:
-                lines = f.readlines()
-            count = int(lines[0].strip())
-            if len(lines) < count + 1:
-                raise ValueError("Project file is truncated.")
-            self.audio_files = [{"path": lines[i + 1].strip()} for i in range(count)]
-            self.images = []
-            for line in lines[count + 1:]:
-                parts = line.strip().split(",")
-                if len(parts) < 8:
-                    continue
-                path         = parts[0]
-                dur          = parts[1]
-                transition   = parts[2]
-                trans_dur    = parts[3]
-                text         = parts[4]
-                rotation     = parts[5]
-                is_second    = parts[6]
-                date         = parts[7] if len(parts) > 7 else ""
-                ken_burns    = parts[8].strip() if len(parts) > 8 else "none"
-                crop         = self._parse_crop(parts[10]) if len(parts) > 10 else None
-                self.images.append({
-                    "path":                path,
-                    "duration":            float(dur),
-                    "transition":          transition,
-                    "transition_duration": self.default_transition_duration,
-                    "text":                text.replace("\\n", "\n"),
-                    "rotation":            int(rotation),
-                    "is_second_image":     is_second.strip().lower() == "true",
-                    "date":                date,
-                    "ken_burns":           ken_burns,
-                    "crop":                crop,
-                })
-            self.update_image_table()
-            self.update_audio_table()
-            self.loaded_project = file_name
+            parsed = self._parse_project_file(file_name)
+            self._apply_loaded_project(parsed, file_name)
         except Exception as e:
             QMessageBox.critical(self, self.tr("error"), f"Failed to load project:\n{e}")
 
@@ -4116,8 +4204,11 @@ class _FrameRenderer:
         cov_h = int(round(H * ZOOM))
         canvas = cv2.resize(composite, (cov_w, cov_h), interpolation=cv2.INTER_LINEAR)
 
-        # Pan travel = 8% of short edge
-        travel = min(W, H) * 0.08
+        # Travel clamped to actual canvas headroom per axis — vertical headroom
+        # (cov_h-H)/2 is smaller than horizontal, causing pan_up/down to clamp
+        # and appear frozen at the start without this.
+        h_travel = min((cov_w - W) / 2.0, min(W, H) * 0.08)
+        v_travel = min((cov_h - H) / 2.0, min(W, H) * 0.08)
 
         sw, sh = float(W), float(H)
         sx = (cov_w - W) / 2.0
@@ -4134,17 +4225,17 @@ class _FrameRenderer:
             sx = (cov_w - sw) / 2.0
             sy = (cov_h - sh) / 2.0
         elif effect == "pan_left":
-            sx = (cov_w - W) / 2.0 + travel * (1.0 - 2.0 * t)
+            sx = (cov_w - W) / 2.0 + h_travel * (1.0 - t)
             sy = (cov_h - H) / 2.0
         elif effect == "pan_right":
-            sx = (cov_w - W) / 2.0 - travel * (1.0 - 2.0 * t)
+            sx = (cov_w - W) / 2.0 - h_travel * (1.0 - t)
             sy = (cov_h - H) / 2.0
         elif effect == "pan_up":
             sx = (cov_w - W) / 2.0
-            sy = (cov_h - H) / 2.0 + travel * (1.0 - 2.0 * t)
+            sy = (cov_h - H) / 2.0 + v_travel * (1.0 - t)
         elif effect == "pan_down":
             sx = (cov_w - W) / 2.0
-            sy = (cov_h - H) / 2.0 - travel * (1.0 - 2.0 * t)
+            sy = (cov_h - H) / 2.0 - v_travel * (1.0 - t)
 
         sx = max(0.0, min(float(cov_w) - sw, sx))
         sy = max(0.0, min(float(cov_h) - sh, sy))
@@ -4166,32 +4257,116 @@ class _FrameRenderer:
                           t: float, transition: str) -> "np.ndarray":
         import numpy as np
         t = max(0.0, min(1.0, t))
-        if transition in ("fade", "fadeblack", "fadewhite"):
-            return (frame_a.astype(np.float32)*(1-t) +
-                    frame_b.astype(np.float32)*t).clip(0,255).astype(np.uint8)
-        elif transition == "wipeleft":
-            cut = int(self.W * t)
-            out = frame_a.copy()
-            out[:, :cut] = frame_b[:, :cut]
-            return out
+
+        # ── Smoothstep easing — removes the mechanical stutter at start/end ──
+        t_e = t * t * (3.0 - 2.0 * t)
+
+        # ── Fade family ───────────────────────────────────────────────────────
+        if transition in ("fade", "fadeblack", "fadewhite", "dissolve"):
+            return (frame_a.astype(np.float32) * (1.0 - t_e) +
+                    frame_b.astype(np.float32) * t_e).clip(0, 255).astype(np.uint8)
+
+        # ── Wipe helpers ──────────────────────────────────────────────────────
+        # FEATHER: blend a narrow band around the cut so the edge glides
+        # rather than snapping — eliminates the visual stutter on hard cuts.
+        FEATHER = max(4, min(24, self.W // 60))   # ~1.5% of width, min 4 px
+
+        def _wipe_h(pos: int) -> np.ndarray:
+            """Horizontal wipe: frame_b reveals from the left at pixel column pos."""
+            # Fast path: before or after the feather zone
+            lo = max(0, pos - FEATHER)
+            hi = min(self.W, pos + FEATHER)
+            if lo == 0 and hi == self.W:
+                return frame_b
+            # Build output: hard regions + blended strip
+            parts = []
+            if lo > 0:
+                parts.append(frame_b[:, :lo])          # fully revealed
+            if lo < hi:
+                # Blend strip — ramp alpha from 1→0 (frame_b→frame_a)
+                strip_w = hi - lo
+                alpha = np.linspace(1.0, 0.0, strip_w, dtype=np.float32)
+                alpha = alpha[np.newaxis, :, np.newaxis]   # (1, W, 1)
+                b_strip = frame_b[:, lo:hi].astype(np.float32)
+                a_strip = frame_a[:, lo:hi].astype(np.float32)
+                blend = (b_strip * alpha + a_strip * (1.0 - alpha)).clip(0, 255).astype(np.uint8)
+                parts.append(blend)
+            if hi < self.W:
+                parts.append(frame_a[:, hi:])           # not yet revealed
+            return np.concatenate(parts, axis=1)
+
+        def _wipe_v(pos: int) -> np.ndarray:
+            """Vertical wipe: frame_b reveals from the top at pixel row pos."""
+            lo = max(0, pos - FEATHER)
+            hi = min(self.H, pos + FEATHER)
+            if lo == 0 and hi == self.H:
+                return frame_b
+            parts = []
+            if lo > 0:
+                parts.append(frame_b[:lo, :])
+            if lo < hi:
+                strip_h = hi - lo
+                alpha = np.linspace(1.0, 0.0, strip_h, dtype=np.float32)
+                alpha = alpha[:, np.newaxis, np.newaxis]   # (H, 1, 1)
+                b_strip = frame_b[lo:hi, :].astype(np.float32)
+                a_strip = frame_a[lo:hi, :].astype(np.float32)
+                blend = (b_strip * alpha + a_strip * (1.0 - alpha)).clip(0, 255).astype(np.uint8)
+                parts.append(blend)
+            if hi < self.H:
+                parts.append(frame_a[hi:, :])
+            return np.concatenate(parts, axis=0)
+
+        # ── Directional wipes ─────────────────────────────────────────────────
+        if transition == "wipeleft":
+            # frame_b sweeps in from the left
+            return _wipe_h(int(self.W * t_e))
+
         elif transition == "wiperight":
-            cut = int(self.W * (1-t))
-            out = frame_b.copy()
-            out[:, cut:] = frame_a[:, cut:]
-            return out
+            # frame_b sweeps in from the right — mirror of wipeleft
+            pos = int(self.W * (1.0 - t_e))
+            lo = max(0, pos - FEATHER)
+            hi = min(self.W, pos + FEATHER)
+            parts = []
+            if lo > 0:
+                parts.append(frame_a[:, :lo])
+            if lo < hi:
+                strip_w = hi - lo
+                alpha = np.linspace(0.0, 1.0, strip_w, dtype=np.float32)
+                alpha = alpha[np.newaxis, :, np.newaxis]
+                b_strip = frame_b[:, lo:hi].astype(np.float32)
+                a_strip = frame_a[:, lo:hi].astype(np.float32)
+                blend = (b_strip * alpha + a_strip * (1.0 - alpha)).clip(0, 255).astype(np.uint8)
+                parts.append(blend)
+            if hi < self.W:
+                parts.append(frame_b[:, hi:])
+            return np.concatenate(parts, axis=1)
+
         elif transition == "wipeup":
-            cut = int(self.H * t)
-            out = frame_a.copy()
-            out[:cut, :] = frame_b[:cut, :]
-            return out
+            return _wipe_v(int(self.H * t_e))
+
         elif transition == "wipedown":
-            cut = int(self.H * (1-t))
-            out = frame_b.copy()
-            out[cut:, :] = frame_a[cut:, :]
-            return out
-        else:  # dissolve / anything else → fade
-            return (frame_a.astype(np.float32)*(1-t) +
-                    frame_b.astype(np.float32)*t).clip(0,255).astype(np.uint8)
+            pos = int(self.H * (1.0 - t_e))
+            lo = max(0, pos - FEATHER)
+            hi = min(self.H, pos + FEATHER)
+            parts = []
+            if lo > 0:
+                parts.append(frame_a[:lo, :])
+            if lo < hi:
+                strip_h = hi - lo
+                alpha = np.linspace(0.0, 1.0, strip_h, dtype=np.float32)
+                alpha = alpha[:, np.newaxis, np.newaxis]
+                b_strip = frame_b[lo:hi, :].astype(np.float32)
+                a_strip = frame_a[lo:hi, :].astype(np.float32)
+                blend = (b_strip * alpha + a_strip * (1.0 - alpha)).clip(0, 255).astype(np.uint8)
+                parts.append(blend)
+            if hi < self.H:
+                parts.append(frame_b[hi:, :])
+            return np.concatenate(parts, axis=0)
+
+        else:
+            # All other transitions (slide*, smooth*, circle*, etc.) → fade
+            return (frame_a.astype(np.float32) * (1.0 - t_e) +
+                    frame_b.astype(np.float32) * t_e).clip(0, 255).astype(np.uint8)
 
     # ── text overlay ─────────────────────────────────────────────────────────
 

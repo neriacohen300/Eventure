@@ -1,9 +1,6 @@
 import os
-import tkinter as tk
-from tkinter import filedialog
 from pptx import Presentation
 from openpyxl import Workbook
-from openpyxl.utils import get_column_letter
 import re
 from datetime import datetime
 
@@ -152,6 +149,8 @@ def extract_pptx_content_to_slideshow_file(pptx_file):
 
 # Function to choose a .pptx file using a file dialog
 def choose_pptx_file():
+    import tkinter as tk
+    from tkinter import filedialog
     root = tk.Tk()
     root.withdraw()  # Hide the main tkinter window
     pptx_file = filedialog.askopenfilename(

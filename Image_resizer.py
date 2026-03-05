@@ -35,20 +35,33 @@ fonts_folder = script_dir / "Fonts"
 # ── Font (loaded lazily, once per process) ────────────────────────────────────
 
 _FONT: ImageFont.FreeTypeFont | None = None
+_FONT_CACHE: dict[str, ImageFont.FreeTypeFont] = {}   # family → loaded font
 
 def _get_font(font_family: str | None = None) -> ImageFont.FreeTypeFont:
-    """Return a font, preferring font_family if provided, else Birzia-Black."""
+    """Return a font, preferring font_family if provided, else Birzia-Black.
+
+    Results are cached per-family so repeated calls (e.g. when processing
+    many images with the same overlay font) never hit the filesystem more
+    than once.
+    """
     global _FONT
-    # If a specific family is requested, try to load it fresh each call
+
+    # ── Non-default family requested ─────────────────────────────────────────
     if font_family and font_family not in ("Segoe UI", ""):
-        # Check GoogleFonts folder first
+        if font_family in _FONT_CACHE:
+            return _FONT_CACHE[font_family]
+
+        # 1. GoogleFonts folder
         gf_path = BASEPATH / "Fonts" / "GoogleFonts" / f"{font_family.replace(' ', '_')}.ttf"
         if gf_path.exists():
             try:
-                return ImageFont.truetype(str(gf_path), 85)
+                loaded = ImageFont.truetype(str(gf_path), 85)
+                _FONT_CACHE[font_family] = loaded
+                return loaded
             except Exception:
                 pass
-        # Try system font dirs (Windows)
+
+        # 2. Windows system fonts
         import platform
         if platform.system() == "Windows":
             win_fonts = Path("C:/Windows/Fonts")
@@ -59,10 +72,15 @@ def _get_font(font_family: str | None = None) -> ImageFont.FreeTypeFont:
             ]:
                 if candidate.exists():
                     try:
-                        return ImageFont.truetype(str(candidate), 85)
+                        loaded = ImageFont.truetype(str(candidate), 85)
+                        _FONT_CACHE[font_family] = loaded
+                        return loaded
                     except Exception:
                         pass
-    # Default: cached Birzia-Black
+
+        # Family not found — fall through to default below (don't cache failure)
+
+    # ── Default: cached Birzia-Black ──────────────────────────────────────────
     if _FONT is None:
         font_path = BASEPATH / "Fonts" / "Birzia-Black.otf"
         try:
