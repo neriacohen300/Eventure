@@ -2,7 +2,7 @@
   {
     "name": "Girl On Fire",
     "author": "Alicia Keys",
-    "duration": 232,
+    "duration": 222,
     "fits_for": "empowerment, opening sequence, awards ceremony",
     "path": "{BASE_PATH}/Songs/AudioFiles/Alicia Keys - Girl On Fire.mp3",
     "github_path": "AudioFiles/Alicia Keys - Girl On Fire.mp3"
@@ -10,7 +10,7 @@
   {
     "name": "The Nights",
     "author": "Avicii",
-    "duration": 178,
+    "duration": 174,
     "fits_for": "youth party, graduation, travel montage",
     "path": "{BASE_PATH}/Songs/AudioFiles/Avicii - The Nights.mp3",
     "github_path": "AudioFiles/Avicii - The Nights.mp3"
@@ -18,7 +18,7 @@
   {
     "name": "A Sky Full Of Stars",
     "author": "Coldplay",
-    "duration": 253,
+    "duration": 252,
     "fits_for": "wedding, emotional highlight, evening segment",
     "path": "{BASE_PATH}/Songs/AudioFiles/Coldplay - A Sky Full Of Stars.mp3",
     "github_path": "AudioFiles/Coldplay - A Sky Full Of Stars.mp3"
@@ -26,7 +26,7 @@
   {
     "name": "Can't Stop The Feeling",
     "author": "Justin Timberlake",
-    "duration": 285,
+    "duration": 282,
     "fits_for": "dance floor, entrance, upbeat opening",
     "path": "{BASE_PATH}/Songs/AudioFiles/Justin Timberlake - Can't Stop The Feeling.mp3",
     "github_path": "AudioFiles/Justin Timberlake - Can't Stop The Feeling.mp3"
@@ -34,7 +34,7 @@
   {
     "name": "Don't Stop Me Now",
     "author": "Queen",
-    "duration": 212,
+    "duration": 204,
     "fits_for": "high-energy montage, celebration, party, upbeat credits",
     "path": "{BASE_PATH}/Songs/AudioFiles/Queen - Don't Stop Me Now.mp3",
     "github_path": "AudioFiles/Queen - Don't Stop Me Now.mp3"
@@ -42,7 +42,7 @@
   {
     "name": "Story Of My Life",
     "author": "One Direction",
-    "duration": 247,
+    "duration": 241,
     "fits_for": "photo montage, family moments, farewell",
     "path": "{BASE_PATH}/Songs/AudioFiles/One Direction - story of my life.mp3",
     "github_path": "AudioFiles/One Direction - story of my life.mp3"
@@ -50,7 +50,7 @@
   {
     "name": "What Makes Your Beautiful",
     "author": "One Direction",
-    "duration": 206,
+    "duration": 196,
     "fits_for": "teen event, birthday, upbeat moments",
     "path": "{BASE_PATH}/Songs/AudioFiles/One Direction - What Makes You Beautiful.mp3",
     "github_path": "AudioFiles/One Direction - What Makes You Beautiful.mp3"
@@ -58,7 +58,7 @@
   {
     "name": "Happy",
     "author": "Pharrell Williams",
-    "duration": 240,
+    "duration": 230,
     "fits_for": "opening, team celebration, universal events",
     "path": "{BASE_PATH}/Songs/AudioFiles/Pharrell Williams - Happy.mp3",
     "github_path": "AudioFiles/Pharrell Williams - Happy.mp3"
@@ -66,7 +66,7 @@
   {
     "name": "Only Girl",
     "author": "Rihanna",
-    "duration": 251,
+    "duration": 232,
     "fits_for": "bachelorette party, bridal entrance, dance segment",
     "path": "{BASE_PATH}/Songs/AudioFiles/Rihanna - Only Girl.mp3",
     "github_path": "AudioFiles/Rihanna - Only Girl.mp3"
@@ -74,7 +74,7 @@
   {
     "name": "קרן שמש",
     "author": "בניה ברבי",
-    "duration": 227,
+    "duration": 224,
     "fits_for": "wedding, romantic moments, sunset scenes",
     "path": "{BASE_PATH}/Songs/AudioFiles/בניה ברבי - קרן שמש.mp3",
     "github_path": "AudioFiles/בניה ברבי - קרן שמש.mp3"
@@ -82,7 +82,7 @@
   {
     "name": "עכשיו",
     "author": "הראל סקעת",
-    "duration": 230,
+    "duration": 222,
     "fits_for": "emotional speech, legacy montage, ending sequence",
     "path": "{BASE_PATH}/Songs/AudioFiles/הראל סקעת - עכשיו.mp3",
     "github_path": "AudioFiles/הראל סקעת - עכשיו.mp3"
@@ -90,7 +90,7 @@
   {
     "name": "הכל עוד לפני",
     "author": "התקווה 6",
-    "duration": 206,
+    "duration": 199,
     "fits_for": "bar/bat mitzvah, youth events, optimistic opening",
     "path": "{BASE_PATH}/Songs/AudioFiles/התקווה 6 - הכל עוד לפני.mp3",
     "github_path": "AudioFiles/התקווה 6 - הכל עוד לפני.mp3"
@@ -98,7 +98,7 @@
   {
     "name": "אלוף העולם",
     "author": "חנן בן ארי",
-    "duration": 215,
+    "duration": 212,
     "fits_for": "graduation, personal achievement, entrance",
     "path": "{BASE_PATH}/Songs/AudioFiles/חנן בן ארי - אלוף העולם.mp3",
     "github_path": "AudioFiles/חנן בן ארי - אלוף העולם.mp3"
@@ -106,7 +106,7 @@
   {
     "name": "שרק תחייך",
     "author": "יובל דיין",
-    "duration": 204,
+    "duration": 193,
     "fits_for": "hopeful moments, children's events, ending note",
     "path": "{BASE_PATH}/Songs/AudioFiles/יובל דיין - שרק תחייך.mp3",
     "github_path": "AudioFiles/יובל דיין - שרק תחייך.mp3"
@@ -114,7 +114,7 @@
   {
     "name": "יש בך",
     "author": "מייפסטיגל",
-    "duration": 207,
+    "duration": 186,
     "fits_for": "youth performance, playful montage, team highlight",
     "path": "{BASE_PATH}/Songs/AudioFiles/מייפסטיגל - יש בך.mp3",
     "github_path": "AudioFiles/מייפסטיגל - יש בך.mp3"
@@ -130,7 +130,7 @@
   {
     "name": "לאהוב אותך כל יום",
     "author": "עדן חסון",
-    "duration": 214,
+    "duration": 209,
     "fits_for": "wedding video, anniversary, romantic slideshow",
     "path": "{BASE_PATH}/Songs/AudioFiles/עדן חסון - לאהוב אותך כל יום.mp3",
     "github_path": "AudioFiles/עדן חסון - לאהוב אותך כל יום.mp3"
@@ -146,7 +146,7 @@
   {
     "name": "אבן על אבן",
     "author": "עידן רייכל",
-    "duration": 196,
+    "duration": 190,
     "fits_for": "heritage event, emotional tribute, slow intro",
     "path": "{BASE_PATH}/Songs/AudioFiles/עידן רייכל - אבן על אבן.mp3",
     "github_path": "AudioFiles/עידן רייכל - אבן על אבן.mp3"
@@ -162,7 +162,7 @@
   {
     "name": "אני לא מפסיק להתרגש ממך",
     "author": "דני רובס",
-    "duration": 213,
+    "duration": 209,
     "fits_for": "",
     "path": "{BASE_PATH}/Songs/AudioFiles/דני רובס - אני לא מפסיק להתרגש ממך.mp3",
     "github_path": "AudioFiles/דני רובס - אני לא מפסיק להתרגש ממך.mp3"
@@ -170,7 +170,7 @@
   {
     "name":"מתנות קטנות",
     "author": "רמי קליינשטן",
-    "duration": 226,
+    "duration": 223,
     "fits_for": "",
     "path": "{BASE_PATH}/Songs/AudioFiles/רמי קלינשטיין  - מתנות קטנות.mp3",
     "github_path": "AudioFiles/רמי קלינשטיין  - מתנות קטנות.mp3"
@@ -178,7 +178,7 @@
   {
     "name":"אל תוותר",
     "author": "אמיר פיי גוטמן",
-    "duration": 184,
+    "duration": 180,
     "fits_for": "",
     "path": "{BASE_PATH}/Songs/AudioFiles/אמיר פיי גוטמן - אל תוותר.mp3",
     "github_path": "AudioFiles/אמיר פיי גוטמן - אל תוותר.mp3"
@@ -186,7 +186,7 @@
   {
     "name":"לך אלי",
     "author": "מאיר בנאי",
-    "duration": 348,
+    "duration": 341,
     "fits_for": "",
     "path": "{BASE_PATH}/Songs/AudioFiles/מאיר בנאי - לך אלי.mp3",
     "github_path": "AudioFiles/מאיר בנאי - לך אלי.mp3"
@@ -194,7 +194,7 @@
   {
     "name":"מכתב לאחי",
     "author": "עילי בוטנר",
-    "duration": 215,
+    "duration": 211,
     "fits_for": "",
     "path": "{BASE_PATH}/Songs/AudioFiles/עילי בוטנר - מכתב לאחי.mp3",
     "github_path": "AudioFiles/עילי בוטנר - מכתב לאחי.mp3"
@@ -202,7 +202,7 @@
   {
     "name":"ילד של אבא",
     "author": "מוקי",
-    "duration": 245,
+    "duration": 241,
     "fits_for": "",
     "path": "{BASE_PATH}/Songs/AudioFiles/מוקי - ילד של אבא.mp3",
     "github_path": "AudioFiles/מוקי - ילד של אבא.mp3"
@@ -210,7 +210,7 @@
   {
     "name":"מלך העולם",
     "author": "שלמה ארצי",
-    "duration": 163,
+    "duration": 160,
     "fits_for": "",
     "path": "{BASE_PATH}/Songs/AudioFiles/שלמה ארצי - מלך העולם.mp3",
     "github_path": "AudioFiles/שלמה ארצי - מלך העולם.mp3"
@@ -218,7 +218,7 @@
   {
     "name":"יוצא לאור",
     "author": "אהוד בנאי",
-    "duration": 266,
+    "duration": 263,
     "fits_for": "",
     "path": "{BASE_PATH}/Songs/AudioFiles/אהוד בנאי - יוצא לאור.mp3",
     "github_path": "AudioFiles/אהוד בנאי - יוצא לאור.mp3"

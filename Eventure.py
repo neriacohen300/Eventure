@@ -2251,16 +2251,17 @@ class SlideshowCreator(QMainWindow):
         row = item.row()
         if col == 2:
             try:
-                val = round(float(item.text()), 1)
+                val = int(float(item.text()))
                 if val < 2 or val > 600:
                     raise ValueError(self.tr("duration_out_of_range_error"))
                 self.images[row]["duration"] = val
+                item.setText(str(val))
                 if self.images[row]["transition_duration"] > val - 1:
                     self.images[row]["transition_duration"] = val - 1
                     self.update_image_table()
             except ValueError:
                 cur = self.images[row]["duration"]
-                item.setText(str(int(cur)) if float(cur) == int(float(cur)) else f"{float(cur):.1f}")
+                item.setText(str(int(cur)))
         elif col == 5:
             self.images[row]["text"] = item.text()
         elif col == 6:
@@ -2376,7 +2377,7 @@ class SlideshowCreator(QMainWindow):
                 "transition_duration": self.default_transition_duration,
                 "text": "", "rotation": 0, "is_second_image": False,
                 "date": datetime.fromtimestamp(os.path.getmtime(f)).strftime("%Y-%m-%d %H:%M:%S"),
-                "ken_burns": "none"
+                "ken_burns": "none", "text_on_kb": True,
             } for f in files]
             self.images.extend(new)
             self.update_image_table()
@@ -2432,9 +2433,8 @@ class SlideshowCreator(QMainWindow):
         filename_item.setData(Qt.UserRole, img.get("is_second_image", False))
         filename_item.setFlags(filename_item.flags() & ~Qt.ItemIsEditable)
 
-        dur_val = img.get("duration", 5)
-        dur_display = str(int(dur_val)) if float(dur_val) == int(float(dur_val)) else f"{float(dur_val):.1f}"
-        duration_item = QTableWidgetItem(dur_display)
+        dur_val = float(img.get("duration", 5))
+        duration_item = QTableWidgetItem(str(dur_val))
 
         transition_cb = QComboBox()
         transition_cb.addItems(self.transitions_types)
@@ -2698,12 +2698,15 @@ class SlideshowCreator(QMainWindow):
             msg.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
             if msg.exec_() == QMessageBox.Cancel:
                 return
-            n = len(self.images)
-            new_dur = int(total_audio_dur / n) if n else 0
+            primary_imgs  = [img for img in self.images if not img.get("is_second_image")]
+            secondary_dur = sum(img["duration"] for img in self.images if img.get("is_second_image"))
+            n = len(primary_imgs)
+            usable = max(0.0, total_audio_dur - secondary_dur)
+            new_dur = float(usable / n) if n else 0
             if new_dur < 2 or new_dur > 600:
                 QMessageBox.information(self, self.tr("audio_and_video_error"), self.tr("prompt_cant_match"))
                 return
-            for img in self.images:
+            for img in primary_imgs:
                 img["duration"] = new_dur
             self.update_image_table()
 
@@ -2995,21 +2998,8 @@ class SlideshowCreator(QMainWindow):
         self._refresh_stats()
 
     def _write_project_file(self, path: str):
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(f"{len(self.audio_files)}\n")
-            for audio in self.audio_files:
-                f.write(f"{audio['path']}\n")
-            for img in self.images:
-                text = img.get("text", "").replace("\n", "\\n")
-                crop = img.get("crop")
-                crop_str = f"{crop[0]:.6f}|{crop[1]:.6f}|{crop[2]:.6f}|{crop[3]:.6f}" if crop else "none"
-                f.write(
-                    f"{img['path']},{img.get('duration', 5)},{img.get('transition', 'fade')},"
-                    f"{img.get('transition_duration', 1)},{text},{img.get('rotation', 0)},"
-                    f"{img.get('is_second_image', False)},{img.get('date', '')},"
-                    f"{img.get('ken_burns', 'none')},{img.get('text_on_kb', True)},"
-                    f"{crop_str}\n"
-                )
+        import slideshow_io
+        slideshow_io.save(path, self.audio_files, self.images)
 
     # ── Recent Files ──────────────────────────────────────────────────────────
 
@@ -3202,59 +3192,18 @@ class SlideshowCreator(QMainWindow):
 
     # ── Project parse (runs in background thread) ─────────────────────────────
 
-    @staticmethod
-    def _parse_crop(s: str) -> tuple | None:
-        """Parse a crop string like '0.1|0.05|0.8|0.9' → tuple, or None."""
-        if not s or s.strip().lower() in ("none", ""):
-            return None
-        try:
-            vals = [float(v) for v in s.strip().split("|")]
-            if len(vals) == 4:
-                return tuple(vals)
-        except ValueError:
-            pass
-        return None
-
     def _parse_project_file(self, file_name: str) -> dict:
         """
         Parse a .slideshow file entirely off the UI thread.
+        Supports both legacy CSV (v1) and JSON (v2) formats via slideshow_io.
         Returns a dict with 'audio_files' and 'images' keys.
         Raises on any error — the caller's on_error handler will show the dialog.
         """
-        with open(file_name, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-        count = int(lines[0].strip())
-        if len(lines) < count + 1:
-            raise ValueError("Project file is truncated.")
-        audio_files = [{"path": lines[i + 1].strip()} for i in range(count)]
-        images = []
-        for line in lines[count + 1:]:
-            parts = line.strip().split(",")
-            if len(parts) < 8:
-                continue
-            path        = parts[0]
-            dur         = parts[1]
-            transition  = parts[2]
-            trans_dur   = parts[3]
-            text        = parts[4]
-            rotation    = parts[5]
-            is_second   = parts[6]
-            date        = parts[7] if len(parts) > 7 else ""
-            ken_burns   = parts[8].strip() if len(parts) > 8 else "none"
-            crop        = self._parse_crop(parts[10]) if len(parts) > 10 else None
-            images.append({
-                "path":                path,
-                "duration":            float(dur),
-                "transition":          transition,
-                "transition_duration": self.default_transition_duration,
-                "text":                text.replace("\\n", "\n"),
-                "rotation":            int(rotation),
-                "is_second_image":     is_second.strip().lower() == "true",
-                "date":                date,
-                "ken_burns":           ken_burns,
-                "crop":                crop,
-            })
-        return {"audio_files": audio_files, "images": images}
+        import slideshow_io
+        return slideshow_io.load(
+            file_name,
+            default_transition_duration=self.default_transition_duration,
+        )
 
     def _apply_loaded_project(self, parsed: dict, file_name: str):
         """
@@ -3437,17 +3386,41 @@ class SlideshowCreator(QMainWindow):
         preview_lbl.setAlignment(Qt.AlignCenter)
         layout.addWidget(preview_lbl)
 
-        def _update_preview():
-            tail   = tail_spin.value()
+        # Total time second-images currently occupy — stays unchanged in primary-only mode
+        second_image_total = sum(
+            int(img.get("duration", 5)) for img in self.images if img.get("is_second_image")
+        )
+
+        def _calc_dur(tail: int, primary_only: bool) -> float:
             usable = max(0.0, total_audio - tail)
-            n      = n_primary if rb_primary.isChecked() else n_all
+            if primary_only:
+                # Second-images still run in the video → subtract their time first
+                usable_for_primary = max(0.0, usable - second_image_total)
+                n = n_primary
+            else:
+                usable_for_primary = usable
+                n = n_all
+            if n == 0:
+                return 2
+            return max(2, float(usable_for_primary / n))
+
+        def _update_preview():
+            tail         = tail_spin.value()
+            primary_only = rb_primary.isChecked()
+            new_dur      = _calc_dur(tail, primary_only)
+            n            = n_primary if primary_only else n_all
             if n == 0:
                 preview_lbl.setText("No slides to distribute.")
                 return
-            new_dur = max(2, int(usable / n))
+            total_sec = new_dur * n + (second_image_total if primary_only else 0)
+            note = (
+                f"\n(second-images keep their duration: {second_image_total} s)"
+                if primary_only and second_image_total > 0 else ""
+            )
             preview_lbl.setText(
                 f"Each slide → {new_dur} s   "
-                f"({format_time_hms(usable)} ÷ {n} slides)"
+                f"(total video ≈ {format_time_hms(total_sec)})"
+                f"{note}"
             )
 
         rb_all.toggled.connect(lambda _: _update_preview())
@@ -3472,23 +3445,23 @@ class SlideshowCreator(QMainWindow):
             return
 
         # ── Apply ─────────────────────────────────────────────────────────────
-        tail   = tail_spin.value()
-        usable = max(0.0, total_audio - tail)
-        apply_primary_only = rb_primary.isChecked()
+        tail         = tail_spin.value()
+        primary_only = rb_primary.isChecked()
+        new_dur      = _calc_dur(tail, primary_only)
         targets = (
             [img for img in self.images if not img.get("is_second_image")]
-            if apply_primary_only else self.images
+            if primary_only else self.images
         )
         n = len(targets)
         if n == 0:
             return
-        new_dur = max(2, int(usable / n))
         for img in targets:
             img["duration"] = new_dur
         self.update_image_table()
+        total_sec = new_dur * n + (second_image_total if primary_only else 0)
         self.statusBar().showMessage(
             f"  ✔  Set {n} slides to {new_dur} s each  "
-            f"(total {format_time_hms(n * new_dur)})", 4000
+            f"(total video ≈ {format_time_hms(total_sec)})", 5000
         )
 
     # ── Premiere Export ───────────────────────────────────────────────────────
@@ -4681,7 +4654,7 @@ class SlideshowPreviewDialog(QDialog):
         vol_lbl.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 13px;")
         self._vol_slider = QSlider(Qt.Horizontal)
         self._vol_slider.setRange(0, 100)
-        self._vol_slider.setValue(100)
+        self._vol_slider.setValue(50)
         self._vol_slider.setFixedWidth(90)
         self._vol_slider.setToolTip("Music volume")
         self._vol_slider.setStyleSheet(f"""
