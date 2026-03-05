@@ -49,8 +49,7 @@ import urllib.parse
 import hashlib
 import tempfile
 
-APP_VERSION = "1.0.7"
-
+APP_VERSION = "1.0.8"
 # ── GitHub Audio Library Config ───────────────────────────────────────────────
 GITHUB_AUDIO_USER   = "neriacohen300"
 GITHUB_AUDIO_REPO   = "Eventure"
@@ -923,21 +922,41 @@ class ProgressSection(QWidget):
         layout.setContentsMargins(0, 4, 0, 0)
         layout.setSpacing(6)
 
-        def _bar(color_type):
+        _PCT_STYLE = (
+            f"color: {COLORS['text_secondary']}; font-size: 11px; "
+            f"font-weight: 600; min-width: 34px; text-align: right;"
+        )
+
+        def _bar_row(color_type):
+            """Return (container_widget, bar, pct_label) packed in an HBoxLayout."""
+            container = QWidget()
+            row = QHBoxLayout(container)
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(6)
+
             bar = QProgressBar()
             bar.setRange(0, 100)
             bar.setValue(0)
-            bar.setVisible(False)
             bar.setFixedHeight(4)
             bar.setProperty("type", color_type)
-            return bar
 
-        self.export_bar = _bar("")
-        self.image_bar  = _bar("kb")
-        self.premiere_bar = _bar("premiere")
+            pct_lbl = QLabel("0%")
+            pct_lbl.setStyleSheet(_PCT_STYLE)
+            pct_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            pct_lbl.setFixedWidth(34)
 
-        for bar in [self.export_bar, self.image_bar, self.premiere_bar]:
-            layout.addWidget(bar)
+            row.addWidget(bar)
+            row.addWidget(pct_lbl)
+
+            container.setVisible(False)
+            return container, bar, pct_lbl
+
+        self._export_container,  self.export_bar,   self._export_pct   = _bar_row("")
+        self._image_container,   self.image_bar,    self._image_pct    = _bar_row("kb")
+        self._premiere_container, self.premiere_bar, self._premiere_pct = _bar_row("premiere")
+
+        for container in [self._export_container, self._image_container, self._premiere_container]:
+            layout.addWidget(container)
 
         self.status_label = QLabel()
         self.status_label.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 11px;")
@@ -945,19 +964,41 @@ class ProgressSection(QWidget):
         layout.addWidget(self.status_label)
 
     def set_export_progress(self, value: int, visible: bool = True):
-        self.export_bar.setVisible(visible)
+        self._export_container.setVisible(visible)
         if visible:
             self.export_bar.setValue(value)
+            self._export_pct.setText(f"{value}%")
 
     def set_image_progress(self, value: int, visible: bool = True):
-        self.image_bar.setVisible(visible)
+        self._image_container.setVisible(visible)
         if visible:
             self.image_bar.setValue(value)
+            self._image_pct.setText(f"{value}%")
 
     def set_premiere_progress(self, value: int, visible: bool = True):
-        self.premiere_bar.setVisible(visible)
+        self._premiere_container.setVisible(visible)
         if visible:
             self.premiere_bar.setValue(value)
+            self._premiere_pct.setText(f"{value}%")
+
+    # ── Visibility helpers (used by external callers) ─────────────────────────
+    def show_export(self):
+        self._export_container.setVisible(True)
+
+    def hide_export(self):
+        self._export_container.setVisible(False)
+
+    def show_image(self):
+        self._image_container.setVisible(True)
+
+    def hide_image(self):
+        self._image_container.setVisible(False)
+
+    def show_premiere(self):
+        self._premiere_container.setVisible(True)
+
+    def hide_premiere(self):
+        self._premiere_container.setVisible(False)
 
 
 
@@ -2581,6 +2622,7 @@ class SlideshowCreator(QMainWindow):
 
     def update_image_progress(self, value: int):
         self.image_progress_bar.setValue(value)
+        self.progress_section._image_pct.setText(f"{value}%")
         self.taskbar_progress.setValue(value)
 
     def _warn_corrupted_image(self, path: str):
@@ -2601,7 +2643,7 @@ class SlideshowCreator(QMainWindow):
         self._pending_temp_dirs = []
 
     def on_image_processing_finished(self):
-        self.image_progress_bar.setVisible(False)
+        self.progress_section.hide_image()
         self.taskbar_progress.reset()
         self.taskbar_progress.hide()
         self.continue_with_video_export()
@@ -2731,8 +2773,9 @@ class SlideshowCreator(QMainWindow):
         self.process.readyReadStandardError.connect(self.update_progress)
         self.process.finished.connect(self.export_finished)
 
-        self.progress_bar.setVisible(True)
+        self.progress_section.show_export()
         self.progress_bar.setValue(0)
+        self.progress_section._export_pct.setText("0%")
         self.taskbar_progress.show()
         self.taskbar_progress.setValue(0)
 
@@ -2757,8 +2800,9 @@ class SlideshowCreator(QMainWindow):
         self.images_backup = copy.deepcopy(self.images)
         self.backup_state  = True
 
-        self.image_progress_bar.setVisible(True)
+        self.progress_section.show_image()
         self.image_progress_bar.setValue(0)
+        self.progress_section._image_pct.setText("0%")
         self.taskbar_progress.show()
         self.taskbar_progress.setValue(0)
 
@@ -2772,6 +2816,7 @@ class SlideshowCreator(QMainWindow):
 
     def export_finished(self):
         self.progress_bar.setValue(100)
+        self.progress_section._export_pct.setText("100%")
         self.taskbar_progress.setValue(100)
 
         # ── Pass 2: embed thumbnail as attached_pic via a fast remux ─────────
@@ -2810,7 +2855,7 @@ class SlideshowCreator(QMainWindow):
                 except OSError: pass
 
         QMessageBox.information(self, self.tr("success_export_complete_window"), self.tr("success_export_complete"))
-        self.progress_bar.setVisible(False)
+        self.progress_section.hide_export()
         self.taskbar_progress.reset()
         self.taskbar_progress.hide()
         self._cleanup_temp_dirs()
@@ -2963,6 +3008,7 @@ class SlideshowCreator(QMainWindow):
                         total = sum(img["duration"] for img in self.images)
                         pct   = int(cur / total * 100) if total else 0
                         self.progress_bar.setValue(pct)
+                        self.progress_section._export_pct.setText(f"{pct}%")
                         self.taskbar_progress.setValue(pct)
                     except ValueError:
                         pass
@@ -3544,8 +3590,9 @@ class SlideshowCreator(QMainWindow):
             return
         self.premiere_project_folder = file_path
 
-        self.image_premiere_progress_bar.setVisible(True)
+        self.progress_section.show_premiere()
         self.image_premiere_progress_bar.setValue(0)
+        self.progress_section._premiere_pct.setText("0%")
         self.taskbar_progress.show()
         self.taskbar_progress.setValue(0)
 
@@ -3573,10 +3620,11 @@ class SlideshowCreator(QMainWindow):
 
     def update_image_premiere_progress(self, value: int):
         self.image_premiere_progress_bar.setValue(value)
+        self.progress_section._premiere_pct.setText(f"{value}%")
         self.taskbar_progress.setValue(value)
 
     def on_image_premiere_processing_finished(self):
-        self.image_premiere_progress_bar.setVisible(False)
+        self.progress_section.hide_premiere()
         self.taskbar_progress.reset()
         self.taskbar_progress.hide()
         self.export_premiere_audio()
@@ -6122,12 +6170,25 @@ class AudioLibraryDialog(QDialog):
         info_layout.addWidget(self.info_label)
 
         # Download progress inside info panel
+        _dl_row_widget = QWidget()
+        _dl_row = QHBoxLayout(_dl_row_widget)
+        _dl_row.setContentsMargins(0, 0, 0, 0)
+        _dl_row.setSpacing(6)
         self._dl_bar = QProgressBar()
         self._dl_bar.setRange(0, 100)
         self._dl_bar.setValue(0)
-        self._dl_bar.setVisible(False)
         self._dl_bar.setFixedHeight(4)
-        info_layout.addWidget(self._dl_bar)
+        self._dl_pct_lbl = QLabel("0%")
+        self._dl_pct_lbl.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; font-size: 11px; font-weight: 600;"
+        )
+        self._dl_pct_lbl.setFixedWidth(34)
+        self._dl_pct_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        _dl_row.addWidget(self._dl_bar)
+        _dl_row.addWidget(self._dl_pct_lbl)
+        _dl_row_widget.setVisible(False)
+        self._dl_bar_container = _dl_row_widget
+        info_layout.addWidget(_dl_row_widget)
 
         self._dl_lbl = QLabel("")
         self._dl_lbl.setStyleSheet(f"color: {COLORS['warning']}; font-size: 11px;")
@@ -6247,8 +6308,9 @@ class AudioLibraryDialog(QDialog):
 
         url = self._github_url(song)
         self._dl_lbl.setText(f"Downloading: {song['name']}…")
-        self._dl_bar.setVisible(True)
+        self._dl_bar_container.setVisible(True)
         self._dl_bar.setValue(0)
+        self._dl_pct_lbl.setText("0%")
 
         class _DL(QThread):
             progress = pyqtSignal(int)
@@ -6285,9 +6347,15 @@ class AudioLibraryDialog(QDialog):
 
         dl = _DL(url, str(local_path))
         self._downloading.add(dl)
-        dl.progress.connect(self._dl_bar.setValue)
+
+        def _on_progress(pct: int):
+            self._dl_bar.setValue(pct)
+            self._dl_pct_lbl.setText(f"{pct}%")
+
+        dl.progress.connect(_on_progress)
+
         def _finish(path, err):
-            self._dl_bar.setVisible(False)
+            self._dl_bar_container.setVisible(False)
             if path:
                 self._dl_lbl.setText(f"✓ Downloaded: {song['name']}")
                 self._populate(self.search_input.text())
