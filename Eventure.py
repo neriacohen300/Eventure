@@ -3783,10 +3783,13 @@ class SlideshowCreator(QMainWindow):
             QMessageBox.information(self, "Preview",
                 "Add some images first before previewing the slideshow.")
             return
+        selected = self.image_table.selectedItems()
+        start_index = self.image_table.row(selected[0]) if selected else 0
         dlg = SlideshowPreviewDialog(
             images=self.images,
             audio_files=self.audio_files,
             font_family=getattr(self, "text_font", "Birzia-Black"),
+            start_index=start_index,
             parent=self,
         )
         dlg.exec_()
@@ -4725,7 +4728,7 @@ class SlideshowPreviewDialog(QDialog):
     FRAME_MS = int(1000 / FPS)
 
     def __init__(self, images: list, audio_files: list,
-                 font_family: str = "Birzia-Black", parent=None):
+                 font_family: str = "Birzia-Black", start_index: int = 0, parent=None):
         super().__init__(parent)
         self.setWindowTitle("\u25b6  Slideshow Preview")
         self.setMinimumSize(1050, 720)
@@ -4740,11 +4743,15 @@ class SlideshowPreviewDialog(QDialog):
         self._renderer    = _FrameRenderer(images, font_family=font_family)
         self._total_dur   = self._renderer.total_duration
 
+        # Compute start time from start_index
+        start_index = max(0, min(start_index, len(images) - 1))
+        start_t = sum(float(img.get("duration", 5)) for img in images[:start_index])
+
         # Playback state
         self._playing             = False
-        self._current_t           = 0.0
+        self._current_t           = start_t
         self._playback_start_wall = 0.0
-        self._playback_start_t    = 0.0
+        self._playback_start_t    = start_t
         self._speed               = 1.0
         self._current_qimg        = None
 
@@ -4772,9 +4779,9 @@ class SlideshowPreviewDialog(QDialog):
         self._timer.setInterval(self.FRAME_MS)
         self._timer.timeout.connect(self._tick)
 
-        # Show first frame
-        self._render_and_show(0.0)
-        self._update_ui_position(0.0)
+        # Show first frame (at start_t so preview opens on the selected image)
+        self._render_and_show(start_t)
+        self._update_ui_position(start_t)
 
     # ── Audio segment table ───────────────────────────────────────────────────
 
