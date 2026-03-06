@@ -2493,7 +2493,7 @@ class SlideshowCreator(QMainWindow):
         dialog = QInputDialog(self)
         dialog.setWindowTitle(self.tr("dialog_set_duration"))
         dialog.setLabelText(self.tr("dialog_enter_duration"))
-        dialog.setIntValue(current)
+        dialog.setIntValue(int(current))
         dialog.setIntRange(2, 600)
         if dialog.exec_() == QDialog.Accepted:
             v = dialog.intValue()
