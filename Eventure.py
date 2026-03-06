@@ -3792,7 +3792,18 @@ class SlideshowCreator(QMainWindow):
             start_index=start_index,
             parent=self,
         )
+
+        def _sync_table_row(idx: int):
+            self.image_table.blockSignals(True)
+            self.image_table.selectRow(idx)
+            self.image_table.blockSignals(False)
+            self.image_table.scrollTo(self.image_table.model().index(idx, 0))
+
+        dlg.slide_changed.connect(_sync_table_row)
         dlg.exec_()
+
+        # Sync the sidebar preview to whichever slide was showing when the dialog closed
+        self.update_preview_with_row(dlg._current_slide_idx)
 
     # ── Crop ──────────────────────────────────────────────────────────────────
 
@@ -4727,6 +4738,8 @@ class SlideshowPreviewDialog(QDialog):
     W, H     = 960, 540
     FRAME_MS = int(1000 / FPS)
 
+    slide_changed = pyqtSignal(int)   # emitted with the current slide index
+
     def __init__(self, images: list, audio_files: list,
                  font_family: str = "Birzia-Black", start_index: int = 0, parent=None):
         super().__init__(parent)
@@ -4754,6 +4767,7 @@ class SlideshowPreviewDialog(QDialog):
         self._playback_start_t    = start_t
         self._speed               = 1.0
         self._current_qimg        = None
+        self._current_slide_idx   = start_index   # tracks last emitted slide index
 
         # Audio state
         self._audio_segments: list = []   # [(t_start, t_end, path), ...]
@@ -5142,6 +5156,9 @@ class SlideshowPreviewDialog(QDialog):
         self._slide_label.setText(
             f"Slide {idx + 1} / {len(self._images)}" + (f"  \u2014  {name}" if name else "")
         )
+        if idx != self._current_slide_idx:
+            self._current_slide_idx = idx
+            self.slide_changed.emit(idx)
 
     # ── Audio via ffplay subprocess ───────────────────────────────────────────
 
