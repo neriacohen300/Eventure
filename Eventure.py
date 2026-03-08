@@ -6562,11 +6562,30 @@ def export_pdf_photo_book(images: list, output_path: str,
 
     total = len(images)
     for idx, img_data in enumerate(images):
-        path    = img_data["path"]
-        caption = img_data.get("text", "").strip()
+        path     = img_data["path"]
+        caption  = img_data.get("text", "").strip()
+        rotation = img_data.get("rotation", 0)
 
         try:
-            pil_img = Image.open(path).convert("RGB")
+            pil_img = Image.open(path)
+            # ── Apply EXIF orientation ────────────────────────────────────────
+            try:
+                if hasattr(pil_img, "_getexif"):
+                    exif = pil_img._getexif()
+                    if exif and _ORIENTATION_TAG:
+                        val = exif.get(_ORIENTATION_TAG)
+                        if val == 3:
+                            pil_img = pil_img.rotate(180, expand=True)
+                        elif val == 6:
+                            pil_img = pil_img.rotate(270, expand=True)
+                        elif val == 8:
+                            pil_img = pil_img.rotate(90, expand=True)
+            except Exception:
+                pass
+            # ── Apply manual rotation from the table ──────────────────────────
+            if rotation:
+                pil_img = pil_img.rotate(rotation, expand=True)
+            pil_img = pil_img.convert("RGB")
             from io import BytesIO
             buf = BytesIO()
             pil_img.save(buf, format="JPEG", quality=88)
@@ -6611,22 +6630,53 @@ def export_html_gallery(images: list, output_path: str,
     """
     Generate a fully self-contained index.html with all images embedded
     as base64 data URIs — no server, no internet connection needed.
+    Each slide shows its slide number in the top-left corner.
+    Images are rendered with EXIF orientation, manual rotation, and crop
+    settings from the table.
     """
+    from io import BytesIO
     slides_html = []
     total = len(images)
 
     for idx, img_data in enumerate(images):
-        path    = img_data["path"]
-        caption = img_data.get("text", "").strip()
+        path     = img_data["path"]
+        caption  = img_data.get("text", "").strip()
+        rotation = img_data.get("rotation", 0)
+        crop     = img_data.get("crop")       # tuple (x, y, w, h) in 0-1 coords or None
         try:
-            pil_img = Image.open(path).convert("RGB")
+            pil_img = Image.open(path)
+            # ── Apply EXIF orientation ────────────────────────────────────────
+            try:
+                if hasattr(pil_img, "_getexif"):
+                    exif = pil_img._getexif()
+                    if exif and _ORIENTATION_TAG:
+                        val = exif.get(_ORIENTATION_TAG)
+                        if val == 3:
+                            pil_img = pil_img.rotate(180, expand=True)
+                        elif val == 6:
+                            pil_img = pil_img.rotate(270, expand=True)
+                        elif val == 8:
+                            pil_img = pil_img.rotate(90, expand=True)
+            except Exception:
+                pass
+            # ── Apply manual rotation from the table ──────────────────────────
+            if rotation:
+                pil_img = pil_img.rotate(rotation, expand=True)
+            # ── Apply crop (normalised 0-1 coords relative to post-rotation size) ─
+            if crop:
+                iw, ih = pil_img.size
+                cx = max(0, int(crop[0] * iw))
+                cy = max(0, int(crop[1] * ih))
+                cw = max(1, min(int(crop[2] * iw), iw - cx))
+                ch = max(1, min(int(crop[3] * ih), ih - cy))
+                pil_img = pil_img.crop((cx, cy, cx + cw, cy + ch))
+            pil_img = pil_img.convert("RGB")
             # Downscale large images to reduce file size (max 1280px wide)
             if pil_img.width > 1280:
                 ratio = 1280 / pil_img.width
                 pil_img = pil_img.resize(
                     (1280, int(pil_img.height * ratio)), Image.LANCZOS
                 )
-            from io import BytesIO
             buf = BytesIO()
             pil_img.save(buf, format="JPEG", quality=82, optimize=True)
             b64 = base64.b64encode(buf.getvalue()).decode("ascii")
@@ -6635,12 +6685,16 @@ def export_html_gallery(images: list, output_path: str,
             print(f"HTML gallery: skipping {path}: {e}")
             continue
 
+        slide_num = idx + 1
         cap_html = (
             f'<div class="caption">{caption}</div>' if caption else ""
         )
         slides_html.append(
             f'<div class="slide" id="slide-{idx}">'
-            f'<img src="{src}" alt="Slide {idx + 1}" />'
+            f'<div class="img-wrap">'
+            f'<img src="{src}" alt="Slide {slide_num}" />'
+            f'<span class="slide-num">{slide_num}</span>'
+            f'</div>'
             f'{cap_html}'
             f'</div>'
         )
@@ -6657,14 +6711,25 @@ def export_html_gallery(images: list, output_path: str,
 <style>
   *{{box-sizing:border-box;margin:0;padding:0}}
   body{{background:#111;color:#eee;font-family:sans-serif;}}
-  header{{padding:20px 32px;background:#1a1a2e;border-bottom:1px solid #333;}}
-  header h1{{font-size:22px;font-weight:700;color:#5b9bff;}}
+  header{{padding:20px 32px;background:#1a1a2e;border-bottom:1px solid #333;display:flex;align-items:center;gap:16px;flex-wrap:wrap;}}
+  header h1{{font-size:22px;font-weight:700;color:#5b9bff;flex:1;}}
   header p{{font-size:12px;color:#666;margin-top:4px;}}
+  .header-info{{flex:1;}}
   .gallery{{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;padding:24px;}}
   .slide{{background:#1e2228;border-radius:10px;overflow:hidden;border:1px solid #363e4a;
           transition:transform 0.2s,box-shadow 0.2s;cursor:pointer;}}
   .slide:hover{{transform:translateY(-3px);box-shadow:0 8px 24px rgba(0,0,0,.5);}}
-  .slide img{{width:100%;display:block;aspect-ratio:16/9;object-fit:cover;}}
+  /* Wrapper so the badge is relative to the image */
+  .img-wrap{{position:relative;}}
+  .img-wrap img{{width:100%;display:block;aspect-ratio:16/9;object-fit:cover;}}
+  /* Slide number badge */
+  .slide-num{{
+    position:absolute;top:8px;left:8px;
+    background:rgba(0,0,0,0.65);color:#fff;
+    font-size:11px;font-weight:700;line-height:1;
+    padding:4px 7px;border-radius:5px;
+    pointer-events:none;
+  }}
   .caption{{padding:10px 14px;font-size:13px;color:#95a0b4;background:#252b34;}}
   /* Lightbox */
   #lb{{display:none;position:fixed;inset:0;background:rgba(0,0,0,.9);
@@ -6672,6 +6737,8 @@ def export_html_gallery(images: list, output_path: str,
   #lb.open{{display:flex;}}
   #lb img{{max-width:92vw;max-height:85vh;border-radius:6px;}}
   #lb .lb-cap{{color:#ccc;font-size:14px;margin-top:12px;max-width:800px;text-align:center;}}
+  #lb-num{{position:absolute;top:18px;left:24px;font-size:13px;font-weight:700;
+           background:rgba(0,0,0,.6);color:#fff;padding:4px 9px;border-radius:6px;}}
   #lb-close{{position:absolute;top:18px;right:24px;font-size:28px;color:#aaa;cursor:pointer;
              background:none;border:none;line-height:1;}}
   #lb-prev,#lb-next{{position:absolute;top:50%;transform:translateY(-50%);font-size:32px;
@@ -6681,14 +6748,17 @@ def export_html_gallery(images: list, output_path: str,
 </head>
 <body>
 <header>
-  <h1>🎬 {title}</h1>
-  <p>Generated by Eventure • {len(slides_html)} slides • Click any image to enlarge</p>
+  <div class="header-info">
+    <h1>🎬 {title}</h1>
+    <p>Generated by Eventure • {len(slides_html)} slides • Click any image to enlarge</p>
+  </div>
 </header>
 <div class="gallery" id="gallery">
 {gallery_items}
 </div>
 <!-- Lightbox -->
 <div id="lb">
+  <span id="lb-num"></span>
   <button id="lb-close">✕</button>
   <button id="lb-prev">&#8249;</button>
   <img id="lb-img" src="" alt=""/>
@@ -6702,8 +6772,10 @@ def export_html_gallery(images: list, output_path: str,
     cur = i;
     const img = slides[i].querySelector('img');
     const cap = slides[i].querySelector('.caption');
+    const num = slides[i].querySelector('.slide-num');
     document.getElementById('lb-img').src = img.src;
     document.getElementById('lb-cap').textContent = cap ? cap.textContent : '';
+    document.getElementById('lb-num').textContent = num ? 'Slide ' + num.textContent : '';
     document.getElementById('lb').classList.add('open');
   }}
   slides.forEach((s,i) => s.addEventListener('click', () => openLB(i)));
