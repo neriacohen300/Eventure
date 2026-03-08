@@ -4,6 +4,7 @@ Full redesign: dark cinema aesthetic, card-based layout, modern toolbar,
 sidebar preview, inline controls. All original functionality preserved.
 """
 
+import base64
 import numpy as np
 import multiprocessing
 import threading
@@ -31,12 +32,12 @@ from PyQt5.QtWidgets import (
     QLineEdit, QFrame, QScrollArea, QSizePolicy, QToolBar, QStatusBar,
     QSplitter, QGridLayout, QToolButton, QMenu, QRadioButton, QButtonGroup,
 )
-from PyQt5.QtCore import pyqtSlot, QObject
-from PyQt5.QtCore import Qt, QUrl, QSize, QProcess, QTimer, QThread, pyqtSignal, QEvent, QPoint, QRect, QObject
+from PyQt5.QtCore import pyqtSlot
+from PyQt5.QtCore import Qt, QUrl, QSize, QProcess, QTimer, QThread, pyqtSignal, QEvent, QPoint, QRect
 from PyQt5.QtGui import (
     QIcon, QFont, QPixmap, QTextCursor, QCursor, QTransform,
     QColor, QBrush, QImage, QPalette, QPainter, QLinearGradient,
-    QFontDatabase, QPen, QPainterPath, 
+    QFontDatabase, QPen, QPainterPath,
 )
 from PIL import Image, ExifTags, ImageDraw, ImageFont
 from openpyxl import Workbook
@@ -848,26 +849,6 @@ class PreviewPanel(QFrame):
         self.image_label.setText("No image selected")
         layout.addWidget(self.image_label)
 
-        # Fullscreen button row below the preview image
-        fs_row = QHBoxLayout()
-        fs_row.setContentsMargins(0, 0, 0, 0)
-        fs_row.addStretch()
-        self._fs_btn = QPushButton("⛶  Full Screen")
-        self._fs_btn.setFixedHeight(22)
-        self._fs_btn.setStyleSheet(
-            f"QPushButton {{ background: {COLORS['bg_card']}; color: {COLORS['text_muted']};"
-            f"  border: 1px solid {COLORS['border']}; border-radius: 4px;"
-            f"  padding: 0 8px; font-size: 11px; }}"
-            f"QPushButton:hover {{ color: {COLORS['accent']}; border-color: {COLORS['accent']}; }}"
-            f"QPushButton:disabled {{ color: {COLORS['text_muted']}; opacity: 0.4; }}"
-        )
-        self._fs_btn.setEnabled(False)
-        self._fs_btn.clicked.connect(self._open_fullscreen)
-        self._current_pixmap = None
-        self._current_filename = ""
-        fs_row.addWidget(self._fs_btn)
-        layout.addLayout(fs_row)
-
         self.filename_label = QLabel()
         self.filename_label.setAlignment(Qt.AlignCenter)
         self.filename_label.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 11px;")
@@ -875,9 +856,6 @@ class PreviewPanel(QFrame):
 
     def set_pixmap(self, pixmap: QPixmap, filename: str = ""):
         if pixmap and not pixmap.isNull():
-            self._current_pixmap = pixmap
-            self._current_filename = filename
-            self._fs_btn.setEnabled(True)
             self.image_label.setPixmap(pixmap.scaled(
                 self.image_label.width() - 4,
                 self.image_label.height() - 4,
@@ -885,9 +863,6 @@ class PreviewPanel(QFrame):
             ))
             self.image_label.setProperty("class", "")
         else:
-            self._current_pixmap = None
-            self._current_filename = ""
-            self._fs_btn.setEnabled(False)
             self.image_label.clear()
             self.image_label.setText("No image selected")
             self.image_label.setProperty("class", "preview-empty")
@@ -895,67 +870,7 @@ class PreviewPanel(QFrame):
         self.style().unpolish(self.image_label)
         self.style().polish(self.image_label)
 
-    def _open_fullscreen(self):
-        if not self._current_pixmap or self._current_pixmap.isNull():
-            return
-        # Keep a local reference so the dialog can access the pixmap
-        px = self._current_pixmap
-        title = self._current_filename or "Image Preview"
-
-        dlg = QDialog(self)
-        dlg.setWindowTitle(title)
-        dlg.setWindowFlags(dlg.windowFlags() | Qt.WindowMaximizeButtonHint)
-        dlg.setMinimumSize(800, 600)
-        dlg.resize(1100, 750)
-        dlg.setStyleSheet(f"background: {COLORS['bg_deep']};")
-
-        lay = QVBoxLayout(dlg)
-        lay.setContentsMargins(8, 8, 8, 8)
-        lay.setSpacing(6)
-
-        # Use a plain QLabel — update it manually via a helper
-        img_lbl = QLabel()
-        img_lbl.setAlignment(Qt.AlignCenter)
-        img_lbl.setStyleSheet(f"background: {COLORS['bg_deep']};")
-        img_lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        lay.addWidget(img_lbl, 1)
-
-        def _rescale():
-            img_lbl.setPixmap(px.scaled(
-                img_lbl.width() - 4, img_lbl.height() - 4,
-                Qt.KeepAspectRatio, Qt.SmoothTransformation
-            ))
-
-        # Install an event filter on the label to catch resize events
-        class _ResizeFilter(QObject):
-            def eventFilter(self, obj, event):
-                if event.type() == QEvent.Resize:
-                    _rescale()
-                return super().eventFilter(obj, event)
-        _filter = _ResizeFilter(dlg)
-        img_lbl.installEventFilter(_filter)
-
-        close_btn = QPushButton("✕  Close")
-        close_btn.setFixedHeight(32)
-        close_btn.setStyleSheet(
-            f"QPushButton {{ background: {COLORS['bg_card']}; color: {COLORS['text_muted']}; "
-            f"border: 1px solid {COLORS['border']}; border-radius: 6px; padding: 0 16px; }}"
-            f"QPushButton:hover {{ background: {COLORS['danger']}; color: #fff; }}"
-        )
-        close_btn.clicked.connect(dlg.close)
-        btn_row = QHBoxLayout()
-        btn_row.addStretch()
-        btn_row.addWidget(close_btn)
-        lay.addLayout(btn_row)
-
-        dlg.show()
-        _rescale()   # initial paint once dialog is visible
-        dlg.exec_()
-
     def clear(self):
-        self._current_pixmap = None
-        self._current_filename = ""
-        self._fs_btn.setEnabled(False)
         self.image_label.clear()
         self.image_label.setText("No image selected")
         self.filename_label.setText("")
@@ -2019,8 +1934,8 @@ class SlideshowCreator(QMainWindow):
         self.audio_files     = []
         self.output_file     = self.tr("output_file")
         self.button_font     = "Segoe UI"
-        self.deafult_font    = "Birzia-Black"
-        self.text_font       = "Birzia-Black"
+        self.deafult_font    = "Segoe UI"
+        self.text_font       = "Segoe UI"
         self.text_font_size  = 10
         self.button_font_size = 9
 
@@ -2128,14 +2043,7 @@ class SlideshowCreator(QMainWindow):
         self.image_table.setFont(QFont("Segoe UI", 11))
         self.image_table.setShowGrid(False)
         self.image_table.setAlternatingRowColors(False)
-        self.image_table.verticalHeader().setVisible(True)
-        self.image_table.verticalHeader().setDefaultSectionSize(34)
-        self.image_table.verticalHeader().setStyleSheet(
-            f"QHeaderView::section {{ background-color: {COLORS['bg_deep']}; "
-            f"color: {COLORS['text_muted']}; border: none; "
-            f"border-bottom: 1px solid {COLORS['border']}; "
-            f"padding: 0 6px; font-size: 11px; font-weight: 600; }}"
-        )
+        self.image_table.verticalHeader().setVisible(False)
         self.image_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.image_table.setEditTriggers(QTableWidget.DoubleClicked | QTableWidget.SelectedClicked)
 
@@ -2226,7 +2134,6 @@ class SlideshowCreator(QMainWindow):
         self.audio_table.verticalHeader().setVisible(False)
         self.audio_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.audio_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        self.audio_table.horizontalHeader().setMinimumSectionSize(110)
         self.audio_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.audio_table.setMaximumHeight(140)
         right_layout.addWidget(self.audio_table)
@@ -2493,7 +2400,7 @@ class SlideshowCreator(QMainWindow):
         dialog = QInputDialog(self)
         dialog.setWindowTitle(self.tr("dialog_set_duration"))
         dialog.setLabelText(self.tr("dialog_enter_duration"))
-        dialog.setIntValue(int(current))
+        dialog.setIntValue(current)
         dialog.setIntRange(2, 600)
         if dialog.exec_() == QDialog.Accepted:
             v = dialog.intValue()
@@ -2769,10 +2676,10 @@ class SlideshowCreator(QMainWindow):
             self.audio_table.setItem(row, 1, filename_item)
             self.audio_table.setRowHeight(row, 30)
 
-            mu_btn = QPushButton("↑"); mu_btn.setProperty("action", "icon"); mu_btn.setMinimumWidth(32)
-            md_btn = QPushButton("↓"); md_btn.setProperty("action", "icon"); md_btn.setMinimumWidth(32)
-            del_btn = QPushButton("✕"); del_btn.setProperty("action", "icon"); del_btn.setMinimumWidth(32)
-            del_btn.setStyleSheet(f"QPushButton {{ color: {COLORS['danger']}; background: transparent; border: none; padding: 2px 8px; min-width: 32px; border-radius: 4px; }}"
+            mu_btn = QPushButton("↑"); mu_btn.setProperty("action", "icon")
+            md_btn = QPushButton("↓"); md_btn.setProperty("action", "icon")
+            del_btn = QPushButton("✕"); del_btn.setProperty("action", "icon")
+            del_btn.setStyleSheet(f"QPushButton {{ color: {COLORS['danger']}; background: transparent; border: none; padding: 2px 4px; }}"
                                   f"QPushButton:hover {{ background: rgba(247,90,90,0.15); }}")
             mu_btn.clicked.connect(lambda _, r=row: self.move_audio_up(r))
             md_btn.clicked.connect(lambda _, r=row: self.move_audio_down(r))
@@ -2781,7 +2688,7 @@ class SlideshowCreator(QMainWindow):
             bw = QWidget()
             bl = QHBoxLayout(bw)
             bl.addWidget(mu_btn); bl.addWidget(md_btn); bl.addWidget(del_btn)
-            bl.setContentsMargins(6, 2, 6, 2); bl.setSpacing(4)
+            bl.setContentsMargins(4, 0, 4, 0); bl.setSpacing(2)
             self.audio_table.setCellWidget(row, 0, bw)
         self._refresh_stats()
 
@@ -3783,27 +3690,12 @@ class SlideshowCreator(QMainWindow):
             QMessageBox.information(self, "Preview",
                 "Add some images first before previewing the slideshow.")
             return
-        selected = self.image_table.selectedItems()
-        start_index = self.image_table.row(selected[0]) if selected else 0
         dlg = SlideshowPreviewDialog(
             images=self.images,
             audio_files=self.audio_files,
-            font_family=getattr(self, "text_font", "Birzia-Black"),
-            start_index=start_index,
             parent=self,
         )
-
-        def _sync_table_row(idx: int):
-            self.image_table.blockSignals(True)
-            self.image_table.selectRow(idx)
-            self.image_table.blockSignals(False)
-            self.image_table.scrollTo(self.image_table.model().index(idx, 0))
-
-        dlg.slide_changed.connect(_sync_table_row)
         dlg.exec_()
-
-        # Sync the sidebar preview to whichever slide was showing when the dialog closed
-        self.update_preview_with_row(dlg._current_slide_idx)
 
     # ── Crop ──────────────────────────────────────────────────────────────────
 
@@ -3893,7 +3785,7 @@ class SlideshowCreator(QMainWindow):
 
     def _open_font_picker(self):
         """Open the font picker dialog and apply the chosen font to text overlays."""
-        dlg = FontPickerDialog(current_font=getattr(self, "text_font", "Birzia-Black"), parent=self)
+        dlg = FontPickerDialog(current_font=self.text_font, parent=self)
         if dlg.exec_() == QDialog.Accepted:
             family = dlg.get_result()
             if family:
@@ -3905,13 +3797,10 @@ class SlideshowCreator(QMainWindow):
                         json.dump({"text_font": family}, f)
                 except Exception as e:
                     print(f"Could not save font setting: {e}")
-                # Register font with Qt
-                _gf_ttf = BASEPATH / "Fonts" / "GoogleFonts" / f"{family.replace(' ', '_')}.ttf"
-                if _gf_ttf.exists():
-                    QFontDatabase.addApplicationFont(str(_gf_ttf))
-                _birzia = BASEPATH / "Fonts" / "Birzia-Black.otf"
-                if _birzia.exists():
-                    QFontDatabase.addApplicationFont(str(_birzia))
+                # Register with Qt so it's available for rendering
+                QFontDatabase.addApplicationFont(
+                    str(BASEPATH / "Fonts" / "GoogleFonts" / f"{family.replace(' ', '_')}.ttf")
+                )
                 QMessageBox.information(
                     self, "Font Updated",
                     f"Text font set to '{family}'.\n\n"
@@ -3924,9 +3813,143 @@ class SlideshowCreator(QMainWindow):
             cfg_path = BASEPATH / "font_settings.json"
             with open(cfg_path, "r", encoding="utf-8") as f:
                 cfg = json.load(f)
-            self.text_font = cfg.get("text_font", "Birzia-Black")
+            self.text_font = cfg.get("text_font", "Segoe UI")
         except (FileNotFoundError, json.JSONDecodeError):
             pass
+
+
+    def export_pdf_book(self):
+        if not self.images:
+            QMessageBox.warning(self, "No Images", "Add images before exporting.")
+            return
+
+        # Check reportlab availability
+        try:
+            import reportlab  # noqa: F401
+        except ImportError:
+            QMessageBox.critical(
+                self, "Missing Library",
+                "The 'reportlab' library is required for PDF export.\n\n"
+                "Install it with:\n  pip install reportlab\n\n"
+                "Then restart Eventure and try again."
+            )
+            return
+
+        out_path, _ = QFileDialog.getSaveFileName(
+            self, "Save PDF Photo Book", "", "PDF Files (*.pdf)"
+        )
+        if not out_path:
+            return
+
+        progress_dlg = QDialog(self)
+        progress_dlg.setWindowTitle("Exporting PDF…")
+        progress_dlg.setFixedSize(340, 100)
+        progress_dlg.setWindowFlags(
+            progress_dlg.windowFlags() & ~Qt.WindowCloseButtonHint
+        )
+        pl = QVBoxLayout(progress_dlg)
+        pl.setContentsMargins(20, 16, 20, 16)
+        pdf_lbl = QLabel("Creating PDF photo book…")
+        pdf_lbl.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
+        pdf_bar = QProgressBar()
+        pdf_bar.setRange(0, 100)
+        pl.addWidget(pdf_lbl)
+        pl.addWidget(pdf_bar)
+
+        class _PDFWorker(QThread):
+            progress = pyqtSignal(int)
+            done     = pyqtSignal(bool)
+            def __init__(self, images, path):
+                super().__init__()
+                self._images = images
+                self._path   = path
+            def run(self):
+                ok = export_pdf_photo_book(
+                    self._images, self._path,
+                    progress_callback=self.progress.emit
+                )
+                self.done.emit(ok)
+
+        images_snap = copy.deepcopy(self.images)
+        worker = _PDFWorker(images_snap, out_path)
+        worker.progress.connect(pdf_bar.setValue)
+        worker.done.connect(lambda ok: (
+            progress_dlg.accept(),
+            QMessageBox.information(
+                self, "PDF Exported",
+                f"✔  PDF saved to:\n{out_path}"
+            ) if ok else QMessageBox.critical(
+                self, "PDF Export Failed",
+                "Could not create the PDF. Check the console for details."
+            )
+        ))
+        worker.start()
+        progress_dlg.exec_()
+
+    # ── HTML Gallery Export (Feature 13) ─────────────────────────────────────
+
+    def export_html_gallery_action(self):
+        if not self.images:
+            QMessageBox.warning(self, "No Images", "Add images before exporting.")
+            return
+
+        out_path, _ = QFileDialog.getSaveFileName(
+            self, "Save HTML Gallery", "", "HTML Files (*.html)"
+        )
+        if not out_path:
+            return
+
+        proj_title = (
+            os.path.splitext(os.path.basename(self.loaded_project))[0]
+            if self.loaded_project else "Eventure Gallery"
+        )
+
+        progress_dlg = QDialog(self)
+        progress_dlg.setWindowTitle("Exporting HTML Gallery…")
+        progress_dlg.setFixedSize(360, 100)
+        progress_dlg.setWindowFlags(
+            progress_dlg.windowFlags() & ~Qt.WindowCloseButtonHint
+        )
+        pl = QVBoxLayout(progress_dlg)
+        pl.setContentsMargins(20, 16, 20, 16)
+        html_lbl = QLabel("Building self-contained HTML gallery…")
+        html_lbl.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
+        html_bar = QProgressBar()
+        html_bar.setRange(0, 100)
+        pl.addWidget(html_lbl)
+        pl.addWidget(html_bar)
+
+        class _HTMLWorker(QThread):
+            progress = pyqtSignal(int)
+            done     = pyqtSignal(bool)
+            def __init__(self, images, path, title):
+                super().__init__()
+                self._images = images
+                self._path   = path
+                self._title  = title
+            def run(self):
+                ok = export_html_gallery(
+                    self._images, self._path, self._title,
+                    progress_callback=self.progress.emit
+                )
+                self.done.emit(ok)
+
+        images_snap = copy.deepcopy(self.images)
+        worker = _HTMLWorker(images_snap, out_path, proj_title)
+        worker.progress.connect(html_bar.setValue)
+        worker.done.connect(lambda ok: (
+            progress_dlg.accept(),
+            QMessageBox.information(
+                self, "HTML Gallery Exported",
+                f"✔  Gallery saved to:\n{out_path}\n\n"
+                "Open the file in any web browser to view it."
+            ) if ok else QMessageBox.critical(
+                self, "Export Failed",
+                "Could not write the HTML file. Check the console for details."
+            )
+        ))
+        worker.start()
+        progress_dlg.exec_()
 
     # ── Info / Help ───────────────────────────────────────────────────────────
 
@@ -4126,6 +4149,18 @@ class SlideshowCreator(QMainWindow):
         font_action.triggered.connect(self._open_font_picker)
         self.settings_menu.addAction(font_action)
 
+         # Tools menu (new)
+        self.tools_menu = self.menubar.addMenu("Tools")
+
+        pdf_action = QAction("📄  Export PDF Photo Book…", self)
+        pdf_action.triggered.connect(self.export_pdf_book)
+        self.tools_menu.addAction(pdf_action)
+
+        # Feature 13: HTML Gallery
+        html_action = QAction("🌐  Export HTML Gallery…", self)
+        html_action.triggered.connect(self.export_html_gallery_action)
+        self.tools_menu.addAction(html_action)
+
 
 # ── Worker Threads ────────────────────────────────────────────────────────────
 
@@ -4281,9 +4316,8 @@ class _FrameRenderer:
     W, H = 960, 540
     ZOOM = 1.10
 
-    def __init__(self, images: list, font_family: str = "Birzia-Black"):
+    def __init__(self, images: list):
         self.images = images
-        self._font_family = font_family
         self._img_cache: dict = {}   # path → numpy array (H, W, 3)
 
     # ── image loading ────────────────────────────────────────────────────────
@@ -4584,16 +4618,8 @@ class _FrameRenderer:
             pil = Image.fromarray(frame_arr)
             draw = ImageDraw.Draw(pil)
             try:
-                family = getattr(self, "_font_family", "Birzia-Black")
-                # Try Google Fonts TTF first, then Birzia-Black OTF, then default
-                gf_path = BASEPATH / "Fonts" / "GoogleFonts" / f"{family.replace(' ', '_')}.ttf"
-                birzia_path = BASEPATH / "Fonts" / "Birzia-Black.otf"
-                if gf_path.exists():
-                    font = ImageFont.truetype(str(gf_path), 42)
-                elif birzia_path.exists():
-                    font = ImageFont.truetype(str(birzia_path), 42)
-                else:
-                    font = ImageFont.load_default()
+                font_path = BASEPATH / "Fonts" / "Birzia-Black.otf"
+                font = ImageFont.truetype(str(font_path), 42)
             except Exception:
                 font = ImageFont.load_default()
             hebrew = _bidi(text)
@@ -4728,60 +4754,34 @@ class _PreviewRenderThread(QThread):
 class SlideshowPreviewDialog(QDialog):
     """
     Full-window slideshow preview with seek, play/pause, audio and time display.
-    Opens instantly - no export required.
-
-    Audio is played via ffplay subprocess launched with -ss <offset>, so seeking
-    is always sample-accurate. No QMediaPlayer async state-machine.
+    Opens instantly — no export required.
     """
 
-    FPS      = 25
-    W, H     = 960, 540
+    FPS    = 25
+    W, H   = 960, 540
     FRAME_MS = int(1000 / FPS)
 
-    slide_changed = pyqtSignal(int)   # emitted with the current slide index
-
-    def __init__(self, images: list, audio_files: list,
-                 font_family: str = "Birzia-Black", start_index: int = 0, parent=None):
+    def __init__(self, images: list, audio_files: list, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("\u25b6  Slideshow Preview")
+        self.setWindowTitle("▶  Slideshow Preview")
         self.setMinimumSize(1050, 720)
         self.resize(1100, 760)
         self.setWindowFlags(self.windowFlags() | Qt.WindowMaximizeButtonHint)
-        self.setStyleSheet(
-            f"background: {COLORS['bg_deep']}; color: {COLORS['text_primary']};"
-        )
+        self.setStyleSheet(f"background: {COLORS['bg_deep']}; color: {COLORS['text_primary']};")
 
         self._images      = images
         self._audio_files = audio_files
-        self._renderer    = _FrameRenderer(images, font_family=font_family)
+        self._renderer    = _FrameRenderer(images)
         self._total_dur   = self._renderer.total_duration
 
-        # Compute start time from start_index
-        start_index = max(0, min(start_index, len(images) - 1))
-        start_t = sum(float(img.get("duration", 5)) for img in images[:start_index])
+        # State
+        self._playing      = False
+        self._current_t    = 0.0          # playhead in seconds
+        self._current_qimg: QImage | None = None
+        self._audio_proc: QProcess | None = None
+        self._audio_offset = 0.0          # what second audio started from
 
-        # Playback state
-        self._playing             = False
-        self._current_t           = start_t
-        self._playback_start_wall = 0.0
-        self._playback_start_t    = start_t
-        self._speed               = 1.0
-        self._current_qimg        = None
-        self._current_slide_idx   = start_index   # tracks last emitted slide index
-
-        # Audio state
-        self._audio_segments: list = []   # [(t_start, t_end, path), ...]
-        self._audio_proc           = None  # subprocess.Popen or None
-        self._audio_vol            = 45
-
-        self._build_audio_segments()
         self._build_ui()
-
-        # Poll timer: detects when ffplay finishes and auto-advances to next song
-        self._audio_poll = QTimer(self)
-        self._audio_poll.setInterval(400)
-        self._audio_poll.timeout.connect(self._on_audio_poll)
-        self._audio_poll.start()
 
         # Background render thread
         self._render_thread = _PreviewRenderThread(self._renderer, self)
@@ -4793,42 +4793,24 @@ class SlideshowPreviewDialog(QDialog):
         self._timer.setInterval(self.FRAME_MS)
         self._timer.timeout.connect(self._tick)
 
-        # Show first frame (at start_t so preview opens on the selected image)
-        self._render_and_show(start_t)
-        self._update_ui_position(start_t)
+        # Render first frame
+        self._seek(0.0, start_audio=False)
 
-    # ── Audio segment table ───────────────────────────────────────────────────
-
-    def _build_audio_segments(self):
-        t = 0.0
-        for a in self._audio_files:
-            path = str(a.get("path", ""))
-            if not os.path.exists(path):
-                continue
-            dur = _get_audio_duration(path)
-            if dur > 0:
-                self._audio_segments.append((t, t + dur, path))
-                t += dur
-
-    def _audio_info_at(self, global_t: float):
-        for (seg_start, seg_end, path) in self._audio_segments:
-            if seg_start <= global_t < seg_end:
-                return path, global_t - seg_start
-        return None, 0.0
-
-    # ── UI construction ───────────────────────────────────────────────────────
+    # ── UI construction ──────────────────────────────────────────────────────
 
     def _build_ui(self):
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
+        # ── Canvas ────────────────────────────────────────────────────────────
         self._canvas = QLabel()
         self._canvas.setAlignment(Qt.AlignCenter)
-        self._canvas.setStyleSheet("background: #000;")
+        self._canvas.setStyleSheet(f"background: #000;")
         self._canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         root.addWidget(self._canvas, 1)
 
+        # ── Slide indicator strip ─────────────────────────────────────────────
         self._slide_label = QLabel("Slide 1 / 1")
         self._slide_label.setAlignment(Qt.AlignCenter)
         self._slide_label.setStyleSheet(
@@ -4837,6 +4819,7 @@ class SlideshowPreviewDialog(QDialog):
         )
         root.addWidget(self._slide_label)
 
+        # ── Timeline scrubber ─────────────────────────────────────────────────
         scrub_row = QHBoxLayout()
         scrub_row.setContentsMargins(16, 4, 16, 2)
         scrub_row.setSpacing(10)
@@ -4856,7 +4839,8 @@ class SlideshowPreviewDialog(QDialog):
         self._scrubber.setValue(0)
         self._scrubber.setStyleSheet(f"""
             QSlider::groove:horizontal {{
-                height: 6px; background: {COLORS['bg_hover']}; border-radius: 3px;
+                height: 6px; background: {COLORS['bg_hover']};
+                border-radius: 3px;
             }}
             QSlider::sub-page:horizontal {{
                 background: {COLORS['accent']}; border-radius: 3px;
@@ -4866,8 +4850,8 @@ class SlideshowPreviewDialog(QDialog):
                 width: 14px; height: 14px; margin: -5px 0; border-radius: 7px;
             }}
         """)
+        self._scrubber.sliderMoved.connect(self._on_scrub)
         self._scrubber.sliderPressed.connect(self._on_scrub_start)
-        self._scrubber.sliderMoved.connect(self._on_scrub_move)
         self._scrubber.sliderReleased.connect(self._on_scrub_end)
         self._scrubbing = False
 
@@ -4876,15 +4860,17 @@ class SlideshowPreviewDialog(QDialog):
         scrub_row.addWidget(self._scrubber, 1)
         root.addLayout(scrub_row)
 
+        # ── Slide markers on timeline ─────────────────────────────────────────
         self._marker_bar = _SlideMarkerBar(self._images, self._total_dur)
-        self._marker_bar.seek_to.connect(self._seek)
+        self._marker_bar.seek_to.connect(lambda t: self._seek(t))
         root.addWidget(self._marker_bar)
 
+        # ── Transport controls ────────────────────────────────────────────────
         ctrl = QHBoxLayout()
         ctrl.setContentsMargins(16, 6, 16, 12)
         ctrl.setSpacing(10)
 
-        def _btn(text, tip="", accent=False):
+        def _ctrl_btn(text, tip="", accent=False):
             b = QPushButton(text)
             b.setFixedSize(42, 36)
             color = COLORS["accent"] if accent else COLORS["text_secondary"]
@@ -4894,41 +4880,49 @@ class SlideshowPreviewDialog(QDialog):
                 f"font-size: 15px; font-weight: 700; }}"
                 f"QPushButton:hover {{ background: {COLORS['bg_hover']}; }}"
             )
-            if tip:
-                b.setToolTip(tip)
+            if tip: b.setToolTip(tip)
             return b
 
-        self._btn_prev = _btn("\u23ee", "Previous slide")
-        self._btn_back = _btn("\u25c4\u25c4", "Back 5 s")
-        self._btn_play = _btn("\u25b6", "Play / Pause  (Space)", accent=True)
-        self._btn_fwd  = _btn("\u25ba\u25ba", "Forward 5 s")
-        self._btn_next = _btn("\u23ed", "Next slide")
+        self._btn_prev  = _ctrl_btn("⏮", "Previous slide")
+        self._btn_back  = _ctrl_btn("◀◀", "Back 5 s")
+        self._btn_play  = _ctrl_btn("▶", "Play / Pause  (Space)", accent=True)
+        self._btn_fwd   = _ctrl_btn("▶▶", "Forward 5 s")
+        self._btn_next  = _ctrl_btn("⏭", "Next slide")
+
         self._btn_play.setFixedSize(52, 40)
 
         self._btn_prev.clicked.connect(self._prev_slide)
-        self._btn_back.clicked.connect(lambda: self._seek(max(0.0, self._current_t - 5)))
+        self._btn_back.clicked.connect(lambda: self._seek(max(0, self._current_t - 5)))
         self._btn_play.clicked.connect(self._toggle_play)
-        self._btn_fwd.clicked.connect(
-            lambda: self._seek(min(self._total_dur, self._current_t + 5))
-        )
+        self._btn_fwd.clicked.connect(lambda: self._seek(min(self._total_dur, self._current_t + 5)))
         self._btn_next.clicked.connect(self._next_slide)
 
+        # Speed selector
         speed_lbl = QLabel("Speed:")
         speed_lbl.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 11px;")
         self._speed_box = QComboBox()
-        self._speed_box.addItems(["0.5\u00d7", "1\u00d7", "1.5\u00d7", "2\u00d7"])
+        self._speed_box.addItems(["0.5×", "1×", "1.5×", "2×"])
         self._speed_box.setCurrentIndex(1)
         self._speed_box.setFixedWidth(68)
-        self._speed_box.setStyleSheet(
-            f"background: {COLORS['bg_card']}; color: {COLORS['text_primary']}; border-radius: 4px;"
-        )
+        self._speed_box.setStyleSheet(f"background: {COLORS['bg_card']}; color: {COLORS['text_primary']}; border-radius: 4px;")
         self._speed_box.currentIndexChanged.connect(self._on_speed_change)
+        self._speed = 1.0
 
-        vol_lbl = QLabel("\U0001f50a")
+        close_btn = QPushButton("✕  Close")
+        close_btn.setFixedHeight(36)
+        close_btn.setStyleSheet(
+            f"QPushButton {{ background: {COLORS['bg_card']}; color: {COLORS['text_muted']}; "
+            f"border: 1px solid {COLORS['border']}; border-radius: 6px; padding: 0 16px; }}"
+            f"QPushButton:hover {{ background: {COLORS['danger']}; color: #fff; }}"
+        )
+        close_btn.clicked.connect(self.close)
+
+        # Volume control
+        vol_lbl = QLabel("🔊")
         vol_lbl.setStyleSheet(f"color: {COLORS['text_muted']}; font-size: 13px;")
         self._vol_slider = QSlider(Qt.Horizontal)
         self._vol_slider.setRange(0, 100)
-        self._vol_slider.setValue(self._audio_vol)
+        self._vol_slider.setValue(45)
         self._vol_slider.setFixedWidth(90)
         self._vol_slider.setToolTip("Music volume")
         self._vol_slider.setStyleSheet(f"""
@@ -4945,15 +4939,6 @@ class SlideshowPreviewDialog(QDialog):
         """)
         self._vol_slider.valueChanged.connect(self._on_volume_change)
 
-        close_btn = QPushButton("\u2715  Close")
-        close_btn.setFixedHeight(36)
-        close_btn.setStyleSheet(
-            f"QPushButton {{ background: {COLORS['bg_card']}; color: {COLORS['text_muted']}; "
-            f"border: 1px solid {COLORS['border']}; border-radius: 6px; padding: 0 16px; }}"
-            f"QPushButton:hover {{ background: {COLORS['danger']}; color: #fff; }}"
-        )
-        close_btn.clicked.connect(self.close)
-
         ctrl.addWidget(self._btn_prev)
         ctrl.addWidget(self._btn_back)
         ctrl.addWidget(self._btn_play)
@@ -4969,13 +4954,13 @@ class SlideshowPreviewDialog(QDialog):
         ctrl.addWidget(close_btn)
         root.addLayout(ctrl)
 
-    # ── Keyboard shortcuts ────────────────────────────────────────────────────
+    # ── Keyboard shortcut ─────────────────────────────────────────────────────
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Space:
             self._toggle_play()
         elif event.key() == Qt.Key_Left:
-            self._seek(max(0.0, self._current_t - 5))
+            self._seek(max(0, self._current_t - 5))
         elif event.key() == Qt.Key_Right:
             self._seek(min(self._total_dur, self._current_t + 5))
         elif event.key() == Qt.Key_Escape:
@@ -4983,7 +4968,7 @@ class SlideshowPreviewDialog(QDialog):
         else:
             super().keyPressEvent(event)
 
-    # ── Playback control ──────────────────────────────────────────────────────
+    # ── Playback ─────────────────────────────────────────────────────────────
 
     def _toggle_play(self):
         if self._playing:
@@ -4993,21 +4978,19 @@ class SlideshowPreviewDialog(QDialog):
 
     def _play(self):
         if self._current_t >= self._total_dur:
-            self._current_t = 0.0
-            self._render_and_show(0.0)
-            self._update_ui_position(0.0)
-        self._playing             = True
+            self._seek(0.0, start_audio=False)
+        self._playing = True
+        self._btn_play.setText("⏸")
         self._playback_start_wall = __import__("time").perf_counter()
         self._playback_start_t    = self._current_t
-        self._btn_play.setText("\u23f8")
-        self._audio_start(self._current_t)
+        self._start_audio(self._current_t)
         self._timer.start()
 
     def _pause(self):
         self._playing = False
-        self._btn_play.setText("\u25b6")
+        self._btn_play.setText("▶")
         self._timer.stop()
-        self._audio_stop()
+        self._stop_audio()
 
     def _tick(self):
         import time
@@ -5015,59 +4998,51 @@ class SlideshowPreviewDialog(QDialog):
         t = self._playback_start_t + elapsed
         if t >= self._total_dur:
             t = self._total_dur
-            self._current_t = t
-            self._update_ui_position(t)
-            self._render_thread.request_frame(t)
             self._pause()
-            return
         self._current_t = t
         self._update_ui_position(t)
         self._render_thread.request_frame(t)
 
     # ── Seeking ───────────────────────────────────────────────────────────────
 
-    def _seek(self, t: float):
-        """Seek to t seconds. Kills audio immediately and restarts if was playing."""
+    def _seek(self, t: float, start_audio: bool = True):
         was_playing = self._playing
-        self._timer.stop()
-        self._audio_stop()
-        self._playing = False
-        self._btn_play.setText("\u25b6")
-
+        if self._playing:
+            self._pause()
         t = max(0.0, min(self._total_dur, t))
         self._current_t = t
         self._update_ui_position(t)
-        self._render_and_show(t)
+        # Render synchronously for instant feedback (cheap at half-res)
+        try:
+            import numpy as np
+            arr = self._renderer.get_frame(t)
+            h, w = arr.shape[:2]
+            self._current_qimg = QImage(arr.tobytes(), w, h, w*3,
+                                        QImage.Format_RGB888).copy()
+            self._paint_frame()
+        except Exception as e:
+            print(f"Seek render error: {e}")
 
-        if was_playing:
+        if was_playing and start_audio:
             self._play()
+        elif start_audio and not was_playing:
+            pass  # keep paused
 
-    # ── Scrubber ──────────────────────────────────────────────────────────────
-
-    def _on_scrub_start(self):
-        self._scrubbing = True
-        self._timer.stop()
-        self._audio_stop()
-        self._playing = False
-        self._btn_play.setText("\u25b6")
-
-    def _on_scrub_move(self, value: int):
-        t = value / 100.0
-        self._current_t = t
-        self._update_ui_position(t)
-        self._render_thread.request_frame(t)
-
-    def _on_scrub_end(self):
-        self._scrubbing = False
-        t = max(0.0, min(self._total_dur, self._scrubber.value() / 100.0))
-        self._current_t = t
-        self._render_and_show(t)
-        self._update_ui_position(t)
-        # Stay paused after scrub
-
-    # ── Navigation ────────────────────────────────────────────────────────────
+    def _update_ui_position(self, t: float):
+        # scrubber (block signals to avoid recursive seek)
+        self._scrubber.blockSignals(True)
+        self._scrubber.setValue(int(t * 100))
+        self._scrubber.blockSignals(False)
+        self._time_label.setText(format_time_hms(t))
+        self._marker_bar.set_playhead(t)
+        # slide indicator
+        idx, _ = self._slide_at(t)
+        self._slide_label.setText(f"Slide {idx+1} / {len(self._images)}"
+                                   + (f"  —  {os.path.basename(self._images[idx]['path'])}"
+                                      if self._images else ""))
 
     def _slide_at(self, t: float) -> tuple:
+        """Return (slide_index, t_within_slide)."""
         cursor = 0.0
         for i, img in enumerate(self._images):
             dur = float(img.get("duration", 5))
@@ -5081,52 +5056,56 @@ class SlideshowPreviewDialog(QDialog):
 
     def _prev_slide(self):
         idx, t_in = self._slide_at(self._current_t)
-        target = self._slide_start(idx) if t_in > 0.5 else self._slide_start(max(0, idx - 1))
-        self._seek(target)
+        if t_in > 0.5:
+            self._seek(self._slide_start(idx))
+        else:
+            self._seek(self._slide_start(max(0, idx-1)))
 
     def _next_slide(self):
         idx, _ = self._slide_at(self._current_t)
-        self._seek(self._slide_start(min(len(self._images) - 1, idx + 1)))
+        self._seek(self._slide_start(min(len(self._images)-1, idx+1)))
 
-    # ── Speed / Volume ────────────────────────────────────────────────────────
+    # ── Scrubber ──────────────────────────────────────────────────────────────
 
-    def _on_speed_change(self, idx: int):
-        self._speed = [0.5, 1.0, 1.5, 2.0][idx]
+    def _on_scrub_start(self):
+        self._scrubbing = True
         if self._playing:
-            import time
-            self._playback_start_wall = time.perf_counter()
-            self._playback_start_t    = self._current_t
-            self._audio_stop()
-            self._audio_start(self._current_t)
+            self._pause()
+
+    def _on_scrub(self, value: int):
+        t = value / 100.0
+        self._current_t = t
+        self._update_ui_position(t)
+        self._render_thread.request_frame(t)
+
+    def _on_scrub_end(self):
+        self._scrubbing = False
+        t = self._scrubber.value() / 100.0
+        self._seek(t, start_audio=False)
+
+    # ── Speed ─────────────────────────────────────────────────────────────────
 
     def _on_volume_change(self, value: int):
-        self._audio_vol = value
+        """Apply volume (0-100) to the active QMediaPlayer."""
+        if self._audio_proc is not None:
+            try:
+                self._audio_proc.setVolume(value)
+            except Exception:
+                pass
+
+    def _on_speed_change(self, idx: int):
+        speeds = [0.5, 1.0, 1.5, 2.0]
+        self._speed = speeds[idx]
         if self._playing:
-            import time
-            elapsed = (time.perf_counter() - self._playback_start_wall) * self._speed
-            t = min(self._total_dur, self._playback_start_t + elapsed)
-            self._current_t = t
-            self._audio_stop()
-            self._audio_start(t)
-            self._playback_start_wall = time.perf_counter()
-            self._playback_start_t    = t
+            # Restart timing reference
+            self._playback_start_wall = __import__("time").perf_counter()
+            self._playback_start_t    = self._current_t
 
     # ── Frame rendering ───────────────────────────────────────────────────────
 
-    def _render_and_show(self, t: float):
-        try:
-            import numpy as np
-            arr = self._renderer.get_frame(t)
-            h, w = arr.shape[:2]
-            self._current_qimg = QImage(
-                arr.tobytes(), w, h, w * 3, QImage.Format_RGB888
-            ).copy()
-            self._paint_frame()
-        except Exception as e:
-            print(f"Render error: {e}")
-
-    def _on_frame_ready(self, t: float, qimg):
-        if abs(t - self._current_t) < 0.3 or self._playing:
+    def _on_frame_ready(self, t: float, qimg: QImage):
+        # Only paint if this frame is still relevant (within 200ms of playhead)
+        if abs(t - self._current_t) < 0.2 or self._playing:
             self._current_qimg = qimg
             self._paint_frame()
 
@@ -5143,109 +5122,109 @@ class SlideshowPreviewDialog(QDialog):
         super().resizeEvent(event)
         self._paint_frame()
 
-    # ── UI position update ────────────────────────────────────────────────────
+    # ── Audio via ffmpeg pipe → system audio ─────────────────────────────────
 
-    def _update_ui_position(self, t: float):
-        self._scrubber.blockSignals(True)
-        self._scrubber.setValue(int(t * 100))
-        self._scrubber.blockSignals(False)
-        self._time_label.setText(format_time_hms(t))
-        self._marker_bar.set_playhead(t)
-        idx, _ = self._slide_at(t)
-        name = os.path.basename(self._images[idx]["path"]) if self._images else ""
-        self._slide_label.setText(
-            f"Slide {idx + 1} / {len(self._images)}" + (f"  \u2014  {name}" if name else "")
-        )
-        if idx != self._current_slide_idx:
-            self._current_slide_idx = idx
-            self.slide_changed.emit(idx)
-
-    # ── Audio via ffplay subprocess ───────────────────────────────────────────
-
-    def _ffplay_exe(self):
-        import shutil, pathlib
-        ffmpeg = _ffmpeg_exe()
-        candidate = pathlib.Path(ffmpeg).parent / (
-            "ffplay.exe" if os.name == "nt" else "ffplay"
-        )
-        if candidate.exists():
-            return str(candidate)
-        found = shutil.which("ffplay")
-        return found
-
-    def _audio_start(self, global_t: float):
-        self._audio_stop()
-        if not self._audio_segments:
+    def _start_audio(self, offset: float):
+        """Play audio starting from *offset* seconds using QMediaPlayer.
+        All audio files are played in sequence; offset is applied across the
+        concatenated timeline so seeking mid-playlist works correctly.
+        """
+        self._stop_audio()
+        if not self._audio_files:
             return
-        path, file_offset = self._audio_info_at(global_t)
-        if path is None:
-            return
-        ffplay = self._ffplay_exe()
-        if not ffplay:
-            return
-        vol = max(0, min(100, self._audio_vol))
-        cmd = [
-            ffplay, "-nodisp", "-autoexit", "-loglevel", "quiet",
-            "-ss", f"{file_offset:.3f}",
-            "-volume", str(vol),
-            path,
-        ]
         try:
-            NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-            self._audio_proc = subprocess.Popen(
-                cmd,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                creationflags=NO_WINDOW,
-            )
+            from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
+
+            paths = [a["path"] for a in self._audio_files
+                     if os.path.exists(str(a.get("path", "")))]
+            if not paths:
+                return
+
+            # Pre-compute per-file durations so we can find which file
+            # contains the requested offset.
+            durations = [_get_audio_duration(p) for p in paths]
+
+            # Walk the playlist to find which file the offset falls in.
+            remaining = offset
+            start_index = 0
+            file_offset = 0.0
+            for i, dur in enumerate(durations):
+                if remaining < dur or i == len(durations) - 1:
+                    start_index = i
+                    file_offset = remaining
+                    break
+                remaining -= dur
+
+            self._audio_paths    = paths
+            self._audio_durations = durations
+            self._audio_index    = start_index
+            self._audio_offset   = offset
+
+            self._audio_proc = QMediaPlayer(self)
+            self._audio_file_offset = int(file_offset * 1000)  # seek after load
+            self._audio_proc.mediaStatusChanged.connect(self._on_audio_status)
+            # Apply current volume immediately
+            vol = self._vol_slider.value() if hasattr(self, "_vol_slider") else 100
+            self._audio_proc.setVolume(vol)
+            url = QUrl.fromLocalFile(str(paths[start_index]))
+            self._audio_proc.setMedia(QMediaContent(url))
+            self._audio_proc.setPlaybackRate(self._speed)
+            # Don't call play() here – seek + play happen in _on_audio_status
+            # once the media is loaded (avoids the setPosition-before-load bug)
         except Exception as e:
-            print(f"ffplay launch error: {e}")
+            print(f"Audio preview not available: {e}")
             self._audio_proc = None
 
-    def _audio_stop(self):
+    def _on_audio_status(self, status):
+        """Seek-then-play on first load; advance playlist on EndOfMedia."""
+        try:
+            from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
+            if self._audio_proc is None:
+                return
+
+            if status == QMediaPlayer.LoadedMedia or status == QMediaPlayer.BufferedMedia:
+                # Media is ready – apply the pending seek offset and start playing.
+                # We only do this once per load (offset is reset to 0 after use).
+                offset_ms = getattr(self, "_audio_file_offset", 0)
+                if offset_ms > 0:
+                    self._audio_proc.setPosition(offset_ms)
+                    self._audio_file_offset = 0
+                # Guard: don't auto-play if we're paused (seek while paused)
+                if self._playing:
+                    self._audio_proc.play()
+
+            elif status == QMediaPlayer.EndOfMedia:
+                if not hasattr(self, "_audio_paths"):
+                    return
+                self._audio_index += 1
+                if self._audio_index >= len(self._audio_paths):
+                    return  # all songs done
+                next_path = self._audio_paths[self._audio_index]
+                self._audio_file_offset = 0  # next file starts from beginning
+                url = QUrl.fromLocalFile(str(next_path))
+                self._audio_proc.setMedia(QMediaContent(url))
+                self._audio_proc.setPlaybackRate(self._speed)
+                # play() will be called by the LoadedMedia branch above
+        except Exception as e:
+            print(f"Audio status error: {e}")
+
+    def _stop_audio(self):
         if self._audio_proc is not None:
             try:
-                self._audio_proc.terminate()
-                self._audio_proc.wait(timeout=1)
+                self._audio_proc.stop()
             except Exception:
-                try:
-                    self._audio_proc.kill()
-                except Exception:
-                    pass
+                pass
             self._audio_proc = None
-
-    def _on_audio_poll(self):
-        """Called every 400 ms. If ffplay has exited naturally (song ended) and
-        we are still playing, find the next audio segment and launch it."""
-        if not self._playing:
-            return
-        if self._audio_proc is None:
-            return
-        if self._audio_proc.poll() is None:
-            return  # still running
-        # ffplay exited on its own — song finished.
-        # Find which segment comes next after current playhead.
-        self._audio_proc = None
-        next_path, next_offset = self._audio_info_at(self._current_t)
-        if next_path is None:
-            return  # no more audio
-        # Only start if the next segment is a *different* file
-        # (not the one that just ended, which would loop it).
-        # We detect "just ended" by checking that file_offset is near 0,
-        # meaning we crossed into a new segment.
-        if next_offset < 1.0:
-            self._audio_start(self._current_t)
 
     # ── Cleanup ───────────────────────────────────────────────────────────────
 
     def closeEvent(self, event):
-        self._audio_poll.stop()
         self._timer.stop()
-        self._audio_stop()
+        self._stop_audio()
         self._render_thread.stop()
         self._render_thread.wait(2000)
         super().closeEvent(event)
+
 
 class _SlideMarkerBar(QWidget):
     """
@@ -5818,39 +5797,11 @@ class EasyTextWritingDialog(QDialog):
         self.counter_label.setText(f"{self.current_index + 1} / {n}")
         if 0 <= self.current_index < n:
             data = self.images[self.current_index]
-            path = data["path"]
+            px   = QPixmap(data["path"])
             rot  = data.get("rotation", 0)
-            crop = data.get("crop")
-            try:
-                img = Image.open(path)
-                try:
-                    if hasattr(img, "_getexif"):
-                        exif = img._getexif()
-                        if exif and _ORIENTATION_TAG:
-                            val = exif.get(_ORIENTATION_TAG)
-                            if val == 3:   img = img.rotate(180, expand=True)
-                            elif val == 6: img = img.rotate(270, expand=True)
-                            elif val == 8: img = img.rotate(90,  expand=True)
-                except Exception:
-                    pass
-                if rot:
-                    img = img.rotate(rot, expand=True)
-                if crop:
-                    iw, ih = img.size
-                    cx = max(0, int(crop[0] * iw))
-                    cy = max(0, int(crop[1] * ih))
-                    cw = max(1, min(int(crop[2] * iw), iw - cx))
-                    ch = max(1, min(int(crop[3] * ih), ih - cy))
-                    img = img.crop((cx, cy, cx + cw, cy + ch))
-                img = img.convert("RGBA")
-                raw = img.tobytes("raw", "RGBA")
-                qimg = QImage(raw, img.width, img.height, QImage.Format_RGBA8888)
-                px = QPixmap.fromImage(qimg)
-            except Exception:
-                px = QPixmap(path)
-                if rot:
-                    t = QTransform(); t.rotate(rot)
-                    px = px.transformed(t, Qt.SmoothTransformation)
+            if rot:
+                t = QTransform(); t.rotate(rot)
+                px = px.transformed(t, Qt.SmoothTransformation)
             self.image_label.setPixmap(px.scaled(460, 190, Qt.KeepAspectRatio, Qt.SmoothTransformation))
             self.text_input.setPlainText(data.get("text", ""))
 
@@ -5938,7 +5889,7 @@ class FontPickerDialog(QDialog):
         "Frank Ruhl Libre", "Varela Round", "Assistant", "Secular One",
     ]
 
-    def __init__(self, current_font: str = "Birzia-Black", parent=None):
+    def __init__(self, current_font: str = "Segoe UI", parent=None):
         super().__init__(parent)
         self.setWindowTitle("Choose Font")
         self.setMinimumSize(760, 520)
@@ -5947,10 +5898,6 @@ class FontPickerDialog(QDialog):
         self._result: str | None = None
         self._download_dir = BASEPATH / "Fonts" / "GoogleFonts"
         self._download_dir.mkdir(parents=True, exist_ok=True)
-        # Register Birzia-Black so Qt can render the preview label with it
-        _birzia = BASEPATH / "Fonts" / "Birzia-Black.otf"
-        if _birzia.exists():
-            QFontDatabase.addApplicationFont(str(_birzia))
         self._build_ui(current_font)
 
     # ── UI ────────────────────────────────────────────────────────────────────
@@ -5974,8 +5921,6 @@ class FontPickerDialog(QDialog):
         self._preview_label.setStyleSheet(
             f"color: {COLORS['text_secondary']}; font-size: 18px; padding: 0 16px;"
         )
-        self._preview_label.setFont(QFont(current_font, 14))
-        self._preview_label.setFont(QFont(current_font, 14))
         hl.addWidget(title)
         hl.addStretch()
         hl.addWidget(self._preview_label)
@@ -6000,8 +5945,6 @@ class FontPickerDialog(QDialog):
         self._sys_list = QListWidget()
         db = QFontDatabase()
         self._all_system_fonts = sorted(db.families())
-        if "Birzia-Black" not in self._all_system_fonts:
-            self._all_system_fonts = ["Birzia-Black"] + self._all_system_fonts
         self._sys_list.addItems(self._all_system_fonts)
         # pre-select current
         matches = self._sys_list.findItems(current_font, Qt.MatchExactly)
@@ -6091,10 +6034,6 @@ class FontPickerDialog(QDialog):
         self._result = family
         self._sel_label.setText(f"Selected: {family}")
         self._apply_btn.setEnabled(True)
-        if family == "Birzia-Black":
-            _birzia = BASEPATH / "Fonts" / "Birzia-Black.otf"
-            if _birzia.exists():
-                QFontDatabase.addApplicationFont(str(_birzia))
         self._preview_label.setFont(QFont(family, 14))
 
     # ── Google Fonts handling ─────────────────────────────────────────────────
@@ -6599,6 +6538,199 @@ class AudioLibraryDialog(QDialog):
             parent.audio_files.append({"path": path})
             parent.update_audio_table()
         self.close()
+
+
+def export_pdf_photo_book(images: list, output_path: str,
+                          progress_callback=None) -> bool:
+    """
+    Create a printable PDF with one image per page and its caption as footer.
+    Uses only reportlab (pip install reportlab) — no cloud, no subscription.
+    Falls back with a friendly error if reportlab is not installed.
+    """
+    try:
+        from reportlab.lib.pagesizes import A4, landscape
+        from reportlab.pdfgen import canvas as rl_canvas
+        from reportlab.lib.units import mm
+        from reportlab.lib.utils import ImageReader
+    except ImportError:
+        return False  # caller should show an install hint
+
+    PAGE_W, PAGE_H = landscape(A4)
+    MARGIN = 12 * mm
+
+    c = rl_canvas.Canvas(output_path, pagesize=(PAGE_W, PAGE_H))
+
+    total = len(images)
+    for idx, img_data in enumerate(images):
+        path    = img_data["path"]
+        caption = img_data.get("text", "").strip()
+
+        try:
+            pil_img = Image.open(path).convert("RGB")
+            from io import BytesIO
+            buf = BytesIO()
+            pil_img.save(buf, format="JPEG", quality=88)
+            buf.seek(0)
+            ir = ImageReader(buf)
+
+            # Available space (leave room for optional caption at bottom)
+            avail_w = PAGE_W - 2 * MARGIN
+            avail_h = PAGE_H - 2 * MARGIN - (14 * mm if caption else 0)
+
+            iw, ih = pil_img.size
+            scale = min(avail_w / iw, avail_h / ih)
+            draw_w = iw * scale
+            draw_h = ih * scale
+
+            x = (PAGE_W - draw_w) / 2
+            y = MARGIN + (14 * mm if caption else 0) + (avail_h - draw_h) / 2
+
+            c.drawImage(ir, x, y, draw_w, draw_h, preserveAspectRatio=True)
+
+            if caption:
+                c.setFont("Helvetica", 11)
+                c.setFillColorRGB(0.3, 0.3, 0.3)
+                c.drawCentredString(PAGE_W / 2, MARGIN + 3 * mm, caption)
+
+        except Exception as e:
+            print(f"PDF export: skipping {path}: {e}")
+
+        c.showPage()
+        if progress_callback:
+            progress_callback(int((idx + 1) / total * 100))
+
+    c.save()
+    return True
+
+
+# ── Feature 13: Export as HTML Gallery ───────────────────────────────────────
+
+def export_html_gallery(images: list, output_path: str,
+                        title: str = "Eventure Gallery",
+                        progress_callback=None) -> bool:
+    """
+    Generate a fully self-contained index.html with all images embedded
+    as base64 data URIs — no server, no internet connection needed.
+    """
+    slides_html = []
+    total = len(images)
+
+    for idx, img_data in enumerate(images):
+        path    = img_data["path"]
+        caption = img_data.get("text", "").strip()
+        try:
+            pil_img = Image.open(path).convert("RGB")
+            # Downscale large images to reduce file size (max 1280px wide)
+            if pil_img.width > 1280:
+                ratio = 1280 / pil_img.width
+                pil_img = pil_img.resize(
+                    (1280, int(pil_img.height * ratio)), Image.LANCZOS
+                )
+            from io import BytesIO
+            buf = BytesIO()
+            pil_img.save(buf, format="JPEG", quality=82, optimize=True)
+            b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+            src = f"data:image/jpeg;base64,{b64}"
+        except Exception as e:
+            print(f"HTML gallery: skipping {path}: {e}")
+            continue
+
+        cap_html = (
+            f'<div class="caption">{caption}</div>' if caption else ""
+        )
+        slides_html.append(
+            f'<div class="slide" id="slide-{idx}">'
+            f'<img src="{src}" alt="Slide {idx + 1}" />'
+            f'{cap_html}'
+            f'</div>'
+        )
+        if progress_callback:
+            progress_callback(int((idx + 1) / total * 80))
+
+    gallery_items = "\n".join(slides_html)
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>{title}</title>
+<style>
+  *{{box-sizing:border-box;margin:0;padding:0}}
+  body{{background:#111;color:#eee;font-family:sans-serif;}}
+  header{{padding:20px 32px;background:#1a1a2e;border-bottom:1px solid #333;}}
+  header h1{{font-size:22px;font-weight:700;color:#5b9bff;}}
+  header p{{font-size:12px;color:#666;margin-top:4px;}}
+  .gallery{{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;padding:24px;}}
+  .slide{{background:#1e2228;border-radius:10px;overflow:hidden;border:1px solid #363e4a;
+          transition:transform 0.2s,box-shadow 0.2s;cursor:pointer;}}
+  .slide:hover{{transform:translateY(-3px);box-shadow:0 8px 24px rgba(0,0,0,.5);}}
+  .slide img{{width:100%;display:block;aspect-ratio:16/9;object-fit:cover;}}
+  .caption{{padding:10px 14px;font-size:13px;color:#95a0b4;background:#252b34;}}
+  /* Lightbox */
+  #lb{{display:none;position:fixed;inset:0;background:rgba(0,0,0,.9);
+       align-items:center;justify-content:center;z-index:999;flex-direction:column;}}
+  #lb.open{{display:flex;}}
+  #lb img{{max-width:92vw;max-height:85vh;border-radius:6px;}}
+  #lb .lb-cap{{color:#ccc;font-size:14px;margin-top:12px;max-width:800px;text-align:center;}}
+  #lb-close{{position:absolute;top:18px;right:24px;font-size:28px;color:#aaa;cursor:pointer;
+             background:none;border:none;line-height:1;}}
+  #lb-prev,#lb-next{{position:absolute;top:50%;transform:translateY(-50%);font-size:32px;
+                     color:#aaa;cursor:pointer;background:none;border:none;padding:8px 16px;}}
+  #lb-prev{{left:12px;}} #lb-next{{right:12px;}}
+</style>
+</head>
+<body>
+<header>
+  <h1>🎬 {title}</h1>
+  <p>Generated by Eventure • {len(slides_html)} slides • Click any image to enlarge</p>
+</header>
+<div class="gallery" id="gallery">
+{gallery_items}
+</div>
+<!-- Lightbox -->
+<div id="lb">
+  <button id="lb-close">✕</button>
+  <button id="lb-prev">&#8249;</button>
+  <img id="lb-img" src="" alt=""/>
+  <div class="lb-cap" id="lb-cap"></div>
+  <button id="lb-next">&#8250;</button>
+</div>
+<script>
+  const slides = Array.from(document.querySelectorAll('.slide'));
+  let cur = 0;
+  function openLB(i){{
+    cur = i;
+    const img = slides[i].querySelector('img');
+    const cap = slides[i].querySelector('.caption');
+    document.getElementById('lb-img').src = img.src;
+    document.getElementById('lb-cap').textContent = cap ? cap.textContent : '';
+    document.getElementById('lb').classList.add('open');
+  }}
+  slides.forEach((s,i) => s.addEventListener('click', () => openLB(i)));
+  document.getElementById('lb-close').addEventListener('click', () =>
+    document.getElementById('lb').classList.remove('open'));
+  document.getElementById('lb-prev').addEventListener('click', () =>
+    openLB((cur - 1 + slides.length) % slides.length));
+  document.getElementById('lb-next').addEventListener('click', () =>
+    openLB((cur + 1) % slides.length));
+  document.addEventListener('keydown', e => {{
+    if(e.key==='Escape') document.getElementById('lb').classList.remove('open');
+    if(e.key==='ArrowLeft') document.getElementById('lb-prev').click();
+    if(e.key==='ArrowRight') document.getElementById('lb-next').click();
+  }});
+</script>
+</body>
+</html>"""
+
+    try:
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(html)
+        if progress_callback:
+            progress_callback(100)
+        return True
+    except Exception as e:
+        print(f"HTML gallery write error: {e}")
+        return False
 
 
 # ── Entry Point ───────────────────────────────────────────────────────────────
