@@ -7,7 +7,7 @@
 ![License](https://img.shields.io/badge/License-MIT-yellow?style=flat)
 
 
-<img width="1920" height="600" alt="Eventure-Banner" src="https://github.com/user-attachments/assets/46cd6b6b-c219-401a-abc7-871e3a22c544" />
+<img width="1920" height="600" alt="Eventure-Banner" src="https://github.com/user-attachments/assets/73462cb1-0f8a-4e00-ab22-bc73f1834d6e" />
 <img width="1396" height="850" alt="image" src="https://github.com/user-attachments/assets/a080ea24-2a3c-49d5-81d3-951a11b01917" />
 
 
