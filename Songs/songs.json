@@ -222,5 +222,21 @@
     "fits_for": "",
     "path": "{BASE_PATH}/Songs/AudioFiles/אהוד בנאי - יוצא לאור.mp3",
     "github_path": "AudioFiles/אהוד בנאי - יוצא לאור.mp3"
+  },
+  {
+    "name":"פנתרה",
+    "author": "נועה קירל",
+    "duration": 172,
+    "fits_for": "",
+    "path": "{BASE_PATH}/Songs/AudioFiles/נועה קירל - פנתרה.mp3",
+    "github_path": "AudioFiles/נועה קירל - פנתרה.mp3"
+  },
+  {
+    "name":"מה שאת אוהבת",
+    "author": "גלי עטרי",
+    "duration": 240,
+    "fits_for": "",
+    "path": "{BASE_PATH}/Songs/AudioFiles/גלי עטרי - מה שאת אוהבת",
+    "github_path": "AudioFiles/גלי עטרי - מה שאת אוהבת"
   }
 ]
