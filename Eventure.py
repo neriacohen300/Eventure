@@ -6534,31 +6534,24 @@ class AudioLibraryDialog(QDialog):
         return self._songs_dir / filename
 
     def _github_url(self, song: dict) -> str:
-        """
-        Build the raw GitHub download URL.
-        Handles all three path formats in the JSON:
-          1. github_path = "AudioFiles/Artist - Title.mp3"   → use as-is (subfolder aware)
-          2. path        = "{BASE_PATH}/Songs/AudioFiles/..."  → strip prefix, keep subfolder
-          3. neither     → just the filename, assume root of Songs/
-        GITHUB_AUDIO_BASE already ends with /Songs so we append the relative part.
-        """
-        # Prefer explicit github_path (cleanest)
+        # Prefer explicit github_path
         gp = song.get("github_path", "")
         if gp:
-            # Already relative to Songs/ on GitHub
             rel = gp.replace("\\", "/").lstrip("/")
             return f"{GITHUB_AUDIO_BASE}/{urllib.parse.quote(rel, safe='/')}"
 
-        # Fall back to "path" — strip {BASE_PATH}/Songs/ prefix to get relative part
+        # Fallback: derive from path
         raw = song.get("path", song["name"] + ".mp3")
         raw = raw.replace("{BASE_PATH}", "").replace("\\", "/")
-        # raw might now be  /Songs/AudioFiles/X.mp3  or  Songs/AudioFiles/X.mp3
-        # Strip leading /Songs/ so we don't double it with GITHUB_AUDIO_BASE
-        for prefix in ("/Songs/", "Songs/"):
-            if raw.lstrip("/").startswith(prefix.lstrip("/")):
-                raw = raw.lstrip("/")[len(prefix.lstrip("/")):]
-                break
-        raw = raw.lstrip("/")
+
+        # ✅ FIX: strip everything up to and including the first /Songs/
+        marker = "/Songs/"
+        idx = raw.find(marker)
+        if idx != -1:
+            raw = raw[idx + len(marker):]  # e.g. "AudioFiles/X.mp3"
+        else:
+            raw = raw.lstrip("/")
+
         if not raw:
             raw = song["name"] + ".mp3"
         return f"{GITHUB_AUDIO_BASE}/{urllib.parse.quote(raw, safe='/')}"
